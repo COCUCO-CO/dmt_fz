@@ -1,0 +1,8 @@
+name: dmt_fz
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  # Solo Python y pip - TODO lo demás se instala con pip
+  - python=3.10
+  - pip

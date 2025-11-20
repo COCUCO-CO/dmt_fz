@@ -1,0 +1,66 @@
+# ===== DEPENDENCIAS PRINCIPALES (REQUERIDAS) =====
+
+# Core scientific computing
+numpy>=1.24.0
+scipy>=1.10.0
+pandas>=2.0.0
+
+# Plotting
+matplotlib>=3.7.0
+seaborn>=0.12.0
+
+# Neurociencia - MNE
+mne>=1.5.0
+mne-bids>=0.13.0
+
+# Machine Learning - Scikit-learn
+scikit-learn>=1.3.0
+scikit-learn-extra>=0.3.0
+
+# Deep Learning - TensorFlow (NECESARIO para EEGNet)
+#tensorflow>=2.13.0
+
+# Optimización
+optuna>=3.3.0
+
+# Utilidades
+tqdm>=4.65.0
+h5py>=3.9.0
+
+# MATLAB files
+pymatreader>=0.0.30
+
+# Signal processing
+pywavelets>=1.4.0
+
+# Estadística
+statsmodels>=0.14.0
+pingouin>=0.5.3
+
+# Visualización
+networkx>=3.1
+scikit-image>=0.21.0
+
+# Exportación
+openpyxl>=3.1.0
+
+# Jupyter (opcional pero útil)
+jupyter>=1.0.0
+ipykernel>=6.25.0
+
+
+# ===== DEPENDENCIAS OPCIONALES =====
+
+# Molecular Dynamics (solo si usas angle_generator.py y autocorrelation.py)
+# mdtraj>=1.9.9
+
+# PSD markers (solo si usas psd.py - puede dar problemas de instalación)
+# nice-eeg>=0.1.0
+
+# PyTorch (solo si quieres usar torch-kmeans.py/torch-kmeans2.py)
+# NO es necesario para el pipeline principal
+# Para instalar con GPU CUDA 11.8:
+# torch>=2.0.0 --index-url https://download.pytorch.org/whl/cu118
+# torchvision>=0.15.0
+# torchaudio>=2.0.0
+
