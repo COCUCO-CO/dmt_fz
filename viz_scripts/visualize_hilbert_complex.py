@@ -12,6 +12,11 @@ from mpl_toolkits.mplot3d import Axes3D
 from matplotlib.colors import Normalize
 from matplotlib.cm import ScalarMappable
 from pathlib import Path
+import sys
+
+# Add parent directory to path to import from pipeline
+sys.path.insert(0, str(Path(__file__).parent.parent / "pipeline"))
+from paths import BASE_DIR, RESULTS_DIR, RESULTS_PLOTS_DIR, ensure_dir
 
 # ============================================================
 # Funciones auxiliares
@@ -25,9 +30,8 @@ def load_file(file):
 # Configuración
 # ============================================================
 
-path = Path("/home/tomas/PycharmProjects/dmt_fz/dmt/fwd-inv-stc/")
-output_path = Path("/home/tomas/PycharmProjects/dmt_fz/dmt/results_plots/")
-output_path.mkdir(exist_ok=True)
+path = RESULTS_DIR
+output_path = ensure_dir(RESULTS_PLOTS_DIR)
 
 print("="*60)
 print("VISUALIZACIÓN HILBERT - SEÑAL ANALÍTICA COMPLEJA")

@@ -10,6 +10,11 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from pathlib import Path
 import seaborn as sns
+import sys
+
+# Add parent directory to path to import from pipeline
+sys.path.insert(0, str(Path(__file__).parent.parent / "pipeline"))
+from paths import BASE_DIR, RESULTS_DIR, RESULTS_PLOTS_DIR, ensure_dir
 
 sns.set_style("whitegrid")
 
@@ -25,9 +30,8 @@ def load_file(file):
 # Configuración
 # ============================================================
 
-path = Path("/home/tomas/PycharmProjects/dmt_fz/dmt/fwd-inv-stc/")
-output_path = Path("/home/tomas/PycharmProjects/dmt_fz/dmt/results_plots/")
-output_path.mkdir(exist_ok=True)
+path = RESULTS_DIR
+output_path = ensure_dir(RESULTS_PLOTS_DIR)
 
 band_list = ["Delta", "Theta", "Alpha", "Beta", "Gamma"]
 conditions = ["DMT", "EC", "EO"]

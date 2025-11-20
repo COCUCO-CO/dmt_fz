@@ -2,7 +2,10 @@
 
 import pickle
 from pathlib import Path
+import sys
 
+# Add parent directory to path to import from pipeline
+sys.path.insert(0, str(Path(__file__).parent.parent / "pipeline"))
 from paths import RESULTS_DIR, ensure_dir
 
 
