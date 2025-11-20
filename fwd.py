@@ -190,6 +190,8 @@ def calculate_syncro(phase_mat):
         value = 1 - (diff_ang(signal1,signal2).sum()/max_diff)
         syncro_mat[i,j] = value
         syncro_mat[j,i] = value
+  # Diagonal = 1 (una señal tiene sincronización perfecta consigo misma)
+  np.fill_diagonal(syncro_mat, 1.0)
   return syncro_mat
 
 
