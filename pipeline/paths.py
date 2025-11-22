@@ -39,6 +39,7 @@ SPECTRAL_DIR = BASE_DIR / "spectral_sources"
 EEGNET_DIR = BASE_DIR / "EEGNet"
 RESULTS_PLOTS_DIR = BASE_DIR / "results_plots"
 FRAMES_DIR = BASE_DIR / "frames"
+VISUALIZATIONS_DIR = BASE_DIR / "visualizations"
 
 
 def ensure_dir(path: Path) -> Path:
@@ -55,10 +56,11 @@ if __name__ == "__main__":
     print("="*70)
     print(f"Sistema Operativo: {platform.system()} {platform.release()}")
     print(f"Python: {sys.version.split()[0]}")
-    print(f"\nBASE_DIR:        {BASE_DIR}")
-    print(f"EEG_CLEAN_DIR:   {EEG_CLEAN_DIR}")
-    print(f"RESULTS_DIR:     {RESULTS_DIR}")
-    print(f"SPECTRAL_DIR:    {SPECTRAL_DIR}")
+    print(f"\nBASE_DIR:           {BASE_DIR}")
+    print(f"EEG_CLEAN_DIR:      {EEG_CLEAN_DIR}")
+    print(f"RESULTS_DIR:        {RESULTS_DIR}")
+    print(f"SPECTRAL_DIR:       {SPECTRAL_DIR}")
+    print(f"VISUALIZATIONS_DIR: {VISUALIZATIONS_DIR}")
     print("="*70)
     
     # Verificar existencia de directorios críticos

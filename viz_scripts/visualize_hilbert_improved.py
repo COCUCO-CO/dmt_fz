@@ -14,7 +14,7 @@ import plotly.graph_objects as go
 
 # Add parent directory to path to import from pipeline
 sys.path.insert(0, str(Path(__file__).parent.parent / "pipeline"))
-from paths import BASE_DIR, RESULTS_DIR, RESULTS_PLOTS_DIR, ensure_dir
+from paths import BASE_DIR, RESULTS_DIR, RESULTS_PLOTS_DIR, VISUALIZATIONS_DIR, ensure_dir
 
 
 def load_file(file):
@@ -27,7 +27,7 @@ def load_file(file):
 # =============================================================================
 
 path = RESULTS_DIR
-output_path = ensure_dir(RESULTS_PLOTS_DIR)
+output_path = ensure_dir(VISUALIZATIONS_DIR / "visualize_hilbert_improved")
 
 subject = "S01-DMT"
 condition = "DMT"

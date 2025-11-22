@@ -174,21 +174,39 @@ Genera HTML con:
 
 ## 📁 Salida
 
-### PyVista:
+Todos los outputs se organizan en `visualizations/` por script:
+
+### plot.py (frames estáticos y videos):
 ```
-frames/
-├── brain_3d_animation.mp4          # Video principal
-├── 3d_snapshot_S01_DMT_Alpha_epoch5_iso.png
-├── 3d_snapshot_S01_DMT_Alpha_epoch5_front.png
-├── 3d_snapshot_S01_DMT_Alpha_epoch5_side.png
-└── 3d_snapshot_S01_DMT_Alpha_epoch5_top.png
+visualizations/plot/
+├── 1001000000.png                   # Frames individuales
+├── 1001000400.png
+├── network_dynamics.mp4             # Videos generados
+└── network_alpha_smooth.mp4
 ```
 
-### Plotly:
+### visualize_hilbert_improved.py:
 ```
-frames/
-├── brain_3d_interactive.html       # Abrir en navegador
-└── brain_3d_animated.html          # Con slider temporal
+visualizations/visualize_hilbert_improved/
+├── hilbert_plotly_S01-DMT_Alpha_epoch1.html
+└── hilbert_plotly_S01-DMT_Alpha_epoch1.png
+```
+
+### visualize_results.py:
+```
+visualizations/visualize_results/
+├── kuramoto_eeg_by_band.png
+├── kuramoto_sources_by_band.png
+├── kuramoto_temporal_S01_Alpha.png
+├── kuramoto_comparison_boxplot.png
+└── summary_statistics.csv
+```
+
+### visualize_brain_3d.py:
+```
+visualizations/visualize_brain_3d/
+├── brain_3d_multiview.mp4
+└── color_frames_S01_DMT_Alpha/      # Si no se pudo crear video
 ```
 
 ---

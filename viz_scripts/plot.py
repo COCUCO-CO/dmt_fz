@@ -35,7 +35,7 @@ import sys
 
 # Add parent directory to path to import from pipeline
 sys.path.insert(0, str(Path(__file__).parent.parent / "pipeline"))
-from paths import BASE_DIR, RESULTS_DIR, EEG_CLEAN_DIR as EEG_DIR, FRAMES_DIR, ensure_dir
+from paths import BASE_DIR, RESULTS_DIR, EEG_CLEAN_DIR as EEG_DIR, FRAMES_DIR, VISUALIZATIONS_DIR, ensure_dir
 
 
 def save_file(data, folder, file):
@@ -366,7 +366,7 @@ ch_order = ['Fp1', 'AFz', 'Fp2', 'F7', 'F3', 'Fz', 'F4', 'F8', 'C3', 'Cz', 'C4',
 #subj = str(subjects[subject]+1)
  #"S"+("0"+subj)[-2:]+"-DM"
 
-frames_path = ensure_dir(FRAMES_DIR)
+frames_path = ensure_dir(VISUALIZATIONS_DIR / "plot")
 band = "Alpha"
 cond = "DMT"
 subject = "S01"
@@ -421,8 +421,9 @@ def plot_eeg_only(epoch, samples=[0, 400, 799]):
         ax3 = plt.subplot2grid(grid_size, (1, 2), projection="polar", rowspan=4)
         plot_osc(eeg_phase_mat, eeg_kuramoto_mat[epoch], ax3, sample=sample, color="r", jitter=True, labels=ch_names)
         
-        plt.suptitle(f"Subject {subject} - {cond} - {band} band - EEG Only", fontsize=18, fontweight='bold')
-        plt.subplots_adjust(left=0.05, top=0.92, right=0.95, bottom=0.05, hspace=0.35, wspace=0.35)
+        plt.suptitle(f"SUJETO: {subject} | CONDICIÓN: {cond} | BANDA: {band} | Época {epoch+1}/{num_epochs} | EEG Only", 
+                     fontsize=20, fontweight='bold', y=0.97)
+        plt.subplots_adjust(left=0.05, top=0.93, right=0.95, bottom=0.05, hspace=0.35, wspace=0.35)
         
         filename = f"eeg_{(1000+epoch)*1000+sample}"
         output_file = frames_path / f"{filename}.png"
@@ -460,8 +461,9 @@ def plot_stc_only(epoch, samples=[0, 400, 799]):
         ax3 = plt.subplot2grid(grid_size, (1, 2), projection="polar", rowspan=4)
         plot_osc(stc_phase_mat, stc_kuramoto_mat[epoch], ax3, sample=sample, color=node_colors, jitter=True, labels=True)
         
-        plt.suptitle(f"Subject {subject} - {cond} - {band} band - Source Space", fontsize=18, fontweight='bold')
-        plt.subplots_adjust(left=0.05, top=0.92, right=0.95, bottom=0.05, hspace=0.35, wspace=0.35)
+        plt.suptitle(f"SUJETO: {subject} | CONDICIÓN: {cond} | BANDA: {band} | Época {epoch+1}/{num_epochs} | Source Space", 
+                     fontsize=20, fontweight='bold', y=0.97)
+        plt.subplots_adjust(left=0.05, top=0.93, right=0.95, bottom=0.05, hspace=0.35, wspace=0.35)
         
         filename = f"stc_{(1000+epoch)*1000+sample}"
         output_file = frames_path / f"{filename}.png"
@@ -542,8 +544,12 @@ def plot_all(epoch, samples=[0, 400, 799]):
         
         #---
         
+        # Add clear title with subject, condition, band
+        plt.suptitle(f"SUJETO: {subject} | CONDICIÓN: {cond} | BANDA: {band} | Época {epoch+1}/{num_epochs} | Sample {sample}", 
+                     fontsize=20, fontweight='bold', y=0.98)
+        
         #plt.tight_layout()
-        plt.subplots_adjust(left = 0.05, top = 0.95, right = 0.95, bottom = 0.05, hspace = 0.35, wspace = 0.35)
+        plt.subplots_adjust(left = 0.05, top = 0.96, right = 0.95, bottom = 0.05, hspace = 0.35, wspace = 0.35)
     
         filename = str((1000+epoch)*1000+sample)
         output_file = frames_path / f"{filename}.png"

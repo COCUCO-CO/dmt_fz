@@ -8,7 +8,7 @@ import matplotlib
 matplotlib.use('Agg')  # Use non-GUI backend to avoid tkinter warnings
 import matplotlib.pyplot as plt
 
-BASE_DIR = Path(__file__).resolve().parent
+BASE_DIR = Path(__file__).resolve().parent.parent  # Go up from pipeline/ to project root
 RESULTS_DIR = BASE_DIR / "fwd-inv-stc"
 EEG_DIR = BASE_DIR / "EEG_CLEAN"
 SPECTRAL_DIR = BASE_DIR / "spectral_sources"
@@ -248,7 +248,7 @@ band_list = ["Delta", "Theta", "Alpha", "Beta", "Gamma"]
 #band_list = ["Gamma","Beta","Alpha","Theta","Delta"]
 hemi_list = ["RH", "both", "LH"]
 net_list = ["FPN", "DMN", "DAN", "LN " , "SVA", "SMN", "VN "]
-cond_list = ["DMT\\", "EC\\"]
+cond_list = ["DMT\\", "EC\\", "EO\\"]
 path = RESULTS_DIR
 
 scale = 7
@@ -789,139 +789,158 @@ band_list = ["Delta", "Theta", "Alpha", "Beta", "Gamma"]
 #band_list = ["Gamma","Beta","Alpha","Theta","Delta"]
 hemi_list = ["RH", "both", "LH"]
 net_list = ["FPN", "DMN", "DAN", "LN " , "SVA", "SMN", "VN "]
-cond_list = ["DMT\\", "EC\\"]
+cond_list = ["DMT\\", "EC\\", "EO\\"]
 path = RESULTS_DIR
 
 scale = 4
 hemi = "both"
 
-#for band in band_list:
-print(f"[INFO] Generating coherence histograms for conditions {cond_list[0]} vs {cond_list[1]} (hemi={hemi}) with FDR correction")
-fig, axs = plt.subplots(figsize=(7*scale,5*scale), ncols=7, nrows=5)
+# Generate histograms for all condition pairs
+from itertools import combinations
+condition_pairs = list(combinations(cond_list, 2))
+print(f"[INFO] Generating coherence histograms for condition pairs: {condition_pairs} (hemi={hemi}) with FDR correction")
 
-# FIRST PASS: Calculate all p-values for FDR correction
-print("[INFO] Calculating all p-values for FDR correction...")
-pvalues_matrix = np.ones((len(band_list), len(net_list)))
-data_cache = {}
+for cond_pair in condition_pairs:
+    print(f"[INFO] Processing pair {cond_pair[0]} vs {cond_pair[1]}")
+    fig, axs = plt.subplots(figsize=(7*scale,5*scale), ncols=7, nrows=5)
 
-#for i, hemi in enumerate(hemi_list):
-for i, band in enumerate(band_list):
-    for j, net in enumerate(net_list):
-        # Remove backslash from cond_list to match r_dict keys
-        cond1_str = cond_list[0].replace("\\","")  # 'DMT'
-        cond2_str = cond_list[1].replace("\\","")  # 'EC'
-        
-        # Use r_dict2 (coherence data) with backslash keys
-        try:
-            cond1 = r_dict2[cond_list[0]][band][net]
-            cond2 = r_dict2[cond_list[1]][band][net]
-        except (KeyError, TypeError) as e:
-            print(f"[WARN] Skipping histogram {band}/{net}: {cond_list[0]} or {cond_list[1]} data not complete")
-            continue
-        
-        # Flatten and clean data
-        cond1_flat = flatten_and_extract_numbers(cond1)
-        cond2_flat = flatten_and_extract_numbers(cond2)
-        
-        # Use paired outlier rejection to maintain subject correspondence
-        cond1_array = np.asarray(cond1_flat, dtype=float) if cond1_flat else np.array([])
-        cond2_array = np.asarray(cond2_flat, dtype=float) if cond2_flat else np.array([])
-        
-        if len(cond1_array) > 0 and len(cond2_array) > 0:
-            cond1, cond2 = reject_outliers_paired(cond1_array, cond2_array)
-        else:
-            cond1, cond2 = cond1_array, cond2_array
-        
-        # Store data for second pass
-        data_cache[(i, j)] = (cond1, cond2, cond1_str, cond2_str)
-        
-        # Calculate p-value for FDR correction using PAIRED t-test
-        if len(cond1) > 1 and len(cond2) > 1:
-            statistic, pvalue = stats.ttest_rel(cond1, cond2)  # Changed to paired t-test
-            pvalues_matrix[i, j] = pvalue
+    # FIRST PASS: Calculate all p-values for FDR correction
+    print("[INFO] Calculating all p-values for FDR correction...")
+    pvalues_matrix = np.ones((len(band_list), len(net_list)))
+    data_cache = {}
 
-# Apply FDR correction (Benjamini-Hochberg)
-pvalues_flat = pvalues_matrix.flatten()
-rejected, pvalues_corrected = fdrcorrection(pvalues_flat, alpha=0.05)
-pvalues_corrected = pvalues_corrected.reshape(len(band_list), len(net_list))
-rejected = rejected.reshape(len(band_list), len(net_list))
+    #for i, hemi in enumerate(hemi_list):
+    for i, band in enumerate(band_list):
+        for j, net in enumerate(net_list):
+            # Remove backslash from cond_list to match r_dict keys
+            cond1_str = cond_pair[0].replace("\\","")
+            cond2_str = cond_pair[1].replace("\\","")
+            
+            # Use r_dict2 (coherence data) with backslash keys
+            try:
+                cond1 = r_dict2[cond_pair[0]][band][net]
+                cond2 = r_dict2[cond_pair[1]][band][net]
+            except (KeyError, TypeError) as e:
+                print(f"[WARN] Skipping histogram {band}/{net}: {cond_pair[0]} or {cond_pair[1]} data not complete")
+                continue
+            
+            # Flatten and clean data
+            cond1_flat = flatten_and_extract_numbers(cond1)
+            cond2_flat = flatten_and_extract_numbers(cond2)
+            
+            # Convert to arrays
+            cond1_array = np.asarray(cond1_flat, dtype=float) if cond1_flat else np.array([])
+            cond2_array = np.asarray(cond2_flat, dtype=float) if cond2_flat else np.array([])
+            
+            # Try paired analysis if lengths match, otherwise use independent
+            use_paired = False
+            if len(cond1_array) > 0 and len(cond2_array) > 0:
+                if len(cond1_array) == len(cond2_array):
+                    # Same length: paired analysis
+                    cond1, cond2 = reject_outliers_paired(cond1_array, cond2_array)
+                    use_paired = True
+                else:
+                    # Different lengths: independent analysis
+                    cond1 = reject_outliers(cond1_array)
+                    cond2 = reject_outliers(cond2_array)
+                    use_paired = False
+            else:
+                cond1 = cond1_array
+                cond2 = cond2_array
+            
+            # Store data for second pass
+            data_cache[(i, j)] = (cond1, cond2, cond1_str, cond2_str)
+            
+            # Calculate p-value for FDR correction using appropriate t-test
+            if len(cond1) > 1 and len(cond2) > 1:
+                if use_paired:
+                    statistic, pvalue = stats.ttest_rel(cond1, cond2)  # Paired t-test
+                else:
+                    statistic, pvalue = stats.ttest_ind(cond1, cond2)  # Independent t-test
+                pvalues_matrix[i, j] = pvalue
 
-n_significant = rejected.sum()
-n_total = len(pvalues_flat)
-print(f"[INFO] FDR correction (α=0.05): {n_significant}/{n_total} comparisons significant ({100*n_significant/n_total:.1f}%)")
+    # Apply FDR correction (Benjamini-Hochberg)
+    pvalues_flat = pvalues_matrix.flatten()
+    rejected, pvalues_corrected = fdrcorrection(pvalues_flat, alpha=0.05)
+    pvalues_corrected = pvalues_corrected.reshape(len(band_list), len(net_list))
+    rejected = rejected.reshape(len(band_list), len(net_list))
 
-# SECOND PASS: Plot with FDR-corrected significance
-for i, band in enumerate(band_list):
-    for j, net in enumerate(net_list):
-        if (i, j) not in data_cache:
-            continue
-        
-        cond1, cond2, cond1_str, cond2_str = data_cache[(i, j)]
-        
-        axs[i][j].hist(cond1, bins=50, alpha=0.5, density=True)
-        axs[i][j].hist(cond2, bins=50, alpha=0.5, density=True)
-        
-        xmin, xmax = axs[i][j].get_xlim()
-        x = np.linspace(xmin, xmax, 100)
-        
-        mu1, std1 = norm.fit(cond1)
-        mu2, std2 = norm.fit(cond2)
-        p1 = norm.pdf(x, mu1, std1)
-        p2 = norm.pdf(x, mu2, std2)
-        
-        axs[i][j].plot(x, p1, colors[0], linewidth=2, label=cond1_str)
-        axs[i][j].plot(x, p2, colors[1], linewidth=2, label=cond2_str)
-        
-        axs[i][j].axvline(x=mu1, linestyle="--", linewidth=2, color=colors[0])
-        axs[i][j].axvline(x=mu2, linestyle="--", linewidth=2, color=colors[1])
-        
-        # Use FDR-corrected p-value
-        pvalue_corrected = pvalues_corrected[i, j]
-        is_significant = rejected[i, j]
-        
-        # Format p-value with FDR-corrected significance indicators and colors
-        if is_significant:
-            if pvalue_corrected < 0.001:
-                pvalue_str = f'p < 0.001 ***'
-                txt_color = 'green'
-                txt_weight = 'bold'
-            elif pvalue_corrected < 0.01:
-                pvalue_str = f'p = {pvalue_corrected:.4f} **'
-                txt_color = 'darkgreen'
-                txt_weight = 'bold'
-            else:  # < 0.05
-                pvalue_str = f'p = {pvalue_corrected:.4f} *'
-                txt_color = 'orange'
-                txt_weight = 'bold'
-        else:
-            pvalue_str = f'p = {pvalue_corrected:.4f} n.s.'
-            txt_color = 'gray'
-            txt_weight = 'normal'
-        
-        axs[i][j].text(0.05, 0.95, pvalue_str, transform=axs[i][j].transAxes,
-                       fontsize=12, ha="left", va="top", color=txt_color, weight=txt_weight)
-        axs[i][j].legend()
+    n_significant = rejected.sum()
+    n_total = len(pvalues_flat)
+    print(f"[INFO] FDR correction (α=0.05): {n_significant}/{n_total} comparisons significant ({100*n_significant/n_total:.1f}%)")
 
-for ax, col in zip(axs[0], net_list):
-    ax.set_title(col, size=24)
-for ax, row in zip(axs[:,0], band_list):
-    ax.set_ylabel(row, size=24) #rotation=0, size='large')
+    # SECOND PASS: Plot with FDR-corrected significance
+    for i, band in enumerate(band_list):
+        for j, net in enumerate(net_list):
+            if (i, j) not in data_cache:
+                continue
+            
+            cond1, cond2, cond1_str, cond2_str = data_cache[(i, j)]
+            
+            axs[i][j].hist(cond1, bins=50, alpha=0.5, density=True)
+            axs[i][j].hist(cond2, bins=50, alpha=0.5, density=True)
+            
+            xmin, xmax = axs[i][j].get_xlim()
+            x = np.linspace(xmin, xmax, 100)
+            
+            mu1, std1 = norm.fit(cond1)
+            mu2, std2 = norm.fit(cond2)
+            p1 = norm.pdf(x, mu1, std1)
+            p2 = norm.pdf(x, mu2, std2)
+            
+            axs[i][j].plot(x, p1, colors[0], linewidth=2, label=cond1_str)
+            axs[i][j].plot(x, p2, colors[1], linewidth=2, label=cond2_str)
+            
+            axs[i][j].axvline(x=mu1, linestyle="--", linewidth=2, color=colors[0])
+            axs[i][j].axvline(x=mu2, linestyle="--", linewidth=2, color=colors[1])
+            
+            # Use FDR-corrected p-value
+            pvalue_corrected = pvalues_corrected[i, j]
+            is_significant = rejected[i, j]
+            
+            # Format p-value with FDR-corrected significance indicators and colors
+            if is_significant:
+                if pvalue_corrected < 0.001:
+                    pvalue_str = f'p < 0.001 ***'
+                    txt_color = 'green'
+                    txt_weight = 'bold'
+                elif pvalue_corrected < 0.01:
+                    pvalue_str = f'p = {pvalue_corrected:.4f} **'
+                    txt_color = 'darkgreen'
+                    txt_weight = 'bold'
+                else:  # < 0.05
+                    pvalue_str = f'p = {pvalue_corrected:.4f} *'
+                    txt_color = 'orange'
+                    txt_weight = 'bold'
+            else:
+                pvalue_str = f'p = {pvalue_corrected:.4f} n.s.'
+                txt_color = 'gray'
+                txt_weight = 'normal'
+            
+            axs[i][j].text(0.05, 0.95, pvalue_str, transform=axs[i][j].transAxes,
+                           fontsize=12, ha="left", va="top", color=txt_color, weight=txt_weight)
+            axs[i][j].legend()
+
+    for ax, col in zip(axs[0], net_list):
+        ax.set_title(col, size=24)
+    for ax, row in zip(axs[:,0], band_list):
+        ax.set_ylabel(row, size=24) #rotation=0, size='large')
 
 
-title = "Kuramoto r Order Parameter - "
-fig.suptitle(title+cond1_str+" vs "+cond2_str, size=36)
-fig.tight_layout()
-fig.subplots_adjust(top=0.88)
-save_figure(
-    fig,
-    "histogram_coherence",
-    cond1_str,
-    "vs",
-    cond2_str,
-    "hemi_both",
-    "bands_all",
-    "nets_all",
-)
+    title = "Kuramoto r Order Parameter - "
+    fig.suptitle(title+cond1_str+" vs "+cond2_str, size=36)
+    fig.tight_layout()
+    fig.subplots_adjust(top=0.88)
+    save_figure(
+        fig,
+        "histogram_coherence",
+        cond1_str,
+        "vs",
+        cond2_str,
+        "hemi_both",
+        "bands_all",
+        "nets_all",
+    )
 
 #%%
 
@@ -965,24 +984,30 @@ r_dict_all_mean = load_file(path / "r_kuramoto_nets_all_mean.pkl")
 
 #%%
 from itertools import combinations_with_replacement as comb
+from itertools import combinations
 
 hemi="both"
 
-for band in band_list:
-    print(f"[INFO] Generating network-pair histograms for band {band} ({cond_list[0]} vs {cond_list[1]}, hemi={hemi}) with FDR correction")
-    fig, axs = plt.subplots(figsize=(21*scale,5*scale), ncols=7, nrows=7)
-    
-    # FIRST PASS: Calculate all p-values for FDR correction
-    n_pairs = sum(1 for i in range(len(net_list)) for j in range(len(net_list)) if i <= j)
-    pvalues_list = []
-    data_cache_pairs = {}
-    pair_indices = []
-    
-    for i, net1 in enumerate(net_list):
-        for j, net2 in enumerate(net_list):
-            if i <= j:
-                cond1_str = cond_list[0].replace("\\","")
-                cond2_str = cond_list[1].replace("\\","")
+# Generate all pairwise comparisons between conditions
+condition_pairs = list(combinations(cond_list, 2))
+print(f"[INFO] Will generate network-pair histograms for condition pairs: {condition_pairs}")
+
+for cond_pair in condition_pairs:
+    for band in band_list:
+        print(f"[INFO] Generating network-pair histograms for band {band} ({cond_pair[0]} vs {cond_pair[1]}, hemi={hemi}) with FDR correction")
+        fig, axs = plt.subplots(figsize=(21*scale,5*scale), ncols=7, nrows=7)
+        
+        # FIRST PASS: Calculate all p-values for FDR correction
+        n_pairs = sum(1 for i in range(len(net_list)) for j in range(len(net_list)) if i <= j)
+        pvalues_list = []
+        data_cache_pairs = {}
+        pair_indices = []
+        
+        for i, net1 in enumerate(net_list):
+            for j, net2 in enumerate(net_list):
+                if i <= j:
+                    cond1_str = cond_pair[0].replace("\\","")
+                    cond2_str = cond_pair[1].replace("\\","")
                 cond1 = r_dict_all_mean[cond1_str][band][hemi][net1][net2]
                 cond2 = r_dict_all_mean[cond2_str][band][hemi][net1][net2]
                 
@@ -990,21 +1015,35 @@ for band in band_list:
                 cond1_flat = flatten_and_extract_numbers(cond1)
                 cond2_flat = flatten_and_extract_numbers(cond2)
                 
-                # Use paired outlier rejection to maintain subject correspondence
+                # Convert to arrays
                 cond1_array = np.asarray(cond1_flat, dtype=float) if cond1_flat else np.array([])
                 cond2_array = np.asarray(cond2_flat, dtype=float) if cond2_flat else np.array([])
                 
+                # Try paired analysis if lengths match, otherwise use independent
+                use_paired = False
                 if len(cond1_array) > 0 and len(cond2_array) > 0:
-                    cond1, cond2 = reject_outliers_paired(cond1_array, cond2_array)
+                    if len(cond1_array) == len(cond2_array):
+                        # Same length: paired analysis
+                        cond1, cond2 = reject_outliers_paired(cond1_array, cond2_array)
+                        use_paired = True
+                    else:
+                        # Different lengths: independent analysis
+                        cond1 = reject_outliers(cond1_array)
+                        cond2 = reject_outliers(cond2_array)
+                        use_paired = False
                 else:
-                    cond1, cond2 = cond1_array, cond2_array
+                    cond1 = cond1_array
+                    cond2 = cond2_array
                 
                 # Store data for second pass
                 data_cache_pairs[(i, j)] = (cond1, cond2, cond1_str, cond2_str)
                 
-                # Calculate p-value using PAIRED t-test
+                # Calculate p-value using appropriate t-test
                 if len(cond1) > 1 and len(cond2) > 1:
-                    statistic, pvalue = stats.ttest_rel(cond1, cond2)  # Changed to paired t-test
+                    if use_paired:
+                        statistic, pvalue = stats.ttest_rel(cond1, cond2)  # Paired t-test
+                    else:
+                        statistic, pvalue = stats.ttest_ind(cond1, cond2)  # Independent t-test
                     pvalues_list.append(pvalue)
                 else:
                     pvalues_list.append(1.0)
@@ -1075,22 +1114,22 @@ for band in band_list:
                 pair_idx += 1
             else:
                 axs[i][j].remove() 
-    
-    for ax, col in zip(axs[0], net_list):
-        ax.set_title(col, size=24)
-    for ax, row in zip(axs[:,0], net_list):
-        ax.set_ylabel(row, size=24) #rotation=0, size='large')
-    
-    title = "Kuramoto r Order Parameter - "+band+" - "
-    fig.suptitle(title+cond1_str+" vs "+cond2_str, size=36)
-    fig.tight_layout()
-    fig.subplots_adjust(top=0.88)
-    save_figure(
-        fig,
-        "histogram_coherence_pairs",
-        band,
-        cond1_str,
-        "vs",
-        cond2_str,
-        "hemi_both",
-    )
+        
+        for ax, col in zip(axs[0], net_list):
+            ax.set_title(col, size=24)
+        for ax, row in zip(axs[:,0], net_list):
+            ax.set_ylabel(row, size=24) #rotation=0, size='large')
+        
+        title = "Kuramoto r Order Parameter - "+band+" - "
+        fig.suptitle(title+cond1_str+" vs "+cond2_str, size=36)
+        fig.tight_layout()
+        fig.subplots_adjust(top=0.88)
+        save_figure(
+            fig,
+            "histogram_coherence_pairs",
+            band,
+            cond1_str,
+            "vs",
+            cond2_str,
+            "hemi_both",
+        )
