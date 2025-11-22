@@ -23,6 +23,11 @@ fwd-inv-stc/EO/*.pkl
 # Video and image outputs
 frames/
 *.mp4
+# BUT allow visualizations/ folder (explicitly track all outputs there)
+!visualizations/**/*.mp4
+!visualizations/**/*.png
+!visualizations/**/*.html
+!visualizations/**
 
 # MATLAB files
 *.mat
@@ -40,6 +45,7 @@ pearson_results/*.png
 plot_order_results/*.png
 results_plots/*.png
 results_plots/*.html
+# NOTE: visualizations/ is explicitly included (see above)
 
 # Archives
 *.zip
