@@ -41,7 +41,6 @@ EEGNet/models/
 
 # Results directories with heavy outputs
 autocorrelacion_resultados/*.png
-pearson_results/*.png
 plot_order_results/*.png
 results_plots/*.png
 results_plots/*.html
