@@ -171,10 +171,12 @@ class BrainStateGAT(nn.Module):
         elif pooling_method == "set2set":
             self.pool = Set2Set(current_dim, processing_steps=3)
             pooled_dim = current_dim * 2
-        else:  # mean, max, or add
+        elif pooling_method in ["mean", "max", "add"]:
             self.pool = None
-            # We'll use mean + max pooling combined
-            pooled_dim = current_dim * 2
+            pooled_dim = current_dim  # Single pooling
+        else:  # mean+max combined
+            self.pool = None
+            pooled_dim = current_dim * 2  # mean + max concatenated
         
         self.pooling_method = pooling_method
         
@@ -241,7 +243,18 @@ class BrainStateGAT(nn.Module):
         """
         x, edge_index, batch = data.x, data.edge_index, data.batch
         edge_attr = data.edge_attr if hasattr(data, 'edge_attr') else None
-        graph_attr = data.graph_attr if hasattr(data, 'graph_attr') else None
+        
+        # Handle graph_attr - ensure it's [batch_size, num_graph_features]
+        if hasattr(data, 'graph_attr') and data.graph_attr is not None:
+            graph_attr = data.graph_attr
+            # If graph_attr is 1D, it means it's a single graph feature vector
+            # We need to replicate it for each graph in the batch
+            if graph_attr.dim() == 1:
+                # This is for a single graph, replicate for batch
+                num_graphs = int(batch.max()) + 1
+                graph_attr = graph_attr.unsqueeze(0).repeat(num_graphs, 1)
+        else:
+            graph_attr = None
         
         # Encode edge attributes (only for GATv2)
         if self.edge_encoder is not None and edge_attr is not None:
@@ -278,6 +291,8 @@ class BrainStateGAT(nn.Module):
         elif self.pooling_method == "add":
             h_graph = global_add_pool(h, batch)
         else:
+            # This should not happen with config pooling="mean"
+            logger.error(f"Unexpected pooling_method: '{self.pooling_method}' - using mean+max fallback")
             # Combined mean + max pooling
             h_mean = global_mean_pool(h, batch)
             h_max = global_max_pool(h, batch)
@@ -292,32 +307,73 @@ class BrainStateGAT(nn.Module):
         
         return F.log_softmax(out, dim=1)
     
-    def get_attention_weights(self, data: Batch) -> torch.Tensor:
+    def get_attention_weights(self, data: Batch, layer_idx: int = 0):
         """
-        Extract attention weights from the first layer (only for GATv2).
+        Extract attention weights from a specific GAT layer (only for GATv2).
         
         Args:
             data: Batch of PyTorch Geometric Data objects
+            layer_idx: Which GAT layer to extract attention from (0 = first layer)
             
         Returns:
-            Attention weights tensor (only for GATv2)
+            Tuple of (edge_index, attention_weights)
         """
         if self.conv_type != 'gatv2':
             logger.warning("Attention weights only available for GATv2Conv")
             return None, None
         
+        if layer_idx >= len(self.conv_layers):
+            raise ValueError(f"Layer index {layer_idx} out of range (model has {len(self.conv_layers)} layers)")
+        
         x, edge_index = data.x, data.edge_index
         edge_attr = data.edge_attr if hasattr(data, 'edge_attr') else None
         
+        # Encode edge attributes
         if self.edge_encoder is not None and edge_attr is not None:
             edge_attr = self.edge_encoder(edge_attr)
         
-        # Get attention weights from first layer
-        _, (edge_index_att, alpha) = self.conv_layers[0](
-            x, edge_index, edge_attr=edge_attr, return_attention_weights=True
-        )
+        # Forward through layers up to layer_idx
+        h = x
+        for i in range(layer_idx + 1):
+            if i == layer_idx:
+                # Get attention weights from target layer
+                _, (edge_index_att, alpha) = self.conv_layers[i](
+                    h, edge_index, edge_attr=edge_attr, return_attention_weights=True
+                )
+            else:
+                # Normal forward pass
+                if self.conv_type == 'gatv2':
+                    h = self.conv_layers[i](h, edge_index, edge_attr=edge_attr)
+                else:
+                    h = self.conv_layers[i](h, edge_index)
+                
+                h = self.batch_norms[i](h)
+                h = F.elu(h)
+                h = F.dropout(h, p=self.dropout, training=False)
         
         return edge_index_att, alpha
+    
+    def get_all_attention_weights(self, data: Batch):
+        """
+        Extract attention weights from ALL GAT layers (only for GATv2).
+        
+        Args:
+            data: Batch of PyTorch Geometric Data objects
+            
+        Returns:
+            List of tuples (edge_index, attention_weights) for each layer
+        """
+        if self.conv_type != 'gatv2':
+            logger.warning("Attention weights only available for GATv2Conv")
+            return []
+        
+        all_attentions = []
+        
+        for layer_idx in range(len(self.conv_layers)):
+            edge_index_att, alpha = self.get_attention_weights(data, layer_idx)
+            all_attentions.append((edge_index_att, alpha))
+        
+        return all_attentions
 
 
 def create_model_from_config(config: Dict[str, Any],

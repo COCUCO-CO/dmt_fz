@@ -31,6 +31,7 @@ sys.path.append(str(Path(__file__).parent))
 from data import create_dataset_from_config
 from models import create_model_from_config
 from utils import setup_logging, log_metrics, plot_training_curves, plot_confusion_matrix
+from utils import log_attention_to_tensorboard, plot_attention_distributions, plot_average_attention
 from utils.visualization import plot_graph_statistics
 
 logger = logging.getLogger(__name__)
@@ -59,8 +60,8 @@ def create_optimizer(model: nn.Module, config: Dict[str, Any]) -> optim.Optimize
     """Create optimizer from config."""
     train_config = config['training']
     optimizer_name = train_config['optimizer'].lower()
-    lr = train_config['learning_rate']
-    weight_decay = train_config['weight_decay']
+    lr = float(train_config['learning_rate'])
+    weight_decay = float(train_config['weight_decay'])
     
     if optimizer_name == 'adam':
         optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
@@ -87,22 +88,21 @@ def create_scheduler(optimizer: optim.Optimizer, config: Dict[str, Any]):
         scheduler = optim.lr_scheduler.ReduceLROnPlateau(
             optimizer,
             mode='min',
-            patience=scheduler_config['patience'],
-            factor=scheduler_config['factor'],
-            min_lr=scheduler_config['min_lr'],
-            verbose=True
+            patience=int(scheduler_config['patience']),
+            factor=float(scheduler_config['factor']),
+            min_lr=float(scheduler_config['min_lr'])
         )
     elif scheduler_type == 'cosine':
         scheduler = optim.lr_scheduler.CosineAnnealingLR(
             optimizer,
-            T_max=config['training']['num_epochs'],
-            eta_min=scheduler_config['min_lr']
+            T_max=int(config['training']['num_epochs']),
+            eta_min=float(scheduler_config['min_lr'])
         )
     elif scheduler_type == 'step':
         scheduler = optim.lr_scheduler.StepLR(
             optimizer,
-            step_size=scheduler_config.get('step_size', 30),
-            gamma=scheduler_config['factor']
+            step_size=int(scheduler_config.get('step_size', 30)),
+            gamma=float(scheduler_config['factor'])
         )
     else:
         raise ValueError(f"Unknown scheduler: {scheduler_type}")
@@ -310,8 +310,13 @@ def main(config_path: str, force_rebuild: bool = False):
     if class_weights is not None:
         class_weights = torch.tensor(class_weights, dtype=torch.float).to(device)
     
+    # Note: NLLLoss doesn't support label_smoothing (only CrossEntropyLoss does)
+    # Since our model outputs log_softmax, we use NLLLoss
     label_smoothing = config['training']['label_smoothing']
-    criterion = nn.NLLLoss(weight=class_weights, label_smoothing=label_smoothing)
+    if label_smoothing > 0:
+        logger.warning(f"label_smoothing={label_smoothing} specified but NLLLoss doesn't support it. Ignoring.")
+    
+    criterion = nn.NLLLoss(weight=class_weights)
     
     # Optimizer and scheduler
     optimizer = create_optimizer(model, config)
@@ -376,6 +381,15 @@ def main(config_path: str, force_rebuild: bool = False):
             writer.add_scalar('Accuracy/train', train_acc, epoch)
             writer.add_scalar('Accuracy/val', val_acc, epoch)
             writer.add_scalar('Learning_rate', optimizer.param_groups[0]['lr'], epoch)
+            
+            # Log attention weights periodically (same frequency as checkpoints)
+            save_frequency = config['logging']['save_frequency']
+            if epoch % save_frequency == 0 and config['model']['architecture']['conv_type'] == 'gatv2':
+                try:
+                    logger.info(f"Logging attention weights for epoch {epoch}...")
+                    log_attention_to_tensorboard(writer, model, val_loader, device, epoch, num_samples=5)
+                except Exception as e:
+                    logger.warning(f"Failed to log attention weights: {e}")
         
         # Scheduler step
         if scheduler:
@@ -484,6 +498,35 @@ def main(config_path: str, force_rebuild: bool = False):
             title='Test Set Confusion Matrix'
         )
     
+    # ========================================================================
+    # ATTENTION VISUALIZATION (Final)
+    # ========================================================================
+    
+    if config['model']['architecture']['conv_type'] == 'gatv2':
+        logger.info("=" * 80)
+        logger.info("Generating attention visualizations...")
+        logger.info("=" * 80)
+        
+        attention_dir = output_dir / 'attention'
+        attention_dir.mkdir(exist_ok=True)
+        
+        try:
+            # Plot attention distributions per layer
+            from utils import extract_attention_matrices
+            attention_stats = extract_attention_matrices(model, test_loader, device, num_samples=100)
+            plot_attention_distributions(attention_stats, save_path=attention_dir / 'attention_distributions.png')
+            logger.info(f"✓ Saved attention distributions to {attention_dir / 'attention_distributions.png'}")
+            
+            # Plot average attention matrices
+            num_nodes = test_graphs[0].num_nodes
+            channel_names = None  # Could load from extra.pkl if needed
+            plot_average_attention(model, test_loader, device, num_nodes,
+                                 save_dir=attention_dir, channel_names=channel_names)
+            logger.info(f"✓ Saved average attention matrices to {attention_dir}/")
+            
+        except Exception as e:
+            logger.warning(f"Failed to generate attention visualizations: {e}")
+    
     # Close TensorBoard writer
     if writer:
         writer.close()
@@ -493,6 +536,8 @@ def main(config_path: str, force_rebuild: bool = False):
     logger.info(f"  - Model: {checkpoint_dir / 'best_model.pt'}")
     logger.info(f"  - Results: {output_dir / 'test_results.json'}")
     logger.info(f"  - Visualizations: {output_dir}")
+    if config['model']['architecture']['conv_type'] == 'gatv2':
+        logger.info(f"  - Attention: {attention_dir}")
     logger.info("=" * 80)
 
 

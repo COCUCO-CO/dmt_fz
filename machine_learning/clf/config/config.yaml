@@ -63,7 +63,7 @@ model:
     negative_slope: 0.2  # LeakyReLU negative slope
     
   pooling:
-    method: "attention"  # "mean", "max", "attention", "set2set"
+    method: "mean"  # "mean", "max", "add" (sum pooling)
     pooling_ratio: 0.5  # For hierarchical pooling
   
   mlp:

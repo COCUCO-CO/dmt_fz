@@ -90,21 +90,26 @@ machine_learning/clf/
 
 ## 🚀 Quick Start
 
-### Step 1: Configure
+### ⚠️ IMPORTANT: Per-Band Training Strategy
 
-Edit `config/config.yaml` to match your setup:
+**Recommended approach:** Train separate models for each frequency band to avoid confounding band-specific patterns with condition-specific patterns.
 
-```yaml
-paths:
-  phases_dir: "/media/storage_hdd/dmt_fz/fwd-inv-stc"  # Your phases-*.pkl location
-  
-data:
-  conditions: ["DMT", "EC", "EO"]  # Classes to classify
-  bands: ["Delta", "Theta", "Alpha", "Beta", "Gamma"]
-  use_stc: true  # Use source space (true) or electrode space (false)
+**Quick test with Alpha band (30-60 min):**
+```bash
+cd /media/storage_hdd/dmt_fz/machine_learning/clf
+./quick_train_alpha.sh
 ```
 
-### Step 2: Run Full Pipeline
+**Train all bands (2-5 hours):**
+```bash
+python train_per_band.py
+```
+
+📖 **See `PER_BAND_GUIDE.md` for detailed explanation of why this is methodologically correct.**
+
+### Alternative: Mixed Multi-Band Training (Not Recommended)
+
+If you want to quickly test the pipeline with all bands mixed (exploratory only):
 
 ```bash
 cd /media/storage_hdd/dmt_fz/machine_learning/clf
@@ -112,26 +117,38 @@ chmod +x run_pipeline.sh
 ./run_pipeline.sh
 ```
 
-This will:
-1. Build graph dataset from `phases-*.pkl` files
-2. Analyze graph statistics (DMT vs EC vs EO)
-3. Train GAT model with TensorBoard logging
-4. Generate visualizations and results
+⚠️ **Note:** This mixes graphs from different bands in the same dataset, which confounds band-specific with condition-specific patterns. Use only for initial exploration.
 
 ### Step 3: View Results
 
-**TensorBoard:**
+**Per-band training (recommended):**
 ```bash
-tensorboard --logdir=runs
-# Open browser to http://localhost:6006
+# View results for each band
+cat output_alpha/test_results.json
+cat output_theta/test_results.json
+# ... etc
+
+# View comparison across all bands
+cat band_comparison_results.json
+
+# TensorBoard for specific band
+tensorboard --logdir=runs_alpha
+
+# Or view all bands together
+tensorboard --logdir_spec=Delta:runs_delta,Theta:runs_theta,Alpha:runs_alpha,Beta:runs_beta,Gamma:runs_gamma
 ```
 
-**Output files:**
-- `output/test_results.json` - Final metrics
-- `output/training_curves.png` - Loss/accuracy plots
-- `output/confusion_matrix.png` - Classification results
-- `output/analysis/` - Statistical comparisons
-- `checkpoints/best_model.pt` - Trained model
+**Mixed training (if used):**
+```bash
+tensorboard --logdir=runs
+cat output/test_results.json
+```
+
+**Output files (per-band):**
+- `output_alpha/test_results.json` - Alpha band metrics
+- `output_alpha/confusion_matrix.png` - Alpha confusion matrix
+- `checkpoints_alpha/best_model.pt` - Alpha trained model
+- `band_comparison_results.json` - Summary across all bands
 
 ---
 
@@ -190,6 +207,36 @@ early_stopping:
 ---
 
 ## 🔧 Advanced Usage
+
+### Per-Band Training (Recommended)
+
+Train separate models for each frequency band:
+
+```bash
+# Train all bands
+python train_per_band.py
+
+# Train specific bands only
+python train_per_band.py --bands Alpha Theta
+
+# Force rebuild datasets
+python train_per_band.py --force-rebuild
+```
+
+### Ensemble Predictions
+
+Combine predictions from multiple band-specific models:
+
+```bash
+# Average probabilities (default)
+python ensemble_bands.py --method average
+
+# Weighted average (by validation accuracy)
+python ensemble_bands.py --method weighted
+
+# Majority voting
+python ensemble_bands.py --method voting
+```
 
 ### Train with Custom Config
 
