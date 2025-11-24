@@ -406,6 +406,50 @@ cd EEGNet
 python EEGNet\ REG.py  # o EEGNet\ CLF.py
 ```
 
+### **machine_learning/clf/** 🕸️ ⭐ NUEVO
+
+Graph Neural Networks (GAT) para clasificación de estados cerebrales.
+
+#### **¿Por qué GNN?**
+- ✅ Usa las matrices de sincronización ya calculadas por el pipeline
+- ✅ Respeta la estructura de grafo natural del cerebro
+- ✅ Incorpora parámetros de Kuramoto, coherence y metastability
+- ✅ Proporciona attention weights interpretables
+- ✅ Coherente con el análisis de sincronización de fases
+
+#### **Arquitectura**
+```
+Época EEG → Grafo de Sincronización → GAT (4 layers, 8 heads) → Clasificador
+```
+
+#### **Features**
+- **Nodos**: Canales EEG o parcelas cerebrales (100 ROIs Schaefer)
+- **Aristas**: Valores de sincronización > threshold
+- **Node features**: Estadísticas de fase/amplitud, complejidad temporal
+- **Edge features**: Fuerza de sincronización
+- **Graph features**: Kuramoto mean/std, métricas topológicas
+
+#### **Entrenamiento Completo**
+```bash
+cd /media/storage_hdd/dmt_fz/machine_learning/clf
+./run_pipeline.sh
+```
+
+#### **Componentes**
+- `data/dataset_builder.py` - Construcción de grafos desde phases-*.pkl
+- `models/gat_model.py` - Arquitectura GAT con edge attributes
+- `train.py` - Entrenamiento con TensorBoard y early stopping
+- `analysis/analyze_graphs.py` - Análisis estadístico DMT vs EC vs EO
+- `analysis/visualize_attention.py` - Visualización de attention weights
+
+#### **Resultados**
+- Accuracy esperado: 70-85% (baseline aleatorio: 33%)
+- Visualizaciones: confusion matrix, training curves, attention heatmaps
+- Análisis estadístico de propiedades de grafos por condición
+- Comparación por bandas de frecuencia
+
+**Documentación completa:** `machine_learning/clf/README.md`
+
 ---
 
 ## 📦 Archivos Generados

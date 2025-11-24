@@ -1,0 +1,138 @@
+# ============================================================================
+# Graph Neural Network Configuration for EEG State Classification
+# ============================================================================
+
+# Paths
+paths:
+  phases_dir: "/media/storage_hdd/dmt_fz/fwd-inv-stc"
+  output_dir: "/media/storage_hdd/dmt_fz/machine_learning/clf/output"
+  dataset_cache: "/media/storage_hdd/dmt_fz/machine_learning/clf/data/cache"
+  checkpoints: "/media/storage_hdd/dmt_fz/machine_learning/clf/checkpoints"
+  tensorboard: "/media/storage_hdd/dmt_fz/machine_learning/clf/runs"
+
+# Data configuration
+data:
+  conditions: ["DMT", "EC", "EO"]  # Classes to classify
+  bands: ["Delta", "Theta", "Alpha", "Beta", "Gamma"]  # Frequency bands
+  use_stc: false  # true = Source space (100 parcelas Schaefer), false = Electrodes (24 channels)
+  
+  # Graph construction
+  graph:
+    fully_connected: true  # If true, create fully connected graph (all nodes connected)
+    edge_threshold: 0.3  # Minimum synchronization value to create edge (ignored if fully_connected=true)
+    edge_threshold_percentile: null  # Alternative: use percentile (e.g., 75)
+    max_edges_per_node: null  # Optional: limit edges per node (null = no limit)
+    self_loops: false  # Add self-loops to graph
+    directed: false  # Directed or undirected graph
+  
+  # Node features
+  node_features:
+    use_phase_stats: true  # Mean and std of phase
+    use_amplitude_stats: true  # Mean and std of amplitude
+    use_temporal_complexity: true  # Entropy, kurtosis, etc.
+    use_network_label: true  # One-hot encoding of brain network (FPN, DMN, etc.)
+  
+  # Graph-level features
+  graph_features:
+    use_kuramoto: true  # Mean and std of Kuramoto order parameter
+    use_global_sync: true  # Mean and std of synchronization matrix
+    use_topology: true  # Density, clustering coefficient, etc.
+  
+  # Data split
+  split:
+    train_ratio: 0.7
+    val_ratio: 0.15
+    test_ratio: 0.15
+    stratify: true  # Stratified split by class
+    random_state: 42
+    group_by_subject: true  # Keep all epochs from same subject together
+
+# Model configuration
+model:
+  name: "BrainStateGNN"
+  architecture:
+    conv_type: "gatv2"  # "gatv2" or "cheby" (GATv2Conv or ChebConv)
+    hidden_dim: 128
+    num_gat_layers: 2
+    num_attention_heads: 8  # Only for GATv2
+    cheby_k: 3  # Chebyshev filter size (only for cheby)
+    dropout: 0.4
+    attention_dropout: 0.2  # Only for GATv2
+    use_edge_attr: true
+    concat_heads: true  # Concatenate or average attention heads (only for GATv2)
+    negative_slope: 0.2  # LeakyReLU negative slope
+    
+  pooling:
+    method: "attention"  # "mean", "max", "attention", "set2set"
+    pooling_ratio: 0.5  # For hierarchical pooling
+  
+  mlp:
+    hidden_dims: [256, 128]  # Hidden layers after pooling
+    activation: "relu"
+    use_batch_norm: true
+    dropout: 0.5
+
+# Training configuration
+training:
+  num_epochs: 300
+  batch_size: 32
+  learning_rate: 0.001
+  weight_decay: 5e-4
+  optimizer: "adam"  # "adam", "adamw", "sgd"
+  scheduler:
+    type: "reduce_on_plateau"  # "reduce_on_plateau", "cosine", "step", null
+    patience: 15
+    factor: 0.5
+    min_lr: 1e-6
+  
+  early_stopping:
+    patience: 50
+    min_delta: 0.001
+  
+  gradient_clipping:
+    enabled: true
+    max_norm: 1.0
+  
+  class_weights: null  # null for balanced, or [w1, w2, w3] for weighted loss
+  
+  # Regularization
+  label_smoothing: 0.1
+
+# Evaluation
+evaluation:
+  metrics: ["accuracy", "precision", "recall", "f1", "confusion_matrix"]
+  average: "macro"  # For multi-class metrics
+  save_predictions: true
+  save_attention_weights: true
+
+# Reproducibility
+seed: 42
+deterministic: true
+
+# Hardware
+device: "cuda"  # "cuda", "cpu", or "cuda:0"
+num_workers: 4  # DataLoader workers (for batching during training)
+dataset_workers: 24  # Workers for dataset construction (set lower if memory errors)
+pin_memory: true
+
+# Logging
+logging:
+  level: "INFO"  # "DEBUG", "INFO", "WARNING", "ERROR"
+  tensorboard: true
+  save_frequency: 10  # Save model every N epochs
+  log_frequency: 1  # Log metrics every N batches
+  
+# Visualization
+visualization:
+  plot_training_curves: true
+  plot_confusion_matrix: true
+  plot_attention_heatmaps: true
+  plot_graph_statistics: true
+  num_examples_to_visualize: 10
+
+# Multi-band strategy
+multiband:
+  enabled: true  # Use all frequency bands
+  fusion: "late"  # "early" (concatenate features), "late" (ensemble), "hierarchical"
+  per_band_weights: null  # null for equal, or [w1, w2, w3, w4, w5]
+
