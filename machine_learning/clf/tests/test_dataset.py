@@ -46,7 +46,7 @@ class DatasetValidator:
     def _log_info(self, msg: str):
         self.info.append(f"✓ {msg}")
     
-    def validate_all(self) -> bool:
+    def validate_all(self, verbose: bool = True) -> bool:
         """Run all validations. Returns True if all critical checks pass."""
         print("\n" + "=" * 70)
         print("DATASET VALIDATION")
@@ -72,6 +72,10 @@ class DatasetValidator:
             print("\n--- ERRORS ---")
             for msg in self.errors:
                 print(msg)
+        
+        # Print subject assignment if verbose
+        if verbose:
+            self.print_subject_assignment()
         
         print("\n" + "=" * 70)
         if self.errors:
@@ -157,6 +161,14 @@ class DatasetValidator:
                 if hasattr(g, 'subject_id'):
                     subjects.add(g.subject_id)
             return subjects
+        
+        def get_subject_stats(graphs):
+            """Get per-subject statistics."""
+            subject_data = defaultdict(lambda: defaultdict(int))
+            for g in graphs:
+                if hasattr(g, 'subject_id'):
+                    subject_data[g.subject_id][g.y.item()] += 1
+            return subject_data
         
         train_subjects = get_subjects(self.train_graphs)
         val_subjects = get_subjects(self.val_graphs)
@@ -256,6 +268,38 @@ class DatasetValidator:
             isolated_graphs = sum(1 for ec in edge_counts if ec == 0)
             if isolated_graphs > 0:
                 self._log_warning(f"{split_name}: {isolated_graphs} graphs have no edges")
+    
+    def print_subject_assignment(self):
+        """Print detailed subject assignment per split."""
+        def get_subject_stats(graphs):
+            """Get per-subject statistics."""
+            subject_data = defaultdict(lambda: defaultdict(int))
+            for g in graphs:
+                if hasattr(g, 'subject_id'):
+                    subject_data[g.subject_id][g.y.item()] += 1
+            return subject_data
+        
+        train_stats = get_subject_stats(self.train_graphs)
+        val_stats = get_subject_stats(self.val_graphs)
+        test_stats = get_subject_stats(self.test_graphs)
+        
+        if not train_stats and not val_stats and not test_stats:
+            print("\n(No subject_id attribute found - cannot show subject assignment)")
+            return
+        
+        print("\n" + "=" * 70)
+        print("SUBJECT ASSIGNMENT PER SPLIT")
+        print("=" * 70)
+        
+        for split_name, stats in [('TRAIN', train_stats), ('VAL', val_stats), ('TEST', test_stats)]:
+            print(f"\n{split_name} subjects ({len(stats)}):")
+            for subj in sorted(stats.keys()):
+                class_counts = stats[subj]
+                total = sum(class_counts.values())
+                class_str = ", ".join([f"{self.class_names[k]}: {v}" for k, v in sorted(class_counts.items())])
+                print(f"  {subj}: {total} graphs ({class_str})")
+        
+        print("=" * 70)
 
 
 def validate_dataset_from_config(config_path: str) -> bool:

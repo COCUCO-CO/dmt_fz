@@ -1095,6 +1095,43 @@ def compute_mst_from_attention(attention_matrix: np.ndarray) -> np.ndarray:
         return np.zeros_like(attention_matrix)
 
 
+def get_standard_eeg_coordinates():
+    """
+    Return FIXED 2D coordinates for standard 10-20 EEG electrodes.
+    These coordinates are normalized and consistent across all plots.
+    Based on standard scalp positions.
+    """
+    # Standard 10-20 electrode positions (normalized to fit in [-0.12, 0.12] range)
+    # Arranged to match typical EEG cap layout viewed from above (nose up)
+    coords = {
+        # Frontal pole
+        'Fp1': (-0.03, 0.12), 'Fp2': (0.03, 0.12), 'Fpz': (0.0, 0.13),
+        # Anterior frontal
+        'AFz': (0.0, 0.10),
+        # Frontal
+        'F7': (-0.09, 0.06), 'F3': (-0.05, 0.07), 'Fz': (0.0, 0.07),
+        'F4': (0.05, 0.07), 'F8': (0.09, 0.06),
+        # Fronto-central
+        'FC1': (-0.03, 0.04), 'FCz': (0.0, 0.04), 'FC2': (0.03, 0.04),
+        # Temporal
+        'T7': (-0.11, 0.0), 'T8': (0.11, 0.0),
+        # Central
+        'C3': (-0.06, 0.0), 'Cz': (0.0, 0.0), 'C4': (0.06, 0.0),
+        # Centro-parietal
+        'CP1': (-0.03, -0.04), 'CPz': (0.0, -0.04), 'CP2': (0.03, -0.04),
+        # Parietal
+        'P7': (-0.09, -0.06), 'P3': (-0.05, -0.07), 'Pz': (0.0, -0.07),
+        'P4': (0.05, -0.07), 'P8': (0.09, -0.06),
+        # Parieto-occipital
+        'POz': (0.0, -0.10),
+        # Occipital
+        'O1': (-0.03, -0.12), 'O2': (0.03, -0.12), 'Oz': (0.0, -0.13),
+        # Mastoid
+        'M1': (-0.12, -0.02), 'M2': (0.12, -0.02),
+    }
+    return coords
+
+
 def plot_attention_mst_graph(mst_matrix: np.ndarray, 
                               class_name: str,
                               layer_idx: int,
@@ -1103,7 +1140,7 @@ def plot_attention_mst_graph(mst_matrix: np.ndarray,
                               eeg_coords_2d: Dict = None):
     """
     Plot the Minimum Spanning Tree of attention as an EEG graph visualization.
-    Uses the same style as visualize_real_graph.py for consistency.
+    Uses FIXED electrode positions for consistent layout across all plots.
     
     Args:
         mst_matrix: NxN MST adjacency matrix
@@ -1111,7 +1148,7 @@ def plot_attention_mst_graph(mst_matrix: np.ndarray,
         layer_idx: GAT layer index (0-based)
         save_path: Path to save the figure
         ch_names: List of electrode names
-        eeg_coords_2d: Dict mapping electrode names to 2D coordinates
+        eeg_coords_2d: Dict mapping electrode names to 2D coordinates (ignored, uses standard coords)
     """
     import networkx as nx
     import matplotlib.cm as cm
@@ -1119,23 +1156,27 @@ def plot_attention_mst_graph(mst_matrix: np.ndarray,
     
     n = mst_matrix.shape[0]
     
-    # Load electrode info if not provided
-    if ch_names is None or eeg_coords_2d is None:
+    # Load electrode names if not provided
+    if ch_names is None:
         ch_names_loaded = load_electrode_names()
         if ch_names_loaded:
             ch_names = ch_names_loaded
         else:
             ch_names = [f'E{i}' for i in range(n)]
-        
-        # Try to load coordinates
-        try:
-            with open(EXTRA_PKL_PATH, 'rb') as f:
-                data = pickle.load(f)
-            eeg_coords_2d = data[6]
-        except:
-            # Create circular layout if coordinates not available
-            angles = np.linspace(0, 2*np.pi, n, endpoint=False)
-            eeg_coords_2d = {ch_names[i]: (np.cos(angles[i]), np.sin(angles[i])) for i in range(n)}
+    
+    # ALWAYS use standard fixed coordinates for consistency
+    standard_coords = get_standard_eeg_coordinates()
+    
+    # Map channel names to coordinates
+    eeg_coords_2d = {}
+    for i, name in enumerate(ch_names):
+        if name in standard_coords:
+            eeg_coords_2d[name] = standard_coords[name]
+        else:
+            # Fallback: use circular layout for unknown electrodes
+            angle = 2 * np.pi * i / n
+            radius = 0.10
+            eeg_coords_2d[name] = (radius * np.sin(angle), radius * np.cos(angle))
     
     # Build graph with MST edges only
     G = nx.Graph()
@@ -1202,10 +1243,10 @@ def plot_attention_mst_graph(mst_matrix: np.ndarray,
                          bbox=dict(boxstyle='round,pad=0.25', facecolor='white',
                                   edgecolor='black', linewidth=0.6, alpha=0.90))
     
-    # Set axis limits - same as visualize_real_graph.py
+    # Set FIXED axis limits for consistent layout across all plots
     ax_graph.axis('equal')
-    ax_graph.set_xlim(-0.145, 0.145)
-    ax_graph.set_ylim(-0.135, 0.175)
+    ax_graph.set_xlim(-0.15, 0.15)
+    ax_graph.set_ylim(-0.16, 0.16)
     ax_graph.axis('off')
     
     # Add colorbar at the bottom

@@ -744,6 +744,26 @@ def create_dataset_from_config(config: Dict[str, Any],
         logger.info(f"Subject split: train={len(train_subjects)} subjects, "
                    f"val={len(val_subjects)} subjects, test={len(test_subjects)} subjects")
         logger.info(f"NO DATA LEAKAGE: Each subject appears in only ONE split")
+        
+        # Log detailed subject assignment per split
+        conditions = config['data'].get('conditions', ['DMT', 'EC', 'EO'])
+        logger.info("\n" + "=" * 60)
+        logger.info("SUBJECT ASSIGNMENT PER SPLIT")
+        logger.info("=" * 60)
+        
+        for split_name, split_subjs in [('TRAIN', train_subjects), ('VAL', val_subjects), ('TEST', test_subjects)]:
+            logger.info(f"\n{split_name} subjects ({len(split_subjs)}):")
+            for subj in sorted(split_subjs):
+                graphs = subject_graphs[subj]
+                subj_class_counts = defaultdict(int)
+                for g in graphs:
+                    subj_class_counts[g.y.item()] += 1
+                
+                # Format: subject_id: N graphs (DMT: X, EC: Y)
+                class_str = ", ".join([f"{conditions[k]}: {v}" for k, v in sorted(subj_class_counts.items())])
+                logger.info(f"  {subj}: {len(graphs)} graphs ({class_str})")
+        
+        logger.info("=" * 60 + "\n")
     else:
         # Random split (original behavior - may have data leakage!)
         logger.warning("group_by_subject=False: Subjects may appear in multiple splits (potential data leakage)")

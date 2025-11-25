@@ -1,0 +1,61 @@
+[
+  {
+    "name": "exp000_h512_l1_heads4_lr1e-03",
+    "index": 0,
+    "params": {
+      "model.architecture.hidden_dim": 512,
+      "model.architecture.num_gat_layers": 1,
+      "model.architecture.num_attention_heads": 4,
+      "model.architecture.dropout": 0.422465,
+      "model.architecture.use_skip_connections": true,
+      "model.pooling.method": "mean",
+      "model.mlp.hidden_dims": [
+        256,
+        128
+      ],
+      "model.mlp.dropout": 0.520941,
+      "training.optimizer": "adam",
+      "training.learning_rate": 0.001142,
+      "training.weight_decay": 1.2e-05,
+      "training.batch_size": 64,
+      "training.scheduler.type": "reduce_on_plateau",
+      "training.label_smoothing": 0.0
+    },
+    "results": {
+      "test_loss": 0.6977718735300961,
+      "test_accuracy": 0.5451210564930301,
+      "test_balanced_accuracy": 0.5733839139902014,
+      "test_precision": 0.573133434300052,
+      "test_recall": 0.5733839139902014,
+      "test_f1": 0.5451149351040832,
+      "per_class": {
+        "DMT": {
+          "precision": 0.701688555347092,
+          "recall": 0.4479041916167665,
+          "f1": 0.5467836257309941,
+          "support": 835
+        },
+        "EC": {
+          "precision": 0.44457831325301206,
+          "recall": 0.6988636363636364,
+          "f1": 0.5434462444771723,
+          "support": 528
+        }
+      },
+      "confusion_matrix": [
+        [
+          374,
+          461
+        ],
+        [
+          159,
+          369
+        ]
+      ],
+      "best_val_acc": 0.6157407407407407,
+      "best_val_loss": 0.6775384847028756,
+      "best_epoch": 7,
+      "status": "success"
+    }
+  }
+]
