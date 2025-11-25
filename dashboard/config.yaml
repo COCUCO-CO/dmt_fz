@@ -1,0 +1,59 @@
+# Dashboard Configuration
+# ======================
+
+app:
+  title: "DMT-EEG Analysis Dashboard"
+  icon: "🧠"
+  layout: "wide"
+  
+# Paths (relative to project root)
+paths:
+  project_root: "/media/storage_hdd/dmt_fz"
+  eeg_clean: "/media/storage_hdd/dmt_fz/EEG_CLEAN"
+  fwd_inv_stc: "/media/storage_hdd/dmt_fz/fwd-inv-stc"
+  pipeline: "/media/storage_hdd/dmt_fz/pipeline"
+  ml_clf: "/media/storage_hdd/dmt_fz/machine_learning/clf"
+  visualizations: "/media/storage_hdd/dmt_fz/visualizations"
+  
+# Data configuration
+data:
+  conditions: ["DMT", "EC", "EO"]
+  bands: ["Delta", "Theta", "Alpha", "Beta", "Gamma"]
+  
+# Pipeline scripts
+pipeline:
+  scripts:
+    - name: "fwd.py"
+      description: "Forward/Inverse Solution + Métricas"
+      estimated_time: "3-4 hours"
+      path: "pipeline/fwd.py"
+    - name: "multi2pool2.py"
+      description: "Filtrado por redes cerebrales"
+      estimated_time: "2-5 min"
+      path: "pipeline/multi2pool2.py"
+    - name: "generate_order.py"
+      description: "Calcular Order Parameter"
+      estimated_time: "30 sec - 1 min"
+      path: "pipeline/generate_order.py"
+    - name: "plot_order.py"
+      description: "Visualización y estadísticas"
+      estimated_time: "5-10 min"
+      path: "pipeline/plot_order.py"
+    - name: "pearson.py"
+      description: "Correlaciones con cuestionarios"
+      estimated_time: "3-5 min"
+      path: "pipeline/pearson.py"
+    - name: "clustering.py"
+      description: "Identificación de estados"
+      estimated_time: "2-4 hours"
+      path: "pipeline/clustering.py"
+
+# ML configuration
+ml:
+  default_epochs: 500
+  default_batch_size: 32
+  hyperparam_experiments: 30
+  
+# Database
+database:
+  path: "database/experiments.db"

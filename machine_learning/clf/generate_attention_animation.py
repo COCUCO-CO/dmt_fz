@@ -21,9 +21,15 @@ Output:
 
 import argparse
 import sys
+import os
+import tempfile
+import shutil
+import subprocess
 from pathlib import Path
 from typing import List, Dict, Tuple, Optional
 import logging
+from multiprocessing import Pool, cpu_count
+from functools import partial
 
 import numpy as np
 import torch
@@ -288,6 +294,356 @@ def create_attention_frame(attention_matrix: np.ndarray,
     return fig
 
 
+def render_single_frame(args):
+    """
+    Render a single frame to disk. Designed for multiprocessing.
+    
+    Args:
+        args: Tuple of (frame_idx, frame_data, render_params)
+    """
+    frame_idx, frame_data, params = args
+    att_matrix, epoch_idx, is_real = frame_data
+    
+    # Unpack params
+    ch_names = params['ch_names']
+    coords = params['coords']
+    vmin = params['vmin']
+    vmax = params['vmax']
+    use_mst = params['use_mst']
+    condition = params['condition']
+    layer_idx = params['layer_idx']
+    temp_dir = params['temp_dir']
+    dpi = params['dpi']
+    edge_percentile = params['edge_percentile']
+    figsize = params['figsize']
+    total_frames = params['total_frames']
+    total_epochs = params['total_epochs']
+    current_epoch_num = params.get('epoch_numbers', {}).get(frame_idx, 0)
+    
+    # Import here to avoid issues with multiprocessing
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    import matplotlib.cm as cm
+    from matplotlib.colors import Normalize
+    import networkx as nx
+    
+    graph_type = "MST" if use_mst else "Attention"
+    if is_real:
+        title = f"{graph_type} - {condition} - Layer {layer_idx + 1} - Epoch {epoch_idx}"
+    else:
+        title = f"{graph_type} - {condition} - Layer {layer_idx + 1} (transition)"
+    
+    # Process matrix
+    if use_mst:
+        from utils.attention_logger import compute_mst_from_attention
+        matrix = compute_mst_from_attention(att_matrix)
+    else:
+        matrix = att_matrix
+    
+    n = matrix.shape[0]
+    G = nx.Graph() if use_mst else nx.DiGraph()
+    for i in range(min(n, len(ch_names))):
+        G.add_node(ch_names[i])
+    
+    edge_weights = {}
+    for i in range(n):
+        for j in range(n):
+            # Skip self-loops (i == j)
+            if i == j:
+                continue
+            if matrix[i, j] > 0 and i < len(ch_names) and j < len(ch_names):
+                if use_mst:
+                    if i < j:
+                        G.add_edge(ch_names[i], ch_names[j])
+                        edge_weights[(ch_names[i], ch_names[j])] = matrix[i, j]
+                else:
+                    G.add_edge(ch_names[i], ch_names[j])
+                    edge_weights[(ch_names[i], ch_names[j])] = matrix[i, j]
+    
+    # Filter edges by percentile if requested (speed optimization)
+    if edge_percentile < 100 and edge_weights:
+        threshold = np.percentile(list(edge_weights.values()), 100 - edge_percentile)
+        edge_weights = {k: v for k, v in edge_weights.items() if v >= threshold}
+    
+    fig = plt.figure(figsize=figsize)
+    # Main graph area (left portion, leave space for mini-map on right)
+    ax_graph = fig.add_axes([0.02, 0.12, 0.72, 0.78])
+    pos = {name: coords[name] for name in ch_names if name in coords}
+    
+    # Calculate attention focus using TOP-K weighted center of mass
+    top_k = params.get('top_k_nodes', 3)  # Use top 3 nodes by default
+    
+    n_nodes = min(n, len(ch_names))
+    
+    # OUTGOING attention (node that attends TO others) = "Hub" / broadcaster
+    outgoing_attention = np.zeros(n_nodes)
+    # INCOMING attention (node that receives attention FROM others) = "Sink" / aggregator
+    incoming_attention = np.zeros(n_nodes)
+    
+    for i in range(n_nodes):
+        for j in range(n_nodes):
+            if i != j and i < att_matrix.shape[0] and j < att_matrix.shape[1]:
+                outgoing_attention[i] += att_matrix[i, j]  # attention FROM node i TO j
+                incoming_attention[j] += att_matrix[i, j]  # attention TO node j FROM i
+    
+    total_attention = outgoing_attention.sum()
+    
+    # === OUTGOING (Hub) calculation ===
+    if total_attention > 0:
+        top_indices_out = np.argsort(outgoing_attention)[-top_k:][::-1]
+        top_attention_out = outgoing_attention[top_indices_out]
+        top_total_out = top_attention_out.sum()
+        
+        if top_total_out > 0:
+            center_x_out, center_y_out = 0.0, 0.0
+            for idx, att in zip(top_indices_out, top_attention_out):
+                name = ch_names[idx] if idx < len(ch_names) else None
+                if name and name in coords:
+                    weight = att / top_total_out
+                    center_x_out += coords[name][0] * weight
+                    center_y_out += coords[name][1] * weight
+        else:
+            center_x_out, center_y_out = 0.0, 0.0
+    else:
+        center_x_out, center_y_out = 0.0, 0.0
+        top_indices_out = [0]
+    
+    # === INCOMING (Sink) calculation ===
+    if total_attention > 0:
+        top_indices_in = np.argsort(incoming_attention)[-top_k:][::-1]
+        top_attention_in = incoming_attention[top_indices_in]
+        top_total_in = top_attention_in.sum()
+        
+        if top_total_in > 0:
+            center_x_in, center_y_in = 0.0, 0.0
+            for idx, att in zip(top_indices_in, top_attention_in):
+                name = ch_names[idx] if idx < len(ch_names) else None
+                if name and name in coords:
+                    weight = att / top_total_in
+                    center_x_in += coords[name][0] * weight
+                    center_y_in += coords[name][1] * weight
+        else:
+            center_x_in, center_y_in = 0.0, 0.0
+    else:
+        center_x_in, center_y_in = 0.0, 0.0
+        top_indices_in = [0]
+    
+    weight_range = vmax - vmin if vmax > vmin else 1.0
+    sorted_edges = sorted(edge_weights.items(), key=lambda x: x[1])
+    
+    # Auto-filter for dense graphs: only show top edges if too many
+    num_edges = len(sorted_edges)
+    if num_edges > 100:
+        # Keep only top 30% of edges for readability
+        keep_count = max(int(num_edges * 0.3), 50)
+        sorted_edges = sorted_edges[-keep_count:]
+        # Recalculate vmin/vmax for visible edges only
+        visible_weights = [w for _, w in sorted_edges]
+        if visible_weights:
+            vmin_vis = min(visible_weights)
+            vmax_vis = max(visible_weights)
+            weight_range = vmax_vis - vmin_vis if vmax_vis > vmin_vis else 1.0
+            vmin = vmin_vis
+    
+    for (src, dst), weight in sorted_edges:
+        if src in pos and dst in pos:
+            normalized = (weight - vmin) / weight_range
+            normalized = max(0, min(1, normalized))
+            # Refined visual parameters for cleaner look
+            alpha = 0.08 + normalized * 0.7  # More transparent base
+            width = 0.3 + normalized * 2.5   # Thinner lines
+            # Better color gradient: light orange to dark red
+            color = cm.YlOrRd(0.2 + normalized * 0.8)
+            nx.draw_networkx_edges(G, pos, edgelist=[(src, dst)],
+                                  width=width, edge_color=[color], alpha=alpha,
+                                  ax=ax_graph, arrows=not use_mst,
+                                  arrowsize=6 if not use_mst else 0,
+                                  connectionstyle="arc3,rad=0.05" if not use_mst else None)
+    
+    node_list = [name for name in ch_names if name in pos]
+    nx.draw_networkx_nodes(G, pos, nodelist=node_list,
+                          node_color='white', node_size=700,
+                          edgecolors='#333333', linewidths=1.5,
+                          alpha=0.98, ax=ax_graph)
+    
+    for node_name in node_list:
+        if node_name in pos:
+            x, y = pos[node_name]
+            ax_graph.text(x, y, node_name, fontsize=7, fontweight='bold',
+                         ha='center', va='center', color='#222222')
+    
+    ax_graph.axis('equal')
+    ax_graph.set_xlim(-0.15, 0.15)
+    ax_graph.set_ylim(-0.16, 0.16)
+    ax_graph.axis('off')
+    
+    # === Mini-map 1: HUB Tracking (outgoing attention) - top-right ===
+    ax_hub = fig.add_axes([0.73, 0.56, 0.24, 0.34])
+    ax_hub.set_xlim(-0.16, 0.16)
+    ax_hub.set_ylim(-0.17, 0.17)
+    
+    # Draw head outline
+    theta = np.linspace(0, 2*np.pi, 100)
+    head_r = 0.14
+    ax_hub.plot(head_r * np.cos(theta), head_r * np.sin(theta), 
+                color='#dddddd', linewidth=1.2, zorder=0)
+    ax_hub.plot([0, 0], [head_r, head_r + 0.015], color='#dddddd', linewidth=1.2, zorder=0)
+    
+    # Draw electrodes - highlight top-K hubs in red
+    top_k_set_out = set(top_indices_out)
+    colors_hub = ['#ff3333', '#ff7777', '#ffaaaa']
+    
+    for i, name in enumerate(ch_names):
+        if name in coords:
+            x, y = coords[name]
+            if i in top_k_set_out:
+                rank = list(top_indices_out).index(i)
+                if rank < len(colors_hub):
+                    ax_hub.scatter(x, y, s=[70, 45, 30][rank], c=colors_hub[rank], 
+                                  edgecolors=['darkred', '#cc5555', '#aa7777'][rank],
+                                  linewidths=1.2, zorder=10-rank, alpha=0.9)
+            else:
+                ax_hub.scatter(x, y, s=15, c='#e8e8e8', edgecolors='#bbbbbb', 
+                               linewidths=0.4, zorder=1, alpha=0.6)
+    
+    # Draw hub trail
+    all_centers_out = params.get('all_centers_out', [])
+    if all_centers_out and frame_idx > 0:
+        trail_length = min(50, frame_idx)
+        recent = all_centers_out[max(0, frame_idx - trail_length):frame_idx]
+        if len(recent) > 1:
+            for i, (cx, cy) in enumerate(recent):
+                prog = (i + 1) / len(recent)
+                ax_hub.scatter(cx, cy, s=5 + 12*prog, c='#4488ff', alpha=0.1 + 0.3*prog, 
+                              zorder=2, edgecolors='none')
+            for i in range(len(recent) - 1):
+                prog = (i + 1) / len(recent)
+                ax_hub.plot([recent[i][0], recent[i+1][0]], [recent[i][1], recent[i+1][1]], 
+                           color='#4488ff', alpha=0.05 + 0.2*prog, linewidth=1, zorder=1)
+    
+    ax_hub.scatter(center_x_out, center_y_out, s=140, c='#2266dd', edgecolors='white',
+                  linewidths=2, zorder=20, marker='D')
+    ax_hub.set_title('Hub (broadcaster)', fontsize=8, fontweight='bold', pad=2, color='#cc0000')
+    ax_hub.axis('off')
+    
+    # Hub info text
+    if total_attention > 0:
+        hub_names = [ch_names[i] if i < len(ch_names) else "?" for i in top_indices_out[:3]]
+        hub_pcts = [outgoing_attention[i] / total_attention * 100 for i in top_indices_out[:3]]
+        hub_text = " | ".join([f"{n}:{p:.1f}%" for n, p in zip(hub_names, hub_pcts)])
+    else:
+        hub_text = "—"
+    ax_hub.text(0.5, -0.08, hub_text, transform=ax_hub.transAxes, ha='center', 
+               fontsize=7, color='#666666', fontfamily='monospace')
+    
+    # === Mini-map 2: SINK Tracking (incoming attention) - middle-right ===
+    ax_sink = fig.add_axes([0.73, 0.15, 0.24, 0.34])
+    ax_sink.set_xlim(-0.16, 0.16)
+    ax_sink.set_ylim(-0.17, 0.17)
+    
+    # Draw head outline
+    ax_sink.plot(head_r * np.cos(theta), head_r * np.sin(theta), 
+                color='#dddddd', linewidth=1.2, zorder=0)
+    ax_sink.plot([0, 0], [head_r, head_r + 0.015], color='#dddddd', linewidth=1.2, zorder=0)
+    
+    # Draw electrodes - highlight top-K sinks in green
+    top_k_set_in = set(top_indices_in)
+    colors_sink = ['#33aa33', '#77cc77', '#aaddaa']
+    
+    for i, name in enumerate(ch_names):
+        if name in coords:
+            x, y = coords[name]
+            if i in top_k_set_in:
+                rank = list(top_indices_in).index(i)
+                if rank < len(colors_sink):
+                    ax_sink.scatter(x, y, s=[70, 45, 30][rank], c=colors_sink[rank], 
+                                   edgecolors=['darkgreen', '#55aa55', '#77aa77'][rank],
+                                   linewidths=1.2, zorder=10-rank, alpha=0.9)
+            else:
+                ax_sink.scatter(x, y, s=15, c='#e8e8e8', edgecolors='#bbbbbb', 
+                               linewidths=0.4, zorder=1, alpha=0.6)
+    
+    # Draw sink trail
+    all_centers_in = params.get('all_centers_in', [])
+    if all_centers_in and frame_idx > 0:
+        trail_length = min(50, frame_idx)
+        recent = all_centers_in[max(0, frame_idx - trail_length):frame_idx]
+        if len(recent) > 1:
+            for i, (cx, cy) in enumerate(recent):
+                prog = (i + 1) / len(recent)
+                ax_sink.scatter(cx, cy, s=5 + 12*prog, c='#44bb44', alpha=0.1 + 0.3*prog, 
+                               zorder=2, edgecolors='none')
+            for i in range(len(recent) - 1):
+                prog = (i + 1) / len(recent)
+                ax_sink.plot([recent[i][0], recent[i+1][0]], [recent[i][1], recent[i+1][1]], 
+                            color='#44bb44', alpha=0.05 + 0.2*prog, linewidth=1, zorder=1)
+    
+    ax_sink.scatter(center_x_in, center_y_in, s=140, c='#228822', edgecolors='white',
+                   linewidths=2, zorder=20, marker='D')
+    ax_sink.set_title('Sink (aggregator)', fontsize=8, fontweight='bold', pad=2, color='#228822')
+    ax_sink.axis('off')
+    
+    # Sink info text
+    if total_attention > 0:
+        sink_names = [ch_names[i] if i < len(ch_names) else "?" for i in top_indices_in[:3]]
+        sink_pcts = [incoming_attention[i] / total_attention * 100 for i in top_indices_in[:3]]
+        sink_text = " | ".join([f"{n}:{p:.1f}%" for n, p in zip(sink_names, sink_pcts)])
+    else:
+        sink_text = "—"
+    ax_sink.text(0.5, -0.08, sink_text, transform=ax_sink.transAxes, ha='center', 
+                fontsize=7, color='#666666', fontfamily='monospace')
+    
+    # === Colorbar (moved up to avoid overlap) ===
+    cbar_ax = fig.add_axes([0.08, 0.08, 0.55, 0.015])
+    norm = Normalize(vmin=vmin, vmax=vmax)
+    sm = cm.ScalarMappable(norm=norm, cmap=cm.Reds)
+    cbar = plt.colorbar(sm, cax=cbar_ax, orientation='horizontal')
+    cbar.set_label(f'Attention Weight', fontsize=8, labelpad=2)
+    cbar.ax.tick_params(labelsize=7)
+    
+    # Title
+    fig.text(0.38, 0.96, title, fontsize=12, fontweight='bold', ha='center', va='top')
+    
+    # === Progress bar (at the very bottom) ===
+    progress = (frame_idx + 1) / total_frames
+    progress_ax = fig.add_axes([0.08, 0.025, 0.55, 0.018])
+    progress_ax.set_xlim(0, 1)
+    progress_ax.set_ylim(0, 1)
+    progress_ax.axis('off')
+    
+    # Background bar (gray)
+    progress_ax.add_patch(plt.Rectangle((0, 0), 1, 1, 
+                          facecolor='#e8e8e8', edgecolor='#aaaaaa', 
+                          linewidth=1, zorder=1))
+    
+    # Progress fill
+    progress_ax.add_patch(plt.Rectangle((0, 0), progress, 1, 
+                          facecolor='#4facfe', edgecolor='none', 
+                          zorder=2))
+    # Highlight line at top
+    progress_ax.plot([0, progress], [0.8, 0.8], color='white', 
+                     linewidth=1.2, alpha=0.5, zorder=3)
+    
+    # Border
+    progress_ax.add_patch(plt.Rectangle((0, 0), 1, 1, 
+                          facecolor='none', edgecolor='#888888', 
+                          linewidth=1, zorder=4))
+    
+    # Progress text (to the right of the bar)
+    epoch_display = epoch_idx if is_real else "~"
+    progress_text = f"Epoch {epoch_display}/{total_epochs} • {progress*100:.0f}%"
+    fig.text(0.64, 0.034, progress_text, fontsize=8, ha='left', va='center',
+             color='#555555', fontweight='medium')
+    
+    # Save frame
+    frame_path = os.path.join(temp_dir, f"frame_{frame_idx:06d}.png")
+    fig.savefig(frame_path, dpi=dpi, facecolor='white', edgecolor='none')
+    plt.close(fig)
+    
+    return frame_idx
+
+
 def generate_animation(model, subject_data: Dict[str, List],
                       device, ch_names: List[str],
                       coords: Dict[str, Tuple[float, float]],
@@ -296,7 +652,12 @@ def generate_animation(model, subject_data: Dict[str, List],
                       layer_idx: int = 0,
                       fps: int = 5,
                       use_mst: bool = False,
-                      transition_frames: int = 3):
+                      transition_frames: int = 3,
+                      n_workers: int = 1,
+                      dpi: int = 150,
+                      edge_percentile: float = 100,
+                      bitrate: int = 2000,
+                      figsize: Tuple[float, float] = (12, 10)):
     """
     Generate animation for each condition.
     
@@ -312,6 +673,11 @@ def generate_animation(model, subject_data: Dict[str, List],
         fps: Frames per second
         use_mst: Use MST instead of full attention
         transition_frames: Number of interpolation frames between epochs
+        n_workers: Number of parallel workers (default: 1, sequential)
+        dpi: Output DPI (default: 150, use 100 for faster rendering)
+        edge_percentile: Only show top N% of edges (default: 100 = all)
+        bitrate: Video bitrate (default: 2000)
+        figsize: Figure size tuple (default: (10, 9))
     """
     output_dir.mkdir(parents=True, exist_ok=True)
     
@@ -354,108 +720,138 @@ def generate_animation(model, subject_data: Dict[str, List],
                     interp_matrix = (1 - alpha) * att_matrix + alpha * next_matrix
                     frames_data.append((interp_matrix, None, False))  # False = transition
         
-        # Create figure for animation
-        fig = plt.figure(figsize=(10, 9))
-        
-        def update(frame_idx):
-            fig.clf()
-            att_matrix, epoch_idx, is_real = frames_data[frame_idx]
-            
-            graph_type = "MST" if use_mst else "Attention"
-            if is_real:
-                title = f"{graph_type} - {condition} - Layer {layer_idx + 1} - Epoch {epoch_idx}"
-            else:
-                title = f"{graph_type} - {condition} - Layer {layer_idx + 1} (transition)"
-            
-            # Recreate the plot
-            if use_mst:
-                matrix = compute_mst_from_attention(att_matrix)
-            else:
-                matrix = att_matrix
-            
-            n = matrix.shape[0]
-            G = nx.Graph() if use_mst else nx.DiGraph()
-            for i in range(min(n, len(ch_names))):
-                G.add_node(ch_names[i])
-            
-            edge_weights = {}
-            for i in range(n):
-                for j in range(n):
-                    if matrix[i, j] > 0 and i < len(ch_names) and j < len(ch_names):
-                        if use_mst:
-                            if i < j:
-                                G.add_edge(ch_names[i], ch_names[j])
-                                edge_weights[(ch_names[i], ch_names[j])] = matrix[i, j]
-                        else:
-                            G.add_edge(ch_names[i], ch_names[j])
-                            edge_weights[(ch_names[i], ch_names[j])] = matrix[i, j]
-            
-            ax_graph = fig.add_axes([0.05, 0.12, 0.9, 0.78])
-            pos = {name: coords[name] for name in ch_names if name in coords}
-            
-            weight_range = vmax - vmin if vmax > vmin else 1.0
-            sorted_edges = sorted(edge_weights.items(), key=lambda x: x[1])
-            
-            for (src, dst), weight in sorted_edges:
-                if src in pos and dst in pos:
-                    normalized = (weight - vmin) / weight_range
-                    normalized = max(0, min(1, normalized))
-                    alpha = 0.2 + normalized * 0.8
-                    width = 0.5 + normalized * 4.0
-                    color = cm.Reds(0.3 + normalized * 0.7)
-                    nx.draw_networkx_edges(G, pos, edgelist=[(src, dst)],
-                                          width=width, edge_color=[color], alpha=alpha,
-                                          ax=ax_graph, arrows=not use_mst,
-                                          arrowsize=8 if not use_mst else 0)
-            
-            node_list = [name for name in ch_names if name in pos]
-            nx.draw_networkx_nodes(G, pos, nodelist=node_list,
-                                  node_color='lightgray', node_size=800,
-                                  edgecolors='black', linewidths=1.5,
-                                  alpha=0.95, ax=ax_graph)
-            
-            for node_name in node_list:
-                if node_name in pos:
-                    x, y = pos[node_name]
-                    ax_graph.text(x, y, node_name, fontsize=7, fontweight='bold',
-                                 ha='center', va='center', color='black',
-                                 bbox=dict(boxstyle='round,pad=0.2', facecolor='white',
-                                          edgecolor='black', linewidth=0.5, alpha=0.9))
-            
-            ax_graph.axis('equal')
-            ax_graph.set_xlim(-0.15, 0.15)
-            ax_graph.set_ylim(-0.16, 0.16)
-            ax_graph.axis('off')
-            
-            # Colorbar
-            cbar_ax = fig.add_axes([0.15, 0.04, 0.7, 0.02])
-            norm = Normalize(vmin=vmin, vmax=vmax)
-            sm = cm.ScalarMappable(norm=norm, cmap=cm.Reds)
-            cbar = plt.colorbar(sm, cax=cbar_ax, orientation='horizontal')
-            cbar.set_label(f'Attention [{vmin:.4f}, {vmax:.4f}]', fontsize=9)
-            cbar.ax.tick_params(labelsize=8)
-            
-            fig.text(0.5, 0.96, title, fontsize=12, fontweight='bold', ha='center', va='top')
-            
-            return []
-        
-        # Create animation
         total_frames = len(frames_data)
         logger.info(f"Creating animation with {total_frames} frames ({len(attention_matrices)} epochs + transitions)")
         
-        anim = animation.FuncAnimation(fig, update, frames=total_frames,
-                                       interval=1000/fps, blit=False)
+        # Create temp directory for frames
+        temp_dir = tempfile.mkdtemp(prefix="anim_frames_")
         
-        # Save
-        graph_type = "mst" if use_mst else "attention"
-        output_path = output_dir / f"{graph_type}_animation_{subject_id}_{condition}_layer{layer_idx + 1}.mp4"
-        
-        writer = animation.FFMpegWriter(fps=fps, metadata=dict(artist='GAT-EEG'),
-                                        bitrate=2000)
-        anim.save(str(output_path), writer=writer, dpi=150)
-        plt.close(fig)
-        
-        logger.info(f"Saved: {output_path}")
+        try:
+            # Build epoch number mapping for progress display
+            epoch_numbers = {}
+            real_epoch_count = 0
+            for i, (_, epoch_idx, is_real) in enumerate(frames_data):
+                if is_real:
+                    real_epoch_count += 1
+                epoch_numbers[i] = real_epoch_count
+            
+            # Pre-calculate all attention focus positions (top-K weighted centers)
+            logger.info("Pre-calculating hub and sink positions...")
+            top_k = 3
+            all_centers_out = []  # Hub (outgoing)
+            all_centers_in = []   # Sink (incoming)
+            n_nodes = len(ch_names)
+            
+            for att_matrix, _, _ in frames_data:
+                outgoing_attention = np.zeros(n_nodes)
+                incoming_attention = np.zeros(n_nodes)
+                
+                for i in range(min(n_nodes, att_matrix.shape[0])):
+                    for j in range(min(n_nodes, att_matrix.shape[1])):
+                        if i != j:
+                            outgoing_attention[i] += att_matrix[i, j]
+                            incoming_attention[j] += att_matrix[i, j]
+                
+                total_att = outgoing_attention.sum()
+                
+                # Outgoing (Hub) center
+                if total_att > 0:
+                    top_idx = np.argsort(outgoing_attention)[-top_k:][::-1]
+                    top_att = outgoing_attention[top_idx]
+                    top_total = top_att.sum()
+                    if top_total > 0:
+                        cx, cy = 0.0, 0.0
+                        for idx, att in zip(top_idx, top_att):
+                            name = ch_names[idx] if idx < len(ch_names) else None
+                            if name and name in coords:
+                                cx += coords[name][0] * (att / top_total)
+                                cy += coords[name][1] * (att / top_total)
+                        all_centers_out.append((cx, cy))
+                    else:
+                        all_centers_out.append((0.0, 0.0))
+                else:
+                    all_centers_out.append((0.0, 0.0))
+                
+                # Incoming (Sink) center
+                if total_att > 0:
+                    top_idx = np.argsort(incoming_attention)[-top_k:][::-1]
+                    top_att = incoming_attention[top_idx]
+                    top_total = top_att.sum()
+                    if top_total > 0:
+                        cx, cy = 0.0, 0.0
+                        for idx, att in zip(top_idx, top_att):
+                            name = ch_names[idx] if idx < len(ch_names) else None
+                            if name and name in coords:
+                                cx += coords[name][0] * (att / top_total)
+                                cy += coords[name][1] * (att / top_total)
+                        all_centers_in.append((cx, cy))
+                    else:
+                        all_centers_in.append((0.0, 0.0))
+                else:
+                    all_centers_in.append((0.0, 0.0))
+            
+            # Prepare render parameters (shared across all frames)
+            render_params = {
+                'ch_names': ch_names,
+                'coords': coords,
+                'vmin': vmin,
+                'vmax': vmax,
+                'use_mst': use_mst,
+                'condition': condition,
+                'layer_idx': layer_idx,
+                'temp_dir': temp_dir,
+                'dpi': dpi,
+                'edge_percentile': edge_percentile,
+                'figsize': figsize,
+                'total_frames': total_frames,
+                'total_epochs': len(attention_matrices),
+                'epoch_numbers': epoch_numbers,
+                'all_centers_out': all_centers_out,
+                'all_centers_in': all_centers_in,
+                'top_k_nodes': top_k,
+            }
+            
+            # Prepare args for each frame
+            frame_args = [(i, frames_data[i], render_params) for i in range(total_frames)]
+            
+            # Render frames (parallel or sequential)
+            if n_workers > 1:
+                logger.info(f"Rendering frames in parallel with {n_workers} workers...")
+                with Pool(processes=n_workers) as pool:
+                    list(tqdm(pool.imap(render_single_frame, frame_args), 
+                             total=total_frames, desc="Rendering frames"))
+            else:
+                logger.info("Rendering frames sequentially...")
+                for args in tqdm(frame_args, desc="Rendering frames"):
+                    render_single_frame(args)
+            
+            # Combine frames with ffmpeg
+            graph_type = "mst" if use_mst else "attention"
+            output_path = output_dir / f"{graph_type}_animation_{subject_id}_{condition}_layer{layer_idx + 1}.mp4"
+            
+            ffmpeg_cmd = [
+                'ffmpeg', '-y',
+                '-framerate', str(fps),
+                '-i', os.path.join(temp_dir, 'frame_%06d.png'),
+                '-vf', 'pad=ceil(iw/2)*2:ceil(ih/2)*2',  # ensure even dimensions for h264
+                '-c:v', 'libx264',
+                '-pix_fmt', 'yuv420p',
+                '-b:v', f'{bitrate}k',
+                '-preset', 'fast',  # faster encoding
+                str(output_path)
+            ]
+            
+            logger.info("Combining frames with ffmpeg...")
+            result = subprocess.run(ffmpeg_cmd, capture_output=True, text=True)
+            if result.returncode != 0:
+                logger.error(f"ffmpeg error: {result.stderr}")
+                raise RuntimeError("ffmpeg failed")
+            
+            logger.info(f"Saved: {output_path}")
+            
+        finally:
+            # Cleanup temp directory
+            shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 def main():
@@ -497,6 +893,14 @@ Examples:
                        help='Device to use (default: cuda)')
     parser.add_argument('--list-subjects', action='store_true',
                        help='List available subjects and exit')
+    parser.add_argument('--workers', type=int, default=1,
+                       help='Number of parallel workers for rendering (default: 1)')
+    parser.add_argument('--dpi', type=int, default=150,
+                       help='Output DPI (default: 150, use 100 for faster)')
+    parser.add_argument('--edge-percentile', type=float, default=100,
+                       help='Only show top N%% of edges (default: 100; auto-filters to 30%% if >100 edges)')
+    parser.add_argument('--bitrate', type=int, default=2000,
+                       help='Video bitrate in kbps (default: 2000)')
     
     args = parser.parse_args()
     
@@ -571,7 +975,11 @@ Examples:
         layer_idx=args.layer,
         fps=args.fps,
         use_mst=args.mst,
-        transition_frames=args.transitions
+        transition_frames=args.transitions,
+        n_workers=args.workers,
+        dpi=args.dpi,
+        edge_percentile=args.edge_percentile,
+        bitrate=args.bitrate
     )
     
     logger.info(f"\nAnimations saved to: {output_dir}")
