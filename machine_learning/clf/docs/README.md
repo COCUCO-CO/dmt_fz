@@ -1,470 +1,158 @@
-# Graph Attention Networks for EEG Brain State Classification
+# GAT Classifier para Estados Cerebrales EEG
 
-## 📋 Overview
+Pipeline de clasificación de estados cerebrales (DMT vs EC vs EO) usando **Graph Attention Networks** sobre matrices de sincronización EEG.
 
-This module implements an end-to-end pipeline for classifying brain states (DMT vs EC vs EO) using **Graph Attention Networks (GAT)** trained on EEG synchronization graphs.
+## Justificación Científica
 
-### Why Graph Neural Networks?
+Este enfoque usa GAT porque:
+- Respeta la **estructura de grafo** de la conectividad cerebral
+- Aprovecha las **matrices de sincronización** ya calculadas en el pipeline
+- Los **attention weights** permiten interpretar qué conexiones discriminan entre condiciones
+- Integra **parámetros de Kuramoto** como features globales
 
-Unlike standard deep learning approaches (e.g., EEGNet), this method:
-- ✅ Uses **pre-computed synchronization matrices** from your pipeline
-- ✅ Respects the **natural graph structure** of brain connectivity
-- ✅ Incorporates **Kuramoto order parameters** and **metastability** as features
-- ✅ Provides **interpretable attention weights** showing which connections matter
-- ✅ Is **coherent with your neuroscience analysis** (phase synchronization, networks)
-
----
-
-## 🏗️ Architecture
+## Estructura del Proyecto
 
 ```
-EEG Epoch (phases-*.pkl)
-    ↓
-Synchronization Matrix (NxN)  →  Graph with weighted edges
-    +
-Node Features (phase stats, amplitude, complexity)
-    +
-Graph Features (Kuramoto coherence, metastability)
-    ↓
-Graph Attention Network (4 layers, 8 heads)
-    ↓
-Attention Pooling
-    ↓
-MLP Classifier
-    ↓
-Output: [DMT, EC, EO]
-```
-
-### Key Components
-
-1. **Graph Construction** (`data/dataset_builder.py`)
-   - Nodes: EEG channels or brain parcels (from source localization)
-   - Edges: Synchronization strength > threshold
-   - Node features: Phase/amplitude statistics, temporal complexity
-   - Edge features: Synchronization value
-   - Graph features: Kuramoto mean/std, topology metrics
-
-2. **GAT Model** (`models/gat_model.py`)
-   - Multi-head attention with edge attributes
-   - Residual connections for deep networks
-   - Flexible pooling (attention, mean+max, Set2Set)
-   - MLP classifier with batch normalization
-
-3. **Training** (`train.py`)
-   - TensorBoard logging
-   - Early stopping
-   - Learning rate scheduling
-   - Gradient clipping
-   - Checkpointing
-
----
-
-## 📂 Directory Structure
-
-```
-machine_learning/clf/
-├── config/
-│   └── config.yaml              # Configuration file (EDIT THIS)
-├── data/
-│   ├── __init__.py
-│   ├── dataset_builder.py       # Graph construction from phases-*.pkl
-│   └── cache/                   # Dataset cache (auto-generated)
-├── models/
-│   ├── __init__.py
-│   └── gat_model.py             # GAT architecture
-├── utils/
-│   ├── __init__.py
-│   ├── logger.py                # Logging utilities
-│   └── visualization.py         # Plotting functions
+clf/
+├── config/config.yaml        # Configuración (editar aquí)
+├── data/dataset_builder.py   # Construcción de grafos desde phases-*.pkl
+├── models/gat_model.py       # Arquitectura GAT
 ├── analysis/
-│   └── analyze_graphs.py        # Statistical analysis DMT vs EC
-├── checkpoints/                 # Model checkpoints (auto-generated)
-├── output/                      # Results and logs (auto-generated)
-├── runs/                        # TensorBoard logs (auto-generated)
-├── train.py                     # Main training script
-├── run_pipeline.sh              # End-to-end execution script
-└── README.md                    # This file
+│   ├── analyze_graphs.py     # Análisis estadístico DMT vs EC
+│   └── visualize_attention.py
+├── train.py                  # Entrenamiento principal
+├── train_per_band.py         # Entrenamiento por banda (recomendado)
+├── ensemble_bands.py         # Combinar predicciones de múltiples bandas
+└── evaluate.py               # Evaluación del modelo
 ```
 
----
+## Setup
 
-## 🚀 Quick Start
-
-### ⚠️ IMPORTANT: Per-Band Training Strategy
-
-**Recommended approach:** Train separate models for each frequency band to avoid confounding band-specific patterns with condition-specific patterns.
-
-**Quick test with Alpha band (30-60 min):**
 ```bash
-cd /media/storage_hdd/dmt_fz/machine_learning/clf
-./quick_train_alpha.sh
+# Crear entorno
+conda create -n gat_clf python=3.10 && conda activate gat_clf
+
+# PyTorch con CUDA (ajustar versión según tu GPU)
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+
+# PyTorch Geometric
+pip install torch-geometric pyg_lib torch_scatter torch_sparse -f https://data.pyg.org/whl/torch-2.0.0+cu118.html
+
+# Dependencias
+pip install -r requirements.txt
+
+# Verificar
+python -c "import torch, torch_geometric; print('OK')"
 ```
 
-**Train all bands (2-5 hours):**
+## Uso Rápido
+
+### Opción 1: Test rápido con banda Alpha (30-60 min)
+```bash
+./quick_train_alpha.sh
+cat output_alpha/test_results.json
+```
+
+### Opción 2: Entrenamiento completo por banda (recomendado)
 ```bash
 python train_per_band.py
-```
-
-📖 **See `PER_BAND_GUIDE.md` for detailed explanation of why this is methodologically correct.**
-
-### Alternative: Mixed Multi-Band Training (Not Recommended)
-
-If you want to quickly test the pipeline with all bands mixed (exploratory only):
-
-```bash
-cd /media/storage_hdd/dmt_fz/machine_learning/clf
-chmod +x run_pipeline.sh
-./run_pipeline.sh
-```
-
-⚠️ **Note:** This mixes graphs from different bands in the same dataset, which confounds band-specific with condition-specific patterns. Use only for initial exploration.
-
-### Step 3: View Results
-
-**Per-band training (recommended):**
-```bash
-# View results for each band
-cat output_alpha/test_results.json
-cat output_theta/test_results.json
-# ... etc
-
-# View comparison across all bands
 cat band_comparison_results.json
+```
 
-# TensorBoard for specific band
+### Opción 3: Ensemble (después de entrenar todas las bandas)
+```bash
+python ensemble_bands.py --method average
+```
+
+### Monitorear entrenamiento
+```bash
 tensorboard --logdir=runs_alpha
-
-# Or view all bands together
+# O todas las bandas juntas:
 tensorboard --logdir_spec=Delta:runs_delta,Theta:runs_theta,Alpha:runs_alpha,Beta:runs_beta,Gamma:runs_gamma
 ```
 
-**Mixed training (if used):**
-```bash
-tensorboard --logdir=runs
-cat output/test_results.json
+## Pipeline de Datos
+
+```
+phases-*.pkl (tu pipeline)
+    ↓
+Matriz de sincronización (NxN) → Aristas del grafo (pesos = sync)
+    +
+Fases/amplitudes (NxT) → Features de nodo (stats temporales)
+    +
+Kuramoto order parameter → Features globales (coherencia, metastabilidad)
+    ↓
+Grafo PyTorch Geometric → GAT → Clasificación [DMT, EC, EO]
 ```
 
-**Output files (per-band):**
-- `output_alpha/test_results.json` - Alpha band metrics
-- `output_alpha/confusion_matrix.png` - Alpha confusion matrix
-- `checkpoints_alpha/best_model.pt` - Alpha trained model
-- `band_comparison_results.json` - Summary across all bands
+## Configuración Esencial
 
----
+Editar `config/config.yaml`:
 
-## 📊 Configuration Guide
-
-### Key Parameters
-
-#### Graph Construction (`data.graph`)
-
-```yaml
-edge_threshold: 0.3  # Minimum synchronization value to create edge
-# Lower = more edges (denser graph)
-# Higher = fewer edges (sparser graph)
-# Typical range: 0.2 - 0.5
-```
-
-**How to choose:**
-- Start with 0.3 (moderate density)
-- Check `output/visualizations/graph_statistics.png`
-- If graphs too sparse → lower threshold
-- If graphs too dense → higher threshold
-
-#### Node Features (`data.node_features`)
-
-```yaml
-use_phase_stats: true         # Mean/std of instantaneous phase
-use_amplitude_stats: true     # Mean/std of amplitude envelope
-use_temporal_complexity: true # Entropy, kurtosis, etc.
-use_network_label: false      # One-hot encoding of brain network
-```
-
-**Recommended:** Keep all `true` for maximum information
-
-#### Model Architecture (`model.architecture`)
-
-```yaml
-hidden_dim: 128              # Hidden layer dimension (64-256)
-num_gat_layers: 4            # Number of GAT layers (2-6)
-num_attention_heads: 8       # Attention heads (4-16)
-dropout: 0.4                 # Dropout rate (0.3-0.6)
-```
-
-**For small datasets:** Reduce `hidden_dim` and `num_gat_layers`  
-**For large datasets:** Increase for more capacity
-
-#### Training (`training`)
-
-```yaml
-num_epochs: 300              # Maximum epochs
-batch_size: 32               # Batch size (adjust for GPU memory)
-learning_rate: 0.001         # Initial learning rate
-early_stopping:
-  patience: 50               # Stop if no improvement for N epochs
-```
-
----
-
-## 🔧 Advanced Usage
-
-### Per-Band Training (Recommended)
-
-Train separate models for each frequency band:
-
-```bash
-# Train all bands
-python train_per_band.py
-
-# Train specific bands only
-python train_per_band.py --bands Alpha Theta
-
-# Force rebuild datasets
-python train_per_band.py --force-rebuild
-```
-
-### Ensemble Predictions
-
-Combine predictions from multiple band-specific models:
-
-```bash
-# Average probabilities (default)
-python ensemble_bands.py --method average
-
-# Weighted average (by validation accuracy)
-python ensemble_bands.py --method weighted
-
-# Majority voting
-python ensemble_bands.py --method voting
-```
-
-### Train with Custom Config
-
-```bash
-python train.py --config my_config.yaml
-```
-
-### Force Rebuild Dataset
-
-If you modified `phases-*.pkl` files or changed graph construction parameters:
-
-```bash
-python train.py --force-rebuild
-```
-
-### Analyze Graphs Only
-
-To run statistical analysis without training:
-
-```bash
-python analysis/analyze_graphs.py --config config/config.yaml
-```
-
-### Use Pre-trained Model
-
-```python
-import torch
-from models import BrainStateGAT
-
-# Load checkpoint
-checkpoint = torch.load('checkpoints/best_model.pt')
-config = checkpoint['config']
-
-# Create model
-model = create_model_from_config(config, ...)
-model.load_state_dict(checkpoint['model_state_dict'])
-model.eval()
-
-# Predict
-with torch.no_grad():
-    output = model(graph_data)
-    prediction = output.argmax(dim=1)
-```
-
----
-
-## 📈 Interpreting Results
-
-### Training Curves
-
-Monitor `output/training_curves.png`:
-- **Overfitting:** Val loss increases while train loss decreases
-  - Solution: Increase dropout, reduce model size, or add more data
-- **Underfitting:** Both losses plateau at high values
-  - Solution: Increase model capacity or train longer
-
-### Confusion Matrix
-
-`output/confusion_matrix.png` shows per-class performance:
-- Diagonal = correct predictions
-- Off-diagonal = confusions between classes
-- Look for systematic confusions (e.g., DMT often classified as EC)
-
-### Graph Statistics
-
-`output/analysis/` contains:
-- `graph_features_all.csv` - All extracted features
-- `comparison_DMT_vs_EC.csv` - Statistical tests
-- `feature_distributions.png` - Histograms by condition
-- `band_comparison_*.png` - Differences across frequency bands
-
-**Key features to check:**
-- `kuramoto_mean`: Higher = more coherent (synchronized)
-- `kuramoto_std`: Higher = more metastable (fluctuating)
-- `density`: Graph connectivity
-- `mean_sync`: Average synchronization strength
-
----
-
-## 🐛 Troubleshooting
-
-### Issue: "No graphs were created"
-
-**Causes:**
-- Incorrect `phases_dir` path
-- Missing `phases-*.pkl` files
-- Wrong `use_stc` setting (should match your data)
-
-**Fix:**
-```bash
-# Check if files exist
-ls /media/storage_hdd/dmt_fz/fwd-inv-stc/DMT/phases-*.pkl
-
-# Verify config
-cat config/config.yaml | grep phases_dir
-```
-
-### Issue: "CUDA out of memory"
-
-**Fix:** Reduce batch size in `config.yaml`:
-```yaml
-training:
-  batch_size: 16  # or 8
-```
-
-### Issue: "All graphs have no edges"
-
-**Fix:** Lower edge threshold:
 ```yaml
 data:
+  use_stc: true              # true: 100 parcelas Schaefer | false: 24 electrodos
+  bands: ["Alpha"]           # Bandas a usar (o todas: Delta, Theta, Alpha, Beta, Gamma)
   graph:
-    edge_threshold: 0.1  # was 0.3
+    fully_connected: true    # true: todas las conexiones | false: solo > threshold
+    edge_threshold: 0.3      # Umbral si fully_connected: false
+
+model:
+  architecture:
+    conv_type: "gatv2"       # "gatv2" (con attention) o "cheby" (espectral)
+    hidden_dim: 128
+    num_gat_layers: 4
+    num_attention_heads: 8
+    dropout: 0.4
+
+training:
+  num_epochs: 300
+  batch_size: 32
+  learning_rate: 0.001
+  early_stopping:
+    patience: 50
 ```
 
-### Issue: Model not learning (accuracy ~33%)
+## Por qué Entrenar por Banda
 
-**Possible causes:**
-- Learning rate too high → reduce to 0.0001
-- Model too small → increase hidden_dim
-- Data imbalance → check class distribution
-- Features not informative → try different node/graph features
+**Problema del multi-banda mezclado:** Si mezclas grafos de diferentes bandas en un dataset, el modelo no sabe de qué banda viene cada grafo. Un grafo Alpha-DMT puede parecerse más a Alpha-EC que a Delta-DMT, confundiendo patrones de banda con patrones de condición.
 
----
+**Solución:** Entrenar modelos separados por banda permite:
+- Comparar qué banda es más informativa para clasificar DMT
+- Resultados interpretables y publicables
+- Ensemble final que combina información de todas las bandas
 
-## 🔬 Understanding Your Features
+## Resultados Esperados
 
-### From `phases-*.pkl` Files
+| Banda | Accuracy Esperado | Motivo |
+|-------|-------------------|--------|
+| Alpha | 75-85% | Ritmo dominante en reposo, fuertemente modulado por psicodélicos |
+| Theta | 70-80% | Memoria, navegación, estados alterados |
+| Beta  | 70-80% | Atención, procesamiento activo |
+| Delta | 65-75% | Estados profundos |
+| Gamma | 60-70% | Alta variabilidad |
 
-Your pipeline generates these files with structure:
-```python
-{
-    'syncros_stc': {band: [NxN matrices]},    # → Graph edges
-    'phases_stc': {band: [NxT arrays]},       # → Node features (phase)
-    'amplitudes_stc': {band: [NxT arrays]},   # → Node features (amplitude)
-    'kuramoto_stc': {band: [T arrays]}        # → Graph features (coherence)
-}
-```
+**Ensemble:** 80-90% (mejora +2-5% sobre mejor banda individual)
 
-### What the Model Learns
+## Troubleshooting
 
-1. **Local patterns:** Which brain regions synchronize together
-2. **Global patterns:** Overall coherence and metastability
-3. **Frequency-specific:** Different patterns in different bands
-4. **Temporal:** Statistics over time within each epoch
+| Problema | Solución |
+|----------|----------|
+| "No graphs were created" | Verificar `phases_dir` en config |
+| "CUDA out of memory" | Reducir `batch_size` a 16 o 8 |
+| Accuracy ~33% (random) | Verificar datos, reducir learning_rate a 0.0001 |
+| "Dataset cache exists" | Usar `--force-rebuild` |
 
----
+## Comparación con Otros Métodos
 
-## 📊 Comparison with Other Methods
+| Método | Input | Ventaja | Cuándo usar |
+|--------|-------|---------|-------------|
+| EEGNet | EEG crudo | End-to-end | Máximo poder predictivo |
+| Random Forest | PSD features | Rápido, interpretable | Baseline |
+| **GAT** | Grafos sync | Usa tu pipeline, attention interpretable | Leveraging análisis de sync |
 
-| Method | Input | Strengths | Weaknesses |
-|--------|-------|-----------|------------|
-| **EEGNet (current)** | Raw EEG | End-to-end learning | Black box, ignores sync |
-| **Random Forest (current)** | PSD features | Interpretable | Loses spatial structure |
-| **GAT (this module)** | Sync graphs | Uses your pipeline, interpretable attention | Requires graph construction |
+## Referencias
 
-**When to use GAT:**
-- You want to leverage your synchronization analysis
-- You need interpretability (which connections matter)
-- You want to compare with your Pearson correlations
-
-**When to use EEGNet:**
-- You want maximum predictive power
-- You don't care about mechanistic interpretation
-
----
-
-## 🎯 Expected Performance
-
-Baseline accuracies (3-class: DMT/EC/EO):
-- **Random:** 33.3%
-- **Good model:** 70-85%
-- **Excellent model:** >85%
-
-If you get <60%, check:
-1. Class balance (are classes roughly equal?)
-2. Data quality (are epochs correctly labeled?)
-3. Hyperparameters (especially learning rate and dropout)
-
----
-
-## 📚 Citation
-
-If you use this code in your research, please cite:
-
-```bibtex
-@article{veličković2018graph,
-  title={Graph attention networks},
-  author={Veli{\v{c}}kovi{\'c}, Petar and Cucurull, Guillem and Casanova, Arantxa and Romero, Adriana and Li{\`o}, Pietro and Bengio, Yoshua},
-  journal={ICLR},
-  year={2018}
-}
-```
-
----
-
-## 💡 Tips for Best Results
-
-1. **Start simple:** Train on one frequency band (Alpha) first
-2. **Check data:** Run `analyze_graphs.py` before training
-3. **Monitor TensorBoard:** Watch for overfitting early
-4. **Tune threshold:** Graph density strongly affects performance
-5. **Try ensembles:** Train separate models per band, then combine
-6. **Compare with baselines:** Your Pearson correlation results
-
----
-
-## 🤝 Contributing
-
-To add new features:
-1. Add configuration in `config/config.yaml`
-2. Modify `dataset_builder.py` for new graph features
-3. Adjust `gat_model.py` if architecture changes needed
-4. Update this README
-
----
-
-## 📧 Questions?
-
-For issues specific to this module:
-- Check TensorBoard logs: `tensorboard --logdir=runs`
-- Check training log: `output/logs/train_*.log`
-- Verify configuration: `cat config/config.yaml`
-
-For questions about the overall pipeline:
-- See main documentation: `/media/storage_hdd/dmt_fz/docs/README.md`
-
----
-
-**Last updated:** 2025-01-13  
-**Compatible with:** PyTorch 2.0+, PyTorch Geometric 2.3+
-
+- Veličković et al. (2018). Graph Attention Networks. ICLR.
+- Brody et al. (2021). How Attentive are Graph Attention Networks? (GATv2)
+- Defferrard et al. (2016). Chebyshev Convolutions on Graphs.

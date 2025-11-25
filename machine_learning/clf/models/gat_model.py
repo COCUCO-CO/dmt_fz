@@ -66,6 +66,7 @@ class BrainStateGAT(nn.Module):
         super(BrainStateGAT, self).__init__()
         
         self.num_classes = num_classes
+        self.num_graph_features = num_graph_features
         arch_config = config['model']['architecture']
         pool_config = config['model']['pooling']
         mlp_config = config['model']['mlp']
@@ -132,9 +133,10 @@ class BrainStateGAT(nn.Module):
             current_dim = hidden_dim
         
         self.batch_norms.append(nn.BatchNorm1d(current_dim))
+        logger.info(f"First layer output dim: {current_dim}")
         
         # Hidden layers
-        for _ in range(num_layers - 1):
+        for layer_idx in range(num_layers - 1):
             if conv_type == 'gatv2':
                 self.conv_layers.append(
                     GATv2Conv(
@@ -147,6 +149,9 @@ class BrainStateGAT(nn.Module):
                         edge_dim=num_heads if use_edge_attr else None
                     )
                 )
+                # Update current_dim for next layer
+                current_dim = hidden_dim * num_heads if concat_heads else hidden_dim
+                logger.info(f"Hidden layer {layer_idx+1} output dim: {current_dim}")
             elif conv_type == 'cheby':
                 self.conv_layers.append(
                     ChebConv(
@@ -155,6 +160,8 @@ class BrainStateGAT(nn.Module):
                         K=cheby_k
                     )
                 )
+                current_dim = hidden_dim
+                logger.info(f"Hidden layer {layer_idx+1} output dim: {current_dim}")
             self.batch_norms.append(nn.BatchNorm1d(current_dim))
         
         self.dropout = nn.Dropout(dropout)
@@ -164,6 +171,7 @@ class BrainStateGAT(nn.Module):
         # ====================================================================
         
         pooling_method = pool_config['method']
+        logger.info(f"Pooling method: {pooling_method}, current_dim before pooling: {current_dim}")
         
         if pooling_method == "attention":
             self.pool = AttentionPooling(current_dim)
@@ -186,6 +194,8 @@ class BrainStateGAT(nn.Module):
         
         # Combine pooled features with graph-level features
         mlp_input_dim = pooled_dim + num_graph_features
+        
+        logger.info(f"Pooled dim: {pooled_dim}, Graph features: {num_graph_features}, MLP input dim: {mlp_input_dim}")
         
         mlp_layers = []
         prev_dim = mlp_input_dim
@@ -247,12 +257,12 @@ class BrainStateGAT(nn.Module):
         # Handle graph_attr - ensure it's [batch_size, num_graph_features]
         if hasattr(data, 'graph_attr') and data.graph_attr is not None:
             graph_attr = data.graph_attr
-            # If graph_attr is 1D, it means it's a single graph feature vector
-            # We need to replicate it for each graph in the batch
             if graph_attr.dim() == 1:
-                # This is for a single graph, replicate for batch
-                num_graphs = int(batch.max()) + 1
-                graph_attr = graph_attr.unsqueeze(0).repeat(num_graphs, 1)
+                num_features = self.num_graph_features or graph_attr.shape[0]
+                if num_features > 0 and graph_attr.numel() % num_features == 0:
+                    graph_attr = graph_attr.view(-1, num_features)
+                else:
+                    graph_attr = graph_attr.unsqueeze(0)
         else:
             graph_attr = None
         
