@@ -23,7 +23,9 @@ clf/
 ├── train.py                  # Entrenamiento principal
 ├── train_per_band.py         # Entrenamiento por banda (recomendado)
 ├── ensemble_bands.py         # Combinar predicciones de múltiples bandas
-└── evaluate.py               # Evaluación del modelo
+├── evaluate.py               # Evaluación del modelo
+├── verify_dataset.py         # Verificar integridad del dataset y labels
+└── hyperparam_search.py      # Búsqueda de hiperparámetros (random search)
 ```
 
 ## Setup
@@ -64,12 +66,36 @@ cat band_comparison_results.json
 python ensemble_bands.py --method average
 ```
 
+### Opción 4: Verificar dataset antes de entrenar
+```bash
+python verify_dataset.py --config config/config.yaml
+```
+Genera: distribución de labels, separabilidad de clases (silhouette score), detección de data leakage.
+
+### Opción 5: Búsqueda de hiperparámetros
+```bash
+# 20 experimentos con random search
+python hyperparam_search.py --n_experiments 20 --bands Alpha --max_epochs 100
+
+# Ver resultados
+tensorboard --logdir=hyperparam_search/
+cat hyperparam_search/search_*/summary.json
+```
+
 ### Monitorear entrenamiento
 ```bash
 tensorboard --logdir=runs_alpha
 # O todas las bandas juntas:
 tensorboard --logdir_spec=Delta:runs_delta,Theta:runs_theta,Alpha:runs_alpha,Beta:runs_beta,Gamma:runs_gamma
 ```
+
+### TensorBoard: Qué se loguea
+- **Scalars**: Loss, Accuracy (train/val), Learning rate
+- **Attention**: Distribuciones y heatmaps de attention weights por capa
+- **Embeddings**: Visualización t-SNE/UMAP de 3 tipos:
+  - `graph_GAT_embedding`: Después de capas GAT + pooling
+  - `graph_GAT_features_embedding`: + features de grafo
+  - `graph_GAT_MLP_embedding`: Logits finales (antes de softmax)
 
 ## Pipeline de Datos
 

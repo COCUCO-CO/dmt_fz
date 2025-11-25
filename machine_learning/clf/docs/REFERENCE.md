@@ -131,6 +131,65 @@ with torch.no_grad():
     
 # Extraer attention weights
 attention_weights = model.get_attention_weights(graph_data)
+
+# Extraer embeddings intermedios
+embeddings = model.get_embeddings(graph_data)
+# embeddings['graph_embeddings'] → Pre-MLP embedding
+# embeddings['logits'] → Post-MLP embedding
+```
+
+## Embeddings Extraídos
+
+El modelo genera 3 tipos de embeddings guardados en `output_{band}/embeddings/`:
+
+| Embedding | Shape | Descripción |
+|-----------|-------|-------------|
+| `graph_GAT_embedding` | (N, 1024) | Representación después de GAT + pooling |
+| `graph_GAT_features_embedding` | (N, 1032) | + features de grafo (Kuramoto, etc.) |
+| `graph_GAT_MLP_embedding` | (N, 3) | Logits finales (antes de softmax) |
+
+### Uso para análisis
+```python
+import pickle
+
+# Cargar embeddings
+with open('output_alpha/embeddings/test_embeddings.pkl', 'rb') as f:
+    data = pickle.load(f)
+
+embeddings = data['graph_GAT_embedding']  # (N, 1024)
+labels = data['labels']                    # (N,)
+conditions = data['conditions']            # ['DMT', 'EC', 'EO', ...]
+subjects = data['subjects']                # ['S01', 'S02', ...]
+
+# Visualizar con t-SNE
+from sklearn.manifold import TSNE
+tsne = TSNE(n_components=2)
+emb_2d = tsne.fit_transform(embeddings)
+```
+
+## Matrices de Atención
+
+Las matrices de atención se guardan con **nombres de electrodos** en los ejes:
+- Formato: `NOMBRE-INDICE` (ej: `Fp1-0`, `Cz-12`, `O2-23`)
+- Los 24 electrodos se cargan automáticamente de `extra.pkl`
+
+```python
+from utils import load_electrode_names, format_electrode_labels
+
+ch_names = load_electrode_names()  # ['Fp1', 'Fp2', 'F3', ...]
+labels = format_electrode_labels(ch_names)  # ['Fp1-0', 'Fp2-1', 'F3-2', ...]
+```
+
+### Atención por clase
+```python
+import pickle
+
+with open('output_alpha/attention/attention_per_class.pkl', 'rb') as f:
+    att = pickle.load(f)
+
+# att['DMT'][0] = Matriz de atención promedio de DMT, capa 0
+# att['EC'][0] = Matriz de atención promedio de EC, capa 0
+diff = att['DMT'][0] - att['EC'][0]  # Diferencia DMT vs EC
 ```
 
 ## Requerimientos de Hardware
@@ -144,12 +203,73 @@ attention_weights = model.get_attention_weights(graph_data)
 ## Outputs Generados
 
 ```
-checkpoints_{band}/best_model.pt    # Modelo entrenado
-output_{band}/test_results.json     # Métricas de test
-output_{band}/confusion_matrix.png  # Matriz de confusión
-output_{band}/training_curves.png   # Curvas de loss/accuracy
-runs_{band}/                        # TensorBoard logs
-band_comparison_results.json        # Comparación entre bandas
-output/analysis/                    # Análisis estadístico
+checkpoints_{band}/best_model.pt         # Modelo entrenado
+output_{band}/test_results.json          # Métricas de test
+output_{band}/confusion_matrix.png       # Matriz de confusión
+output_{band}/training_curves.png        # Curvas de loss/accuracy
+output_{band}/embeddings/                # Embeddings para análisis
+    ├── train_embeddings.pkl
+    └── test_embeddings.pkl
+output_{band}/attention/                 # Matrices de atención
+    ├── attention_distributions.png
+    ├── attention_layer_1_average.png    # Con nombres de electrodos
+    ├── attention_layer_2_average.png
+    └── attention_per_class.pkl          # Atención promedio por clase
+runs_{band}/                             # TensorBoard logs
+band_comparison_results.json             # Comparación entre bandas
+output/analysis/                         # Análisis estadístico
+output/verification/                     # Verificación del dataset
+    ├── class_separability_pca.png
+    └── graph_features_all.csv
+```
+
+## Verificación del Dataset
+
+Antes de entrenar, verifica la integridad del dataset:
+
+```bash
+python verify_dataset.py --config config/config.yaml
+```
+
+Genera:
+- Distribución de labels (train/val/test)
+- Estadísticas de features por clase
+- Detección de data leakage (sujetos compartidos entre splits)
+- Score de separabilidad de clases (silhouette score)
+- Plot PCA de separabilidad
+
+## Búsqueda de Hiperparámetros
+
+Random search sobre los hiperparámetros más importantes:
+
+```bash
+python hyperparam_search.py --n_experiments 20 --bands Alpha --max_epochs 100
+```
+
+### Hiperparámetros en la búsqueda
+
+| Categoría | Parámetro | Rango |
+|-----------|-----------|-------|
+| **Arquitectura** | hidden_dim | [64, 128, 256, 512] |
+| | num_gat_layers | [2, 3, 4] |
+| | num_attention_heads | [4, 8, 16] |
+| | dropout | 0.1 - 0.6 |
+| | concat_heads | [True, False] |
+| **Pooling** | method | [mean, max, add, attention] |
+| **MLP** | hidden_dims | [[256,128], [512,256], ...] |
+| | dropout | 0.2 - 0.7 |
+| **Training** | learning_rate | 1e-5 - 1e-2 (log) |
+| | weight_decay | 1e-6 - 1e-3 (log) |
+| | batch_size | [16, 32, 64, 128] |
+| **Grafo** | fully_connected | [True, False] |
+| | edge_threshold | 0.1 - 0.5 |
+
+### Resultados
+```bash
+# Ver summary
+cat hyperparam_search/search_*/summary.json
+
+# TensorBoard (todos los experimentos)
+tensorboard --logdir=hyperparam_search/
 ```
 

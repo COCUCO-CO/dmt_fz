@@ -7,6 +7,10 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 
 import numpy as np
+
+# Use non-GUI backend to avoid tkinter threading issues
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.metrics import confusion_matrix

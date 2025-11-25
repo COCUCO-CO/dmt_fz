@@ -11,11 +11,53 @@ from typing import Dict, List, Tuple, Optional
 
 import numpy as np
 import torch
+
+# Use non-GUI backend to avoid tkinter threading issues
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import seaborn as sns
 from torch_geometric.data import Batch
+import pickle
 
 logger = logging.getLogger(__name__)
+
+# Path to electrode info
+EXTRA_PKL_PATH = Path('/media/storage_hdd/dmt_fz/fwd-inv-stc/extra.pkl')
+
+
+def load_electrode_names() -> Optional[List[str]]:
+    """
+    Load electrode names from extra.pkl.
+    
+    Returns:
+        List of electrode names or None if file not found
+    """
+    if not EXTRA_PKL_PATH.exists():
+        logger.warning(f"Electrode info file not found: {EXTRA_PKL_PATH}")
+        return None
+    
+    try:
+        with open(EXTRA_PKL_PATH, 'rb') as f:
+            data = pickle.load(f)
+        ch_names = data[4]  # Channel names are at index 4
+        return ch_names
+    except Exception as e:
+        logger.warning(f"Failed to load electrode names: {e}")
+        return None
+
+
+def format_electrode_labels(ch_names: List[str]) -> List[str]:
+    """
+    Format electrode names with their index for axis labels.
+    
+    Args:
+        ch_names: List of electrode names
+        
+    Returns:
+        List of formatted labels like "FP1-0", "FP2-1", etc.
+    """
+    return [f"{name}-{i}" for i, name in enumerate(ch_names)]
 
 
 def extract_attention_matrices(model, data_loader, device, num_samples: int = 100):
@@ -87,7 +129,7 @@ def plot_attention_heatmap(edge_index: torch.Tensor,
         num_nodes: Number of nodes in graph
         title: Plot title
         save_path: Path to save figure
-        channel_names: Optional list of node names
+        channel_names: Optional list of electrode names (will auto-load if None)
     """
     # Average across heads if multi-head
     if attention_weights.dim() > 1:
@@ -103,8 +145,18 @@ def plot_attention_heatmap(edge_index: torch.Tensor,
         src, dst = edge_index[0, i], edge_index[1, i]
         adj_matrix[src, dst] = attention_weights[i]
     
+    # Load electrode names if not provided
+    if channel_names is None:
+        channel_names = load_electrode_names()
+    
+    # Format labels with index: "Name-Index"
+    if channel_names is not None and len(channel_names) >= num_nodes:
+        axis_labels = format_electrode_labels(channel_names[:num_nodes])
+    else:
+        axis_labels = [str(i) for i in range(num_nodes)]
+    
     # Plot
-    fig, ax = plt.subplots(figsize=(12, 10))
+    fig, ax = plt.subplots(figsize=(14, 12))
     
     # Use mask for zero values (no edges)
     mask = (adj_matrix == 0)
@@ -112,18 +164,17 @@ def plot_attention_heatmap(edge_index: torch.Tensor,
     sns.heatmap(adj_matrix, mask=mask, cmap='YlOrRd', 
                 cbar_kws={'label': 'Attention Weight'},
                 square=True, linewidths=0.1, linecolor='gray',
-                ax=ax, vmin=0, vmax=1)
+                ax=ax, vmin=0, vmax=1,
+                xticklabels=axis_labels,
+                yticklabels=axis_labels)
     
     ax.set_title(title, fontsize=14, fontweight='bold', pad=15)
-    ax.set_xlabel('Target Node', fontsize=12)
-    ax.set_ylabel('Source Node', fontsize=12)
+    ax.set_xlabel('Target Electrode', fontsize=12)
+    ax.set_ylabel('Source Electrode', fontsize=12)
     
-    # Add channel names if provided
-    if channel_names is not None and len(channel_names) == num_nodes:
-        ax.set_xticks(np.arange(num_nodes) + 0.5)
-        ax.set_yticks(np.arange(num_nodes) + 0.5)
-        ax.set_xticklabels(channel_names, rotation=45, ha='right')
-        ax.set_yticklabels(channel_names, rotation=0)
+    # Rotate labels for readability
+    plt.xticks(rotation=45, ha='right', fontsize=8)
+    plt.yticks(rotation=0, fontsize=8)
     
     plt.tight_layout()
     
@@ -205,10 +256,20 @@ def plot_average_attention(model, data_loader, device, num_nodes: int,
         device: torch device
         num_nodes: Number of nodes in each graph
         save_dir: Directory to save plots
-        channel_names: Optional list of node names
+        channel_names: Optional list of electrode names (will auto-load if None)
     """
     model.eval()
     save_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Load electrode names if not provided
+    if channel_names is None:
+        channel_names = load_electrode_names()
+    
+    # Format labels with index: "Name-Index"
+    if channel_names is not None and len(channel_names) >= num_nodes:
+        axis_labels = format_electrode_labels(channel_names[:num_nodes])
+    else:
+        axis_labels = [str(i) for i in range(num_nodes)]
     
     # Accumulate attention matrices per layer
     layer_matrices = {i: [] for i in range(len(model.conv_layers))}
@@ -254,24 +315,24 @@ def plot_average_attention(model, data_loader, device, num_nodes: int,
         avg_matrix = np.mean(matrices, axis=0)
         
         # Plot heatmap
-        fig, ax = plt.subplots(figsize=(12, 10))
+        fig, ax = plt.subplots(figsize=(14, 12))
         
         mask = (avg_matrix == 0)
         sns.heatmap(avg_matrix, mask=mask, cmap='YlOrRd',
                    cbar_kws={'label': 'Average Attention Weight'},
                    square=True, linewidths=0.1, linecolor='gray',
-                   ax=ax, vmin=0, vmax=avg_matrix.max())
+                   ax=ax, vmin=0, vmax=avg_matrix.max(),
+                   xticklabels=axis_labels,
+                   yticklabels=axis_labels)
         
         ax.set_title(f'Average Attention Weights - Layer {layer_idx + 1}',
                     fontsize=14, fontweight='bold', pad=15)
-        ax.set_xlabel('Target Node', fontsize=12)
-        ax.set_ylabel('Source Node', fontsize=12)
+        ax.set_xlabel('Target Electrode', fontsize=12)
+        ax.set_ylabel('Source Electrode', fontsize=12)
         
-        if channel_names is not None:
-            ax.set_xticks(np.arange(num_nodes) + 0.5)
-            ax.set_yticks(np.arange(num_nodes) + 0.5)
-            ax.set_xticklabels(channel_names, rotation=45, ha='right', fontsize=8)
-            ax.set_yticklabels(channel_names, rotation=0, fontsize=8)
+        # Rotate labels for readability
+        plt.xticks(rotation=45, ha='right', fontsize=8)
+        plt.yticks(rotation=0, fontsize=8)
         
         plt.tight_layout()
         
@@ -283,9 +344,12 @@ def plot_average_attention(model, data_loader, device, num_nodes: int,
 
 
 def log_attention_to_tensorboard(writer, model, data_loader, device, epoch: int,
-                                 num_samples: int = 5):
+                                 num_samples: int = 5, class_names: List[str] = None,
+                                 save_dir: Optional[Path] = None):
     """
-    Log attention weights to TensorBoard.
+    Log attention weights to TensorBoard with electrode names, one example per class.
+    
+    Generates 2 layers × 3 classes = 6 heatmaps with proper electrode labels.
     
     Args:
         writer: TensorBoard SummaryWriter
@@ -293,9 +357,17 @@ def log_attention_to_tensorboard(writer, model, data_loader, device, epoch: int,
         data_loader: DataLoader with graphs
         device: torch device
         epoch: Current epoch number
-        num_samples: Number of sample graphs to visualize
+        num_samples: Number of sample graphs to visualize (deprecated, now uses 1 per class)
+        class_names: List of class names (default: ['DMT', 'EC', 'EO'])
+        save_dir: Optional directory to save attention images as files
     """
+    if class_names is None:
+        class_names = ['DMT', 'EC', 'EO']
+    
     model.eval()
+    
+    # Load electrode names
+    ch_names = load_electrode_names()
     
     # Extract attention statistics
     attention_stats = extract_attention_matrices(model, data_loader, device, num_samples=100)
@@ -319,53 +391,1040 @@ def log_attention_to_tensorboard(writer, model, data_loader, device, epoch: int,
         writer.add_histogram(f'Attention/{layer_key}/distribution',
                             stats['values'], epoch)
     
-    # Log sample attention heatmaps as images
+    # Find one example per class
+    class_examples = {name: None for name in class_names}
+    
     with torch.no_grad():
-        for batch_idx, batch in enumerate(data_loader):
-            if batch_idx >= num_samples:
-                break
+        for batch in data_loader:
+            batch = batch.to(device)
             
+            # Check each graph in batch
+            for graph_idx in range(batch.num_graphs):
+                label = batch.y[graph_idx].item()
+                if label < len(class_names):
+                    class_name = class_names[label]
+                    if class_examples[class_name] is None:
+                        # Store this graph's data
+                        start_idx = batch.ptr[graph_idx].item()
+                        end_idx = batch.ptr[graph_idx + 1].item()
+                        num_nodes = end_idx - start_idx
+                        
+                        # Get attention for all layers
+                        all_attentions = model.get_all_attention_weights(batch)
+                        
+                        layer_data = []
+                        for layer_idx, (edge_index, alpha) in enumerate(all_attentions):
+                            # Get edges for this graph
+                            edge_mask = (edge_index[0] >= start_idx) & (edge_index[0] < end_idx)
+                            graph_edges = edge_index[:, edge_mask] - start_idx
+                            graph_alpha = alpha[edge_mask]
+                            
+                            # Average across heads
+                            if graph_alpha.dim() > 1:
+                                graph_alpha = graph_alpha.mean(dim=1)
+                            
+                            # Build attention matrix
+                            att_matrix = np.zeros((num_nodes, num_nodes))
+                            for i in range(graph_edges.shape[1]):
+                                src = graph_edges[0, i].item()
+                                dst = graph_edges[1, i].item()
+                                att_matrix[src, dst] = graph_alpha[i].item()
+                            
+                            layer_data.append(att_matrix)
+                        
+                        class_examples[class_name] = {
+                            'num_nodes': num_nodes,
+                            'layers': layer_data
+                        }
+            
+            # Check if we have all classes
+            if all(v is not None for v in class_examples.values()):
+                break
+    
+    # Create electrode labels
+    num_nodes = next((v['num_nodes'] for v in class_examples.values() if v), 24)
+    if ch_names and len(ch_names) >= num_nodes:
+        axis_labels = format_electrode_labels(ch_names[:num_nodes])
+    else:
+        axis_labels = [str(i) for i in range(num_nodes)]
+    
+    # Create save directory if specified
+    if save_dir:
+        attention_save_dir = Path(save_dir) / 'attention' / f'epoch_{epoch}'
+        attention_save_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Log one heatmap per class per layer
+    for class_name, data in class_examples.items():
+        if data is None:
+            logger.warning(f"No example found for class {class_name}")
+            continue
+        
+        for layer_idx, att_matrix in enumerate(data['layers']):
+            # Create figure with electrode labels
+            fig, ax = plt.subplots(figsize=(12, 10))
+            
+            mask = (att_matrix == 0)
+            sns.heatmap(att_matrix, mask=mask, cmap='YlOrRd', square=True,
+                       cbar_kws={'label': 'Attention Weight'},
+                       ax=ax, vmin=0, vmax=att_matrix.max() if att_matrix.max() > 0 else 1,
+                       xticklabels=axis_labels,
+                       yticklabels=axis_labels,
+                       linewidths=0.1, linecolor='gray')
+            
+            title = f'Attention - {class_name} - Layer {layer_idx + 1} (Epoch {epoch})'
+            ax.set_title(title, fontsize=14, fontweight='bold', pad=15)
+            ax.set_xlabel('Target Electrode', fontsize=11)
+            ax.set_ylabel('Source Electrode', fontsize=11)
+            
+            # Rotate labels for readability
+            plt.xticks(rotation=45, ha='right', fontsize=7)
+            plt.yticks(rotation=0, fontsize=7)
+            
+            plt.tight_layout()
+            
+            # Convert figure to numpy array for TensorBoard
+            fig.canvas.draw()
+            img = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
+            img = img.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+            img = img.transpose(2, 0, 1)  # CHW format for tensorboard
+            
+            # Log to TensorBoard with clear naming (individual example)
+            tag = f'Attention_Example/{class_name}/Layer_{layer_idx + 1}'
+            writer.add_image(tag, img, epoch)
+            
+            # Save as file if directory specified
+            if save_dir:
+                save_path = attention_save_dir / f'attention_example_{class_name}_layer_{layer_idx + 1}.png'
+                plt.savefig(save_path, dpi=150, bbox_inches='tight')
+                logger.debug(f"Saved attention heatmap to {save_path}")
+            
+            plt.close(fig)
+    
+    # Log summary message
+    num_classes_logged = sum(1 for v in class_examples.values() if v is not None)
+    num_layers = len(next((v['layers'] for v in class_examples.values() if v), []))
+    logger.info(f"Logged {num_classes_logged * num_layers} attention heatmaps to TensorBoard for epoch {epoch} "
+                f"({num_classes_logged} classes × {num_layers} layers)")
+
+
+def extract_embeddings_for_analysis(model, data_loader, device, 
+                                     num_samples: int = None,
+                                     class_names: List[str] = None) -> Dict[str, np.ndarray]:
+    """
+    Extract all embeddings from the model for statistical analysis.
+    
+    Args:
+        model: GAT model with get_embeddings method
+        data_loader: DataLoader with graphs
+        device: torch device
+        num_samples: Max samples to extract (None = all)
+        class_names: List of class names for label mapping
+        
+    Returns:
+        Dict with:
+            - 'graph_GAT_embedding': Pre-MLP embeddings after GAT layers + pooling [num_graphs, pooled_dim]
+            - 'graph_GAT_features_embedding': With graph-level features [num_graphs, mlp_input_dim]
+            - 'graph_GAT_MLP_embedding': Post-MLP outputs (logits) [num_graphs, num_classes]
+            - 'predictions': Predicted class indices [num_graphs]
+            - 'labels': Ground truth labels [num_graphs]
+            - 'conditions': String class names [num_graphs]
+            - 'subjects': Subject IDs [num_graphs]
+            - 'bands': Frequency bands [num_graphs]
+            - 'epoch_indices': Epoch indices [num_graphs]
+    """
+    if class_names is None:
+        class_names = ['DMT', 'EC', 'EO']
+    
+    model.eval()
+    
+    all_graph_embeddings = []
+    all_graph_embeddings_with_features = []
+    all_logits = []
+    all_labels = []
+    all_conditions = []
+    all_subjects = []
+    all_bands = []
+    all_epoch_indices = []
+    
+    count = 0
+    
+    with torch.no_grad():
+        for batch in data_loader:
+            batch = batch.to(device)
+            
+            # Get all embeddings
+            embeddings_dict = model.get_embeddings(batch)
+            
+            all_graph_embeddings.append(embeddings_dict['graph_embeddings'].cpu().numpy())
+            all_graph_embeddings_with_features.append(embeddings_dict['graph_embeddings_with_features'].cpu().numpy())
+            all_logits.append(embeddings_dict['logits'].cpu().numpy())
+            all_labels.append(batch.y.cpu().numpy())
+            
+            # Extract metadata for each graph in batch
+            for i in range(batch.num_graphs):
+                label_idx = batch.y[i].item()
+                all_conditions.append(class_names[label_idx] if label_idx < len(class_names) else f"Class_{label_idx}")
+                
+                # Handle subject_id - could be list, tensor, or single value
+                if hasattr(batch, 'subject_id'):
+                    try:
+                        if isinstance(batch.subject_id, (list, tuple)):
+                            subj = batch.subject_id[i]
+                        elif hasattr(batch.subject_id, '__getitem__') and len(batch.subject_id) > 1:
+                            subj = batch.subject_id[i]
+                            if hasattr(subj, 'item'):
+                                subj = subj.item()
+                        else:
+                            subj = batch.subject_id if not hasattr(batch.subject_id, 'item') else batch.subject_id.item()
+                        all_subjects.append(str(subj))
+                    except:
+                        all_subjects.append('unknown')
+                else:
+                    all_subjects.append('unknown')
+                
+                # Handle band - could be list, tensor, or single value  
+                if hasattr(batch, 'band'):
+                    try:
+                        if isinstance(batch.band, (list, tuple)):
+                            band = batch.band[i]
+                        elif hasattr(batch.band, '__getitem__') and hasattr(batch.band, '__len__') and len(batch.band) > 1:
+                            band = batch.band[i]
+                            if hasattr(band, 'item'):
+                                band = band.item()
+                        else:
+                            band = batch.band if not hasattr(batch.band, 'item') else batch.band.item()
+                        all_bands.append(str(band))
+                    except:
+                        all_bands.append('unknown')
+                else:
+                    all_bands.append('unknown')
+                
+                # Handle epoch_idx
+                if hasattr(batch, 'epoch_idx'):
+                    try:
+                        if isinstance(batch.epoch_idx, (list, tuple)):
+                            epoch_idx = batch.epoch_idx[i]
+                        elif hasattr(batch.epoch_idx, '__getitem__') and hasattr(batch.epoch_idx, '__len__') and len(batch.epoch_idx) > 1:
+                            epoch_idx = batch.epoch_idx[i]
+                            if hasattr(epoch_idx, 'item'):
+                                epoch_idx = epoch_idx.item()
+                        else:
+                            epoch_idx = batch.epoch_idx if not hasattr(batch.epoch_idx, 'item') else batch.epoch_idx.item()
+                        all_epoch_indices.append(int(epoch_idx))
+                    except:
+                        all_epoch_indices.append(-1)
+                else:
+                    all_epoch_indices.append(-1)
+            
+            count += batch.num_graphs
+            if num_samples and count >= num_samples:
+                break
+    
+    graph_gat_embedding = np.vstack(all_graph_embeddings)
+    graph_gat_mlp_embedding = np.vstack(all_logits)
+    predictions = np.argmax(graph_gat_mlp_embedding, axis=1)
+    
+    return {
+        'graph_GAT_embedding': graph_gat_embedding,
+        'graph_GAT_features_embedding': np.vstack(all_graph_embeddings_with_features),
+        'graph_GAT_MLP_embedding': graph_gat_mlp_embedding,
+        'predictions': predictions,
+        'labels': np.concatenate(all_labels),
+        'conditions': np.array(all_conditions),
+        'subjects': np.array(all_subjects),
+        'bands': np.array(all_bands),
+        'epoch_indices': np.array(all_epoch_indices)
+    }
+
+
+def log_embeddings_to_tensorboard(writer, model, data_loader, device, epoch: int,
+                                   num_samples: int = 500, class_names: List[str] = None):
+    """
+    Log graph embeddings to TensorBoard for visualization (t-SNE/UMAP projector).
+    Logs 3 types of embeddings:
+      - GAT_pooled: After GAT layers + pooling (before graph features)
+      - GAT_features: After concatenating graph-level features
+      - GAT_MLP: After MLP (logits)
+    
+    Args:
+        writer: TensorBoard SummaryWriter
+        model: GAT model with get_embeddings method
+        data_loader: DataLoader with graphs
+        device: torch device
+        epoch: Current epoch number
+        num_samples: Number of samples to visualize
+        class_names: List of class names
+    """
+    if class_names is None:
+        class_names = ['DMT', 'EC', 'EO']
+    
+    # Extract embeddings
+    emb_data = extract_embeddings_for_analysis(model, data_loader, device, num_samples, class_names)
+    
+    # Create metadata labels
+    conditions = emb_data['conditions']
+    label_list = [str(cond) for cond in conditions]
+    
+    # Define embedding types to log
+    embedding_types = [
+        ('GAT_pooled', 'graph_GAT_embedding'),           # After pooling, before features
+        ('GAT_features', 'graph_GAT_features_embedding'), # With graph features concatenated  
+        ('GAT_MLP', 'graph_GAT_MLP_embedding'),           # After MLP (logits)
+    ]
+    
+    logged_count = 0
+    for tag_name, emb_key in embedding_types:
+        if emb_key not in emb_data or emb_data[emb_key] is None:
+            continue
+            
+        emb_tensor = torch.tensor(emb_data[emb_key], dtype=torch.float32)
+        
+        try:
+            writer.add_embedding(
+                mat=emb_tensor,
+                metadata=label_list,
+                global_step=epoch,
+                tag=tag_name
+            )
+            logged_count += 1
+        except Exception as e:
+            logger.warning(f"Failed to log {tag_name} embeddings: {e}")
+    
+    writer.flush()
+    logger.info(f"Logged {logged_count} embedding types ({len(label_list)} samples each) for epoch {epoch}")
+
+
+def save_embeddings_to_file(model, data_loader, device, save_path: Path,
+                            num_samples: int = None, class_names: List[str] = None):
+    """
+    Save all embeddings to a pickle file for later analysis.
+    
+    Args:
+        model: GAT model with get_embeddings method
+        data_loader: DataLoader with graphs
+        device: torch device
+        save_path: Path to save the embeddings
+        num_samples: Max samples (None = all)
+        class_names: List of class names
+        
+    Saves dict with:
+        - graph_GAT_embedding: Embeddings after GAT layers + pooling
+        - graph_GAT_features_embedding: With graph-level features added
+        - graph_GAT_MLP_embedding: Post-MLP outputs (logits, before softmax)
+        - predictions: Predicted class indices
+        - labels: Ground truth labels
+        - conditions: String class names
+        - subjects: Subject IDs
+        - bands: Frequency bands
+    """
+    import pickle
+    
+    if class_names is None:
+        class_names = ['DMT', 'EC', 'EO']
+    
+    emb_data = extract_embeddings_for_analysis(model, data_loader, device, num_samples, class_names)
+    
+    # Add accuracy info
+    correct = (emb_data['predictions'] == emb_data['labels']).sum()
+    total = len(emb_data['labels'])
+    emb_data['accuracy'] = correct / total
+    emb_data['class_names'] = class_names
+    
+    with open(save_path, 'wb') as f:
+        pickle.dump(emb_data, f)
+    
+    logger.info(f"Saved {total} embeddings to {save_path} (accuracy: {emb_data['accuracy']:.4f})")
+    
+    return emb_data
+
+
+def compute_attention_matrix_per_class(model, data_loader, device, num_nodes: int,
+                                        class_names: List[str] = None) -> Dict[str, np.ndarray]:
+    """
+    Compute average attention matrices per class for comparison.
+    
+    Args:
+        model: GAT model
+        data_loader: DataLoader
+        device: torch device
+        num_nodes: Number of nodes per graph
+        class_names: List of class names
+        
+    Returns:
+        Dict mapping class name to average attention matrix per layer
+    """
+    if class_names is None:
+        class_names = ['DMT', 'EC', 'EO']
+    
+    model.eval()
+    num_layers = len(model.conv_layers)
+    
+    # Initialize accumulators
+    attention_sums = {name: {l: np.zeros((num_nodes, num_nodes)) for l in range(num_layers)} 
+                      for name in class_names}
+    counts = {name: 0 for name in class_names}
+    
+    with torch.no_grad():
+        for batch in data_loader:
+            batch = batch.to(device)
+            
+            # Get attention weights
+            all_attentions = model.get_all_attention_weights(batch)
+            
+            # Process each graph in batch
+            for graph_idx in range(batch.num_graphs):
+                label = batch.y[graph_idx].item()
+                class_name = class_names[label]
+                
+                # Get node range for this graph
+                start_idx = batch.ptr[graph_idx].item()
+                end_idx = batch.ptr[graph_idx + 1].item()
+                
+                for layer_idx, (edge_index, alpha) in enumerate(all_attentions):
+                    # Get edges for this graph
+                    edge_mask = (edge_index[0] >= start_idx) & (edge_index[0] < end_idx)
+                    graph_edges = edge_index[:, edge_mask] - start_idx
+                    graph_alpha = alpha[edge_mask]
+                    
+                    # Average across heads
+                    if graph_alpha.dim() > 1:
+                        graph_alpha = graph_alpha.mean(dim=1)
+                    
+                    # Build attention matrix
+                    att_matrix = np.zeros((num_nodes, num_nodes))
+                    for i in range(graph_edges.shape[1]):
+                        src = graph_edges[0, i].item()
+                        dst = graph_edges[1, i].item()
+                        att_matrix[src, dst] = graph_alpha[i].item()
+                    
+                    attention_sums[class_name][layer_idx] += att_matrix
+                
+                counts[class_name] += 1
+    
+    # Average
+    attention_per_class = {}
+    for class_name in class_names:
+        if counts[class_name] > 0:
+            attention_per_class[class_name] = {
+                l: attention_sums[class_name][l] / counts[class_name]
+                for l in range(num_layers)
+            }
+    
+    logger.info(f"Computed average attention for {sum(counts.values())} graphs across {len(class_names)} classes")
+    
+    return attention_per_class
+
+
+def plot_attention_per_class(attention_per_class: Dict[str, Dict[int, np.ndarray]],
+                             save_dir: Path,
+                             class_names: List[str] = None):
+    """
+    Plot average attention heatmaps for each class and their differences.
+    
+    Args:
+        attention_per_class: Dict from compute_attention_matrix_per_class
+        save_dir: Directory to save plots
+        class_names: List of class names
+    """
+    if not attention_per_class:
+        logger.warning("No attention data to plot")
+        return
+    
+    if class_names is None:
+        class_names = list(attention_per_class.keys())
+    
+    save_dir = Path(save_dir)
+    save_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Load electrode names
+    ch_names = load_electrode_names()
+    num_nodes = list(list(attention_per_class.values())[0].values())[0].shape[0]
+    axis_labels = format_electrode_labels(ch_names[:num_nodes]) if ch_names else [str(i) for i in range(num_nodes)]
+    
+    num_layers = len(list(attention_per_class.values())[0])
+    
+    # 1. Plot average attention per class per layer
+    for layer_idx in range(num_layers):
+        fig, axes = plt.subplots(1, len(class_names), figsize=(7*len(class_names), 6))
+        if len(class_names) == 1:
+            axes = [axes]
+        
+        vmax = max(attention_per_class[c][layer_idx].max() for c in class_names if c in attention_per_class)
+        
+        for idx, class_name in enumerate(class_names):
+            if class_name not in attention_per_class:
+                continue
+            
+            att_matrix = attention_per_class[class_name][layer_idx]
+            
+            ax = axes[idx]
+            sns.heatmap(att_matrix, cmap='YlOrRd', square=True, ax=ax,
+                       vmin=0, vmax=vmax,
+                       cbar_kws={'label': 'Attention', 'shrink': 0.8},
+                       xticklabels=axis_labels, yticklabels=axis_labels)
+            ax.set_title(f'{class_name} - Layer {layer_idx + 1}', fontsize=12, fontweight='bold')
+            ax.set_xlabel('Target', fontsize=10)
+            ax.set_ylabel('Source', fontsize=10)
+            ax.tick_params(axis='both', labelsize=6)
+            plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha='right')
+        
+        plt.suptitle(f'Average Attention by Class - Layer {layer_idx + 1}', fontsize=14, fontweight='bold')
+        plt.tight_layout()
+        plt.savefig(save_dir / f'attention_per_class_layer{layer_idx + 1}.png', dpi=300, bbox_inches='tight')
+        plt.close()
+        logger.info(f"Saved per-class attention for layer {layer_idx + 1}")
+    
+    # 2. Plot differences between classes (for all pairs)
+    from itertools import combinations
+    class_pairs = list(combinations(class_names, 2))
+    
+    for layer_idx in range(num_layers):
+        num_pairs = len(class_pairs)
+        fig, axes = plt.subplots(1, num_pairs, figsize=(7*num_pairs, 6))
+        if num_pairs == 1:
+            axes = [axes]
+        
+        for pair_idx, (class_a, class_b) in enumerate(class_pairs):
+            if class_a not in attention_per_class or class_b not in attention_per_class:
+                continue
+            
+            diff_matrix = attention_per_class[class_a][layer_idx] - attention_per_class[class_b][layer_idx]
+            
+            ax = axes[pair_idx]
+            vmax_diff = max(abs(diff_matrix.min()), abs(diff_matrix.max()))
+            
+            sns.heatmap(diff_matrix, cmap='RdBu_r', square=True, ax=ax,
+                       center=0, vmin=-vmax_diff, vmax=vmax_diff,
+                       cbar_kws={'label': f'{class_a} - {class_b}', 'shrink': 0.8},
+                       xticklabels=axis_labels, yticklabels=axis_labels)
+            ax.set_title(f'{class_a} vs {class_b}', fontsize=12, fontweight='bold')
+            ax.set_xlabel('Target', fontsize=10)
+            ax.set_ylabel('Source', fontsize=10)
+            ax.tick_params(axis='both', labelsize=6)
+            plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha='right')
+        
+        plt.suptitle(f'Attention Differences - Layer {layer_idx + 1}', fontsize=14, fontweight='bold')
+        plt.tight_layout()
+        plt.savefig(save_dir / f'attention_diff_layer{layer_idx + 1}.png', dpi=300, bbox_inches='tight')
+        plt.close()
+        logger.info(f"Saved attention differences for layer {layer_idx + 1}")
+
+
+def extract_attention_per_class(model, data_loader, device, class_names: List[str] = None) -> Dict:
+    """
+    Extract attention weight distributions per class for histogram plotting.
+    
+    Args:
+        model: GAT model
+        data_loader: DataLoader
+        device: torch device
+        class_names: List of class names
+        
+    Returns:
+        Dict with attention values per class per layer
+    """
+    if class_names is None:
+        class_names = ['DMT', 'EC', 'EO']
+    
+    model.eval()
+    num_layers = len(model.conv_layers)
+    
+    # Initialize storage
+    attention_values = {name: {l: [] for l in range(num_layers)} for name in class_names}
+    
+    with torch.no_grad():
+        for batch in data_loader:
             batch = batch.to(device)
             all_attentions = model.get_all_attention_weights(batch)
             
-            # Take first graph from batch
-            for layer_idx, (edge_index, alpha) in enumerate(all_attentions):
-                # Get edges for first graph only
-                mask = (batch.batch[edge_index[0]] == 0)
-                graph_edge_index = edge_index[:, mask]
-                graph_alpha = alpha[mask]
+            for graph_idx in range(batch.num_graphs):
+                label = batch.y[graph_idx].item()
+                if label >= len(class_names):
+                    continue
+                class_name = class_names[label]
                 
-                # Average across heads
-                if graph_alpha.dim() > 1:
-                    graph_alpha = graph_alpha.mean(dim=1)
+                start_idx = batch.ptr[graph_idx].item()
+                end_idx = batch.ptr[graph_idx + 1].item()
                 
-                # Create adjacency matrix
-                num_nodes = int(batch.ptr[1] - batch.ptr[0])
-                adj = torch.zeros((num_nodes, num_nodes))
-                
-                for i in range(graph_edge_index.shape[1]):
-                    src = int(graph_edge_index[0, i])
-                    dst = int(graph_edge_index[1, i])
-                    adj[src, dst] = graph_alpha[i].item()
-                
-                # Convert to image and log
-                fig, ax = plt.subplots(figsize=(8, 7))
-                sns.heatmap(adj.numpy(), cmap='YlOrRd', square=True,
-                           cbar_kws={'label': 'Attention'}, ax=ax)
-                ax.set_title(f'Layer {layer_idx + 1} - Sample {batch_idx + 1}')
-                
-                # Convert figure to numpy array
+                for layer_idx, (edge_index, alpha) in enumerate(all_attentions):
+                    edge_mask = (edge_index[0] >= start_idx) & (edge_index[0] < end_idx)
+                    graph_alpha = alpha[edge_mask]
+                    
+                    if graph_alpha.dim() > 1:
+                        graph_alpha = graph_alpha.mean(dim=1)
+                    
+                    attention_values[class_name][layer_idx].extend(graph_alpha.cpu().numpy().tolist())
+    
+    return attention_values
+
+
+def plot_attention_distributions_by_class(attention_per_class: Dict,
+                                          save_path: Optional[Path] = None,
+                                          class_names: List[str] = None):
+    """
+    Plot attention weight distributions with a line/curve per class.
+    
+    Args:
+        attention_per_class: Dict from extract_attention_per_class
+        save_path: Path to save figure
+        class_names: List of class names
+    """
+    if class_names is None:
+        class_names = list(attention_per_class.keys())
+    
+    num_layers = len(list(attention_per_class.values())[0])
+    
+    # Define colors for each class
+    colors = {'DMT': '#E74C3C', 'EC': '#3498DB', 'EO': '#2ECC71'}
+    default_colors = ['#E74C3C', '#3498DB', '#2ECC71', '#F39C12', '#9B59B6']
+    
+    fig, axes = plt.subplots(1, num_layers, figsize=(6*num_layers, 5))
+    if num_layers == 1:
+        axes = [axes]
+    
+    for layer_idx in range(num_layers):
+        ax = axes[layer_idx]
+        
+        for idx, class_name in enumerate(class_names):
+            if class_name not in attention_per_class:
+                continue
+            
+            values = np.array(attention_per_class[class_name][layer_idx])
+            if len(values) == 0:
+                continue
+            
+            color = colors.get(class_name, default_colors[idx % len(default_colors)])
+            
+            # Plot KDE (density estimate) for smoother visualization
+            from scipy import stats
+            try:
+                kde = stats.gaussian_kde(values)
+                x_range = np.linspace(values.min(), values.max(), 200)
+                ax.plot(x_range, kde(x_range), color=color, linewidth=2.5, 
+                       label=f'{class_name} (μ={values.mean():.3f})')
+                ax.fill_between(x_range, kde(x_range), alpha=0.2, color=color)
+            except Exception:
+                # Fallback to histogram if KDE fails
+                ax.hist(values, bins=50, alpha=0.5, color=color, 
+                       label=f'{class_name} (μ={values.mean():.3f})', density=True)
+        
+        ax.set_title(f'GAT Layer {layer_idx + 1}', fontsize=12, fontweight='bold')
+        ax.set_xlabel('Attention Weight', fontsize=10)
+        ax.set_ylabel('Density', fontsize=10)
+        ax.legend(loc='upper right', fontsize=9)
+        ax.grid(True, alpha=0.3)
+    
+    plt.suptitle('Attention Weight Distributions by Class', fontsize=14, fontweight='bold', y=1.02)
+    plt.tight_layout()
+    
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        logger.info(f"Saved attention distributions by class to {save_path}")
+    
+    plt.close()
+
+
+def compute_mst_from_attention(attention_matrix: np.ndarray) -> np.ndarray:
+    """
+    Compute Minimum Spanning Tree from attention matrix.
+    Uses negative weights to find Maximum Spanning Tree (strongest connections).
+    
+    Args:
+        attention_matrix: NxN attention weight matrix
+        
+    Returns:
+        NxN adjacency matrix with only MST edges
+    """
+    import networkx as nx
+    
+    n = attention_matrix.shape[0]
+    G = nx.Graph()
+    
+    # Add edges with negative weights (to get maximum spanning tree)
+    for i in range(n):
+        for j in range(i + 1, n):
+            weight = attention_matrix[i, j] + attention_matrix[j, i]  # Symmetric
+            if weight > 0:
+                G.add_edge(i, j, weight=-weight)  # Negative for max spanning tree
+    
+    # Compute MST
+    if G.number_of_edges() > 0:
+        mst = nx.minimum_spanning_tree(G)
+        
+        # Create MST adjacency matrix with original weights
+        mst_matrix = np.zeros_like(attention_matrix)
+        for i, j in mst.edges():
+            # Use average of both directions
+            avg_weight = (attention_matrix[i, j] + attention_matrix[j, i]) / 2
+            mst_matrix[i, j] = avg_weight
+            mst_matrix[j, i] = avg_weight
+        
+        return mst_matrix
+    else:
+        return np.zeros_like(attention_matrix)
+
+
+def plot_attention_mst_graph(mst_matrix: np.ndarray, 
+                              class_name: str,
+                              layer_idx: int,
+                              save_path: Path,
+                              ch_names: List[str] = None,
+                              eeg_coords_2d: Dict = None):
+    """
+    Plot the Minimum Spanning Tree of attention as an EEG graph visualization.
+    Uses the same style as visualize_real_graph.py for consistency.
+    
+    Args:
+        mst_matrix: NxN MST adjacency matrix
+        class_name: Name of the condition (DMT, EC, EO)
+        layer_idx: GAT layer index (0-based)
+        save_path: Path to save the figure
+        ch_names: List of electrode names
+        eeg_coords_2d: Dict mapping electrode names to 2D coordinates
+    """
+    import networkx as nx
+    import matplotlib.cm as cm
+    from matplotlib.colors import Normalize
+    
+    n = mst_matrix.shape[0]
+    
+    # Load electrode info if not provided
+    if ch_names is None or eeg_coords_2d is None:
+        ch_names_loaded = load_electrode_names()
+        if ch_names_loaded:
+            ch_names = ch_names_loaded
+        else:
+            ch_names = [f'E{i}' for i in range(n)]
+        
+        # Try to load coordinates
+        try:
+            with open(EXTRA_PKL_PATH, 'rb') as f:
+                data = pickle.load(f)
+            eeg_coords_2d = data[6]
+        except:
+            # Create circular layout if coordinates not available
+            angles = np.linspace(0, 2*np.pi, n, endpoint=False)
+            eeg_coords_2d = {ch_names[i]: (np.cos(angles[i]), np.sin(angles[i])) for i in range(n)}
+    
+    # Build graph with MST edges only
+    G = nx.Graph()
+    for i in range(min(n, len(ch_names))):
+        G.add_node(ch_names[i])
+    
+    edge_weights = {}
+    for i in range(n):
+        for j in range(i + 1, n):
+            if mst_matrix[i, j] > 0:
+                if i < len(ch_names) and j < len(ch_names):
+                    G.add_edge(ch_names[i], ch_names[j])
+                    edge_weights[(ch_names[i], ch_names[j])] = mst_matrix[i, j]
+    
+    if len(edge_weights) == 0:
+        logger.warning(f"No edges in MST for {class_name} layer {layer_idx + 1}")
+        return
+    
+    # Create figure - smaller for TensorBoard viewing
+    fig = plt.figure(figsize=(10, 9))
+    
+    # Main graph area
+    ax_graph = fig.add_axes([0.05, 0.12, 0.9, 0.78])
+    
+    pos = eeg_coords_2d
+    all_weights = list(edge_weights.values())
+    weight_min, weight_max = min(all_weights), max(all_weights)
+    
+    # Normalize weights for visualization
+    if weight_max > weight_min:
+        weight_range = weight_max - weight_min
+    else:
+        weight_range = 1.0
+        weight_min = 0.0
+    
+    # Sort edges by weight to draw stronger connections on top
+    sorted_edges = sorted(edge_weights.items(), key=lambda x: x[1])
+    
+    # Draw edges - same style as visualize_real_graph.py
+    for (src, dst), weight in sorted_edges:
+        normalized = (weight - weight_min) / weight_range if weight_range > 0 else 0.5
+        alpha = 0.3 + normalized * 0.7
+        width = 1.0 + normalized * 5.0
+        color = cm.Reds(0.3 + normalized * 0.7)  # Avoid too light colors
+        nx.draw_networkx_edges(G, pos, edgelist=[(src, dst)],
+                              width=width, edge_color=[color], alpha=alpha, ax=ax_graph)
+    
+    # Draw nodes - sized for smaller figure
+    node_names_list = [ch_names[i] for i in range(min(n, len(ch_names)))]
+    
+    # All nodes same color (light gray) to highlight edges
+    nx.draw_networkx_nodes(G, pos, nodelist=node_names_list,
+                          node_color='lightgray',
+                          node_size=1200,
+                          edgecolors='black', linewidths=2.0, 
+                          alpha=0.95, ax=ax_graph)
+    
+    # Draw labels with white background
+    for node_name in node_names_list:
+        if node_name in pos:
+            x, y = pos[node_name]
+            ax_graph.text(x, y, node_name, fontsize=8, fontweight='bold',
+                         ha='center', va='center', color='black',
+                         bbox=dict(boxstyle='round,pad=0.25', facecolor='white',
+                                  edgecolor='black', linewidth=0.6, alpha=0.90))
+    
+    # Set axis limits - same as visualize_real_graph.py
+    ax_graph.axis('equal')
+    ax_graph.set_xlim(-0.145, 0.145)
+    ax_graph.set_ylim(-0.135, 0.175)
+    ax_graph.axis('off')
+    
+    # Add colorbar at the bottom
+    cbar_ax = fig.add_axes([0.15, 0.04, 0.7, 0.02])
+    norm = Normalize(vmin=weight_min, vmax=weight_max)
+    sm = cm.ScalarMappable(norm=norm, cmap=cm.Reds)
+    cbar = plt.colorbar(sm, cax=cbar_ax, orientation='horizontal')
+    cbar.set_label(f'Attention [{weight_min:.4f}, {weight_max:.4f}]', 
+                   fontsize=9, fontweight='bold')
+    cbar.ax.tick_params(labelsize=8)
+    
+    # Title
+    fig.text(0.5, 0.96, f'Attention MST - {class_name} - Layer {layer_idx + 1}',
+            fontsize=12, fontweight='bold', ha='center', va='top')
+    fig.text(0.5, 0.92, f'({len(edge_weights)} edges)',
+            fontsize=9, ha='center', va='top')
+    
+    plt.savefig(save_path, dpi=200, bbox_inches='tight', facecolor='white')
+    plt.close()
+    
+    logger.info(f"Saved MST graph: {save_path.name}")
+
+
+def generate_full_attention_analysis(model, data_loader, device, save_dir: Path,
+                                     class_names: List[str] = None, writer=None, epoch: int = 0):
+    """
+    Generate complete attention analysis with per-class averages and differences.
+    
+    Generates and logs to TensorBoard:
+      - Per-class average attention heatmaps for each GAT layer
+      - Attention difference heatmaps between class pairs
+      - Attention weight distributions by class (KDE curves)
+      - Minimum Spanning Tree graphs for each class/layer
+    
+    Args:
+        model: GAT model
+        data_loader: DataLoader
+        device: torch device
+        save_dir: Directory to save plots
+        class_names: List of class names
+        writer: TensorBoard SummaryWriter (optional)
+        epoch: Current epoch for TensorBoard logging
+    """
+    from itertools import combinations
+    
+    if class_names is None:
+        class_names = ['DMT', 'EC', 'EO']
+    
+    save_dir = Path(save_dir)
+    save_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Get number of nodes from first batch
+    first_batch = next(iter(data_loader))
+    num_nodes = first_batch.x.shape[0] // first_batch.num_graphs
+    
+    logger.info(f"Generating full attention analysis for {len(class_names)} classes...")
+    
+    # Load electrode labels
+    ch_names = load_electrode_names()
+    axis_labels = format_electrode_labels(ch_names[:num_nodes]) if ch_names else [str(i) for i in range(num_nodes)]
+    
+    # 1. Compute average attention matrices per class
+    attention_per_class = compute_attention_matrix_per_class(
+        model, data_loader, device, num_nodes, class_names
+    )
+    
+    # 2. Plot and log per-class attention heatmaps
+    num_layers = len(list(attention_per_class.values())[0]) if attention_per_class else 0
+    
+    for layer_idx in range(num_layers):
+        vmax = max(attention_per_class[c][layer_idx].max() for c in class_names if c in attention_per_class)
+        
+        for class_name in class_names:
+            if class_name not in attention_per_class:
+                continue
+            
+            att_matrix = attention_per_class[class_name][layer_idx]
+            
+            fig, ax = plt.subplots(figsize=(12, 10))
+            sns.heatmap(att_matrix, cmap='YlOrRd', square=True, ax=ax,
+                       vmin=0, vmax=vmax,
+                       cbar_kws={'label': 'Attention Weight'},
+                       xticklabels=axis_labels, yticklabels=axis_labels)
+            ax.set_title(f'Average Attention - {class_name} - Layer {layer_idx + 1}', 
+                        fontsize=14, fontweight='bold')
+            ax.set_xlabel('Target Electrode', fontsize=11)
+            ax.set_ylabel('Source Electrode', fontsize=11)
+            plt.xticks(rotation=45, ha='right', fontsize=7)
+            plt.yticks(fontsize=7)
+            plt.tight_layout()
+            
+            # Save file
+            file_path = save_dir / f'attention_{class_name.lower()}_layer{layer_idx + 1}.png'
+            plt.savefig(file_path, dpi=200, bbox_inches='tight')
+            
+            # Log to TensorBoard
+            if writer is not None:
                 fig.canvas.draw()
                 img = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
                 img = img.reshape(fig.canvas.get_width_height()[::-1] + (3,))
-                img = img.transpose(2, 0, 1)  # CHW format for tensorboard
-                
-                writer.add_image(f'Attention/Layer_{layer_idx + 1}/Sample_{batch_idx + 1}',
-                               img, epoch)
-                
-                plt.close(fig)
+                img_tensor = torch.tensor(img.transpose(2, 0, 1))
+                writer.add_image(f'Attention_Average/{class_name}/Layer_{layer_idx + 1}', img_tensor, epoch)
             
-            break  # Only process first batch for images
+            plt.close()
     
-    logger.info(f"Logged attention weights to TensorBoard for epoch {epoch}")
+    # 3. Plot and log attention differences between class pairs
+    class_pairs = list(combinations(class_names, 2))
+    
+    for layer_idx in range(num_layers):
+        for class_a, class_b in class_pairs:
+            if class_a not in attention_per_class or class_b not in attention_per_class:
+                continue
+            
+            diff_matrix = attention_per_class[class_a][layer_idx] - attention_per_class[class_b][layer_idx]
+            vmax_diff = max(abs(diff_matrix.min()), abs(diff_matrix.max()))
+            
+            fig, ax = plt.subplots(figsize=(12, 10))
+            sns.heatmap(diff_matrix, cmap='RdBu_r', square=True, ax=ax,
+                       center=0, vmin=-vmax_diff, vmax=vmax_diff,
+                       cbar_kws={'label': f'{class_a} - {class_b}'},
+                       xticklabels=axis_labels, yticklabels=axis_labels)
+            ax.set_title(f'Attention Difference: {class_a} vs {class_b} - Layer {layer_idx + 1}', 
+                        fontsize=14, fontweight='bold')
+            ax.set_xlabel('Target Electrode', fontsize=11)
+            ax.set_ylabel('Source Electrode', fontsize=11)
+            plt.xticks(rotation=45, ha='right', fontsize=7)
+            plt.yticks(fontsize=7)
+            plt.tight_layout()
+            
+            # Save file
+            file_path = save_dir / f'attention_diff_{class_a.lower()}_vs_{class_b.lower()}_layer{layer_idx + 1}.png'
+            plt.savefig(file_path, dpi=200, bbox_inches='tight')
+            
+            # Log to TensorBoard
+            if writer is not None:
+                fig.canvas.draw()
+                img = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
+                img = img.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+                img_tensor = torch.tensor(img.transpose(2, 0, 1))
+                writer.add_image(f'Attention_Differences/{class_a}_vs_{class_b}/Layer_{layer_idx + 1}', img_tensor, epoch)
+            
+            plt.close()
+    
+    # 4. Extract attention distributions per class and plot
+    attention_dist_per_class = extract_attention_per_class(model, data_loader, device, class_names)
+    
+    # Define colors for each class
+    colors = {'DMT': '#E74C3C', 'EC': '#3498DB', 'EO': '#2ECC71'}
+    default_colors = ['#E74C3C', '#3498DB', '#2ECC71', '#F39C12', '#9B59B6']
+    
+    fig, axes = plt.subplots(1, num_layers, figsize=(6*num_layers, 5))
+    if num_layers == 1:
+        axes = [axes]
+    
+    for layer_idx in range(num_layers):
+        ax = axes[layer_idx]
+        
+        for idx, class_name in enumerate(class_names):
+            if class_name not in attention_dist_per_class:
+                continue
+            
+            values = np.array(attention_dist_per_class[class_name][layer_idx])
+            if len(values) == 0:
+                continue
+            
+            color = colors.get(class_name, default_colors[idx % len(default_colors)])
+            
+            # Plot KDE
+            try:
+                from scipy import stats
+                kde = stats.gaussian_kde(values)
+                x_range = np.linspace(values.min(), values.max(), 200)
+                ax.plot(x_range, kde(x_range), color=color, linewidth=2.5, 
+                       label=f'{class_name} (μ={values.mean():.3f})')
+                ax.fill_between(x_range, kde(x_range), alpha=0.2, color=color)
+            except Exception:
+                ax.hist(values, bins=50, alpha=0.5, color=color, 
+                       label=f'{class_name} (μ={values.mean():.3f})', density=True)
+        
+        ax.set_title(f'GAT Layer {layer_idx + 1}', fontsize=12, fontweight='bold')
+        ax.set_xlabel('Attention Weight', fontsize=10)
+        ax.set_ylabel('Density', fontsize=10)
+        ax.legend(loc='upper right', fontsize=9)
+        ax.grid(True, alpha=0.3)
+    
+    plt.suptitle('Attention Weight Distributions by Class', fontsize=14, fontweight='bold', y=1.02)
+    plt.tight_layout()
+    
+    # Save distributions plot
+    dist_path = save_dir / 'attention_distributions_by_class.png'
+    plt.savefig(dist_path, dpi=200, bbox_inches='tight')
+    
+    # Log to TensorBoard
+    if writer is not None:
+        fig.canvas.draw()
+        img = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
+        img = img.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+        img_tensor = torch.tensor(img.transpose(2, 0, 1))
+        writer.add_image('Attention_Distributions/By_Class', img_tensor, epoch)
+    
+    plt.close()
+    
+    # 5. Generate Minimum Spanning Tree graphs for each class/layer
+    logger.info("Generating Minimum Spanning Tree graphs...")
+    mst_dir = save_dir / 'mst_graphs'
+    mst_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Load electrode coordinates for graph visualization
+    try:
+        with open(EXTRA_PKL_PATH, 'rb') as f:
+            extra_data = pickle.load(f)
+        eeg_coords_2d = extra_data[6]
+    except Exception as e:
+        logger.warning(f"Could not load electrode coordinates: {e}")
+        eeg_coords_2d = None
+    
+    for layer_idx in range(num_layers):
+        for class_name in class_names:
+            if class_name not in attention_per_class:
+                continue
+            
+            att_matrix = attention_per_class[class_name][layer_idx]
+            
+            # Compute MST
+            mst_matrix = compute_mst_from_attention(att_matrix)
+            
+            # Save MST graph visualization
+            mst_path = mst_dir / f'mst_{class_name.lower()}_layer{layer_idx + 1}.png'
+            try:
+                plot_attention_mst_graph(
+                    mst_matrix, 
+                    class_name, 
+                    layer_idx,
+                    mst_path,
+                    ch_names=ch_names[:num_nodes] if ch_names else None,
+                    eeg_coords_2d=eeg_coords_2d
+                )
+                
+                # Log to TensorBoard
+                if writer is not None:
+                    img = plt.imread(str(mst_path))
+                    if img.ndim == 3 and img.shape[2] == 4:  # RGBA
+                        img = img[:, :, :3]
+                    img_tensor = torch.tensor(img.transpose(2, 0, 1))
+                    writer.add_image(f'Attention_MST/{class_name}/Layer_{layer_idx + 1}', img_tensor, epoch)
+            except Exception as e:
+                logger.warning(f"Failed to generate MST for {class_name} layer {layer_idx + 1}: {e}")
+    
+    if writer is not None:
+        writer.flush()
+    
+    logger.info(f"Full attention analysis saved to {save_dir} and logged to TensorBoard")
 

@@ -61,6 +61,7 @@ model:
     use_edge_attr: true
     concat_heads: true  # Concatenate or average attention heads (only for GATv2)
     negative_slope: 0.2  # LeakyReLU negative slope
+    use_skip_connections: true  # Add residual connections between GAT layers
     
   pooling:
     method: "mean"  # "mean", "max", "add" (sum pooling)
@@ -93,7 +94,10 @@ training:
     enabled: true
     max_norm: 1.0
   
-  class_weights: null  # null for balanced, or [w1, w2, w3] for weighted loss
+  # Class weights to handle imbalance (inverse frequency)
+  # For DMT (~55%) vs EC (~45%): [0.92, 1.1]
+  # For 3-class DMT/EC/EO use null or calculate
+  class_weights: [0.92, 1.1]  # [DMT, EC] - penaliza más errores en clase minoritaria
   
   # Regularization
   label_smoothing: 0.1
@@ -111,7 +115,7 @@ deterministic: true
 
 # Hardware
 device: "cuda"  # "cuda", "cpu", or "cuda:0"
-num_workers: 4  # DataLoader workers (for batching during training)
+num_workers: 24  # DataLoader workers (for batching during training)
 dataset_workers: 24  # Workers for dataset construction (set lower if memory errors)
 pin_memory: true
 

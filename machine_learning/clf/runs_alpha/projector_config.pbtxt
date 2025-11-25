@@ -1,0 +1,30 @@
+embeddings {
+  tensor_name: "Embeddings/epoch_10:00010"
+  metadata_path: "00010/Embeddings%2fepoch_10/metadata.tsv"
+  tensor_path: "00010/Embeddings%2fepoch_10/tensors.tsv"
+}
+embeddings {
+  tensor_name: "Embeddings/epoch_20:00020"
+  metadata_path: "00020/Embeddings%2fepoch_20/metadata.tsv"
+  tensor_path: "00020/Embeddings%2fepoch_20/tensors.tsv"
+}
+embeddings {
+  tensor_name: "Embeddings/epoch_30:00030"
+  metadata_path: "00030/Embeddings%2fepoch_30/metadata.tsv"
+  tensor_path: "00030/Embeddings%2fepoch_30/tensors.tsv"
+}
+embeddings {
+  tensor_name: "Embeddings/epoch_40:00040"
+  metadata_path: "00040/Embeddings%2fepoch_40/metadata.tsv"
+  tensor_path: "00040/Embeddings%2fepoch_40/tensors.tsv"
+}
+embeddings {
+  tensor_name: "Embeddings/epoch_50:00050"
+  metadata_path: "00050/Embeddings%2fepoch_50/metadata.tsv"
+  tensor_path: "00050/Embeddings%2fepoch_50/tensors.tsv"
+}
+embeddings {
+  tensor_name: "Embeddings/epoch_60:00060"
+  metadata_path: "00060/Embeddings%2fepoch_60/metadata.tsv"
+  tensor_path: "00060/Embeddings%2fepoch_60/tensors.tsv"
+}

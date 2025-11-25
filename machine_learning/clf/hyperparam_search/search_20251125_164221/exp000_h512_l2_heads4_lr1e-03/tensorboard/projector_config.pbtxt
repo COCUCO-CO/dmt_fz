@@ -1,0 +1,120 @@
+embeddings {
+  tensor_name: "GAT_pooled:00010"
+  metadata_path: "00010/GAT_pooled/metadata.tsv"
+  tensor_path: "00010/GAT_pooled/tensors.tsv"
+}
+embeddings {
+  tensor_name: "GAT_features:00010"
+  metadata_path: "00010/GAT_features/metadata.tsv"
+  tensor_path: "00010/GAT_features/tensors.tsv"
+}
+embeddings {
+  tensor_name: "GAT_MLP:00010"
+  metadata_path: "00010/GAT_MLP/metadata.tsv"
+  tensor_path: "00010/GAT_MLP/tensors.tsv"
+}
+embeddings {
+  tensor_name: "GAT_pooled:00020"
+  metadata_path: "00020/GAT_pooled/metadata.tsv"
+  tensor_path: "00020/GAT_pooled/tensors.tsv"
+}
+embeddings {
+  tensor_name: "GAT_features:00020"
+  metadata_path: "00020/GAT_features/metadata.tsv"
+  tensor_path: "00020/GAT_features/tensors.tsv"
+}
+embeddings {
+  tensor_name: "GAT_MLP:00020"
+  metadata_path: "00020/GAT_MLP/metadata.tsv"
+  tensor_path: "00020/GAT_MLP/tensors.tsv"
+}
+embeddings {
+  tensor_name: "GAT_pooled:00030"
+  metadata_path: "00030/GAT_pooled/metadata.tsv"
+  tensor_path: "00030/GAT_pooled/tensors.tsv"
+}
+embeddings {
+  tensor_name: "GAT_features:00030"
+  metadata_path: "00030/GAT_features/metadata.tsv"
+  tensor_path: "00030/GAT_features/tensors.tsv"
+}
+embeddings {
+  tensor_name: "GAT_MLP:00030"
+  metadata_path: "00030/GAT_MLP/metadata.tsv"
+  tensor_path: "00030/GAT_MLP/tensors.tsv"
+}
+embeddings {
+  tensor_name: "GAT_pooled:00040"
+  metadata_path: "00040/GAT_pooled/metadata.tsv"
+  tensor_path: "00040/GAT_pooled/tensors.tsv"
+}
+embeddings {
+  tensor_name: "GAT_features:00040"
+  metadata_path: "00040/GAT_features/metadata.tsv"
+  tensor_path: "00040/GAT_features/tensors.tsv"
+}
+embeddings {
+  tensor_name: "GAT_MLP:00040"
+  metadata_path: "00040/GAT_MLP/metadata.tsv"
+  tensor_path: "00040/GAT_MLP/tensors.tsv"
+}
+embeddings {
+  tensor_name: "GAT_pooled:00050"
+  metadata_path: "00050/GAT_pooled/metadata.tsv"
+  tensor_path: "00050/GAT_pooled/tensors.tsv"
+}
+embeddings {
+  tensor_name: "GAT_features:00050"
+  metadata_path: "00050/GAT_features/metadata.tsv"
+  tensor_path: "00050/GAT_features/tensors.tsv"
+}
+embeddings {
+  tensor_name: "GAT_MLP:00050"
+  metadata_path: "00050/GAT_MLP/metadata.tsv"
+  tensor_path: "00050/GAT_MLP/tensors.tsv"
+}
+embeddings {
+  tensor_name: "GAT_pooled:00060"
+  metadata_path: "00060/GAT_pooled/metadata.tsv"
+  tensor_path: "00060/GAT_pooled/tensors.tsv"
+}
+embeddings {
+  tensor_name: "GAT_features:00060"
+  metadata_path: "00060/GAT_features/metadata.tsv"
+  tensor_path: "00060/GAT_features/tensors.tsv"
+}
+embeddings {
+  tensor_name: "GAT_MLP:00060"
+  metadata_path: "00060/GAT_MLP/metadata.tsv"
+  tensor_path: "00060/GAT_MLP/tensors.tsv"
+}
+embeddings {
+  tensor_name: "GAT_pooled:00070"
+  metadata_path: "00070/GAT_pooled/metadata.tsv"
+  tensor_path: "00070/GAT_pooled/tensors.tsv"
+}
+embeddings {
+  tensor_name: "GAT_features:00070"
+  metadata_path: "00070/GAT_features/metadata.tsv"
+  tensor_path: "00070/GAT_features/tensors.tsv"
+}
+embeddings {
+  tensor_name: "GAT_MLP:00070"
+  metadata_path: "00070/GAT_MLP/metadata.tsv"
+  tensor_path: "00070/GAT_MLP/tensors.tsv"
+}
+embeddings {
+  tensor_name: "GAT_pooled:00080"
+  metadata_path: "00080/GAT_pooled/metadata.tsv"
+  tensor_path: "00080/GAT_pooled/tensors.tsv"
+}
+embeddings {
+  tensor_name: "GAT_features:00080"
+  metadata_path: "00080/GAT_features/metadata.tsv"
+  tensor_path: "00080/GAT_features/tensors.tsv"
+}
+embeddings {
+  tensor_name: "GAT_MLP:00080"
+  metadata_path: "00080/GAT_MLP/metadata.tsv"
+  tensor_path: "00080/GAT_MLP/tensors.tsv"
+}

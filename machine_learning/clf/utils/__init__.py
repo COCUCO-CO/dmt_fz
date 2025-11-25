@@ -9,7 +9,19 @@ from .attention_logger import (
     plot_attention_heatmap,
     plot_attention_distributions,
     plot_average_attention,
-    log_attention_to_tensorboard
+    log_attention_to_tensorboard,
+    extract_embeddings_for_analysis,
+    log_embeddings_to_tensorboard,
+    save_embeddings_to_file,
+    compute_attention_matrix_per_class,
+    load_electrode_names,
+    format_electrode_labels,
+    plot_attention_per_class,
+    extract_attention_per_class,
+    plot_attention_distributions_by_class,
+    generate_full_attention_analysis,
+    compute_mst_from_attention,
+    plot_attention_mst_graph
 )
 
 __all__ = [
@@ -23,5 +35,17 @@ __all__ = [
     'plot_attention_distributions',
     'plot_average_attention',
     'log_attention_to_tensorboard',
+    'extract_embeddings_for_analysis',
+    'log_embeddings_to_tensorboard',
+    'save_embeddings_to_file',
+    'compute_attention_matrix_per_class',
+    'load_electrode_names',
+    'format_electrode_labels',
+    'plot_attention_per_class',
+    'extract_attention_per_class',
+    'plot_attention_distributions_by_class',
+    'generate_full_attention_analysis',
+    'compute_mst_from_attention',
+    'plot_attention_mst_graph',
 ]
 

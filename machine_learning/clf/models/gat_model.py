@@ -91,6 +91,9 @@ class BrainStateGAT(nn.Module):
         else:
             raise ValueError(f"Unknown conv_type: {conv_type}. Use 'gatv2' or 'cheby'")
         
+        # Skip connections
+        self.use_skip_connections = arch_config.get('use_skip_connections', True)
+        
         # ====================================================================
         # INPUT PROJECTION
         # ====================================================================
@@ -133,7 +136,6 @@ class BrainStateGAT(nn.Module):
             current_dim = hidden_dim
         
         self.batch_norms.append(nn.BatchNorm1d(current_dim))
-        logger.info(f"First layer output dim: {current_dim}")
         
         # Hidden layers
         for layer_idx in range(num_layers - 1):
@@ -151,7 +153,6 @@ class BrainStateGAT(nn.Module):
                 )
                 # Update current_dim for next layer
                 current_dim = hidden_dim * num_heads if concat_heads else hidden_dim
-                logger.info(f"Hidden layer {layer_idx+1} output dim: {current_dim}")
             elif conv_type == 'cheby':
                 self.conv_layers.append(
                     ChebConv(
@@ -161,17 +162,29 @@ class BrainStateGAT(nn.Module):
                     )
                 )
                 current_dim = hidden_dim
-                logger.info(f"Hidden layer {layer_idx+1} output dim: {current_dim}")
             self.batch_norms.append(nn.BatchNorm1d(current_dim))
         
         self.dropout = nn.Dropout(dropout)
+        
+        # Skip connection projection layers (to match dimensions between layers)
+        self.skip_projections = nn.ModuleList()
+        if self.use_skip_connections:
+            # For first layer: project input features to hidden dim
+            first_layer_dim = hidden_dim * num_heads if (conv_type == 'gatv2' and concat_heads) else hidden_dim
+            if num_node_features != first_layer_dim:
+                self.skip_projections.append(nn.Linear(num_node_features, first_layer_dim))
+            else:
+                self.skip_projections.append(None)
+            
+            # For hidden layers: all have same dim after first layer
+            for _ in range(num_layers - 1):
+                self.skip_projections.append(None)  # Dims should match
         
         # ====================================================================
         # POOLING
         # ====================================================================
         
         pooling_method = pool_config['method']
-        logger.info(f"Pooling method: {pooling_method}, current_dim before pooling: {current_dim}")
         
         if pooling_method == "attention":
             self.pool = AttentionPooling(current_dim)
@@ -194,8 +207,6 @@ class BrainStateGAT(nn.Module):
         
         # Combine pooled features with graph-level features
         mlp_input_dim = pooled_dim + num_graph_features
-        
-        logger.info(f"Pooled dim: {pooled_dim}, Graph features: {num_graph_features}, MLP input dim: {mlp_input_dim}")
         
         mlp_layers = []
         prev_dim = mlp_input_dim
@@ -270,9 +281,11 @@ class BrainStateGAT(nn.Module):
         if self.edge_encoder is not None and edge_attr is not None:
             edge_attr = self.edge_encoder(edge_attr)
         
-        # Graph convolution layers with residual connections
+        # Graph convolution layers with skip connections
         h = x
         for i, (conv, bn) in enumerate(zip(self.conv_layers, self.batch_norms)):
+            h_prev = h  # Save for skip connection
+            
             # Forward through conv layer
             if self.conv_type == 'gatv2':
                 h_new = conv(h, edge_index, edge_attr=edge_attr)
@@ -283,9 +296,17 @@ class BrainStateGAT(nn.Module):
             h_new = F.elu(h_new)
             h_new = self.dropout(h_new)
             
-            # Residual connection (if dimensions match)
-            if i > 0 and h.shape[-1] == h_new.shape[-1]:
-                h = h + h_new
+            # Skip connection
+            if self.use_skip_connections:
+                # Project h_prev if dimensions don't match
+                if self.skip_projections[i] is not None:
+                    h_prev = self.skip_projections[i](h_prev)
+                
+                # Add skip connection if dimensions match
+                if h_prev.shape[-1] == h_new.shape[-1]:
+                    h = h_new + h_prev
+                else:
+                    h = h_new
             else:
                 h = h_new
         
@@ -359,7 +380,7 @@ class BrainStateGAT(nn.Module):
                 
                 h = self.batch_norms[i](h)
                 h = F.elu(h)
-                h = F.dropout(h, p=self.dropout, training=False)
+                h = F.dropout(h, p=self.dropout.p, training=False)
         
         return edge_index_att, alpha
     
@@ -384,6 +405,93 @@ class BrainStateGAT(nn.Module):
             all_attentions.append((edge_index_att, alpha))
         
         return all_attentions
+    
+    def get_embeddings(self, data: Batch) -> Dict[str, torch.Tensor]:
+        """
+        Extract intermediate embeddings for analysis.
+        
+        Args:
+            data: Batch of PyTorch Geometric Data objects
+            
+        Returns:
+            Dict with:
+                - 'node_embeddings': Final node representations [num_nodes, hidden_dim]
+                - 'graph_embeddings': Graph-level representations [batch_size, pooled_dim]
+                - 'graph_embeddings_with_features': With graph features [batch_size, mlp_input_dim]
+                - 'logits': Pre-softmax outputs [batch_size, num_classes]
+        """
+        x, edge_index, batch = data.x, data.edge_index, data.batch
+        edge_attr = data.edge_attr if hasattr(data, 'edge_attr') else None
+        
+        # Handle graph_attr
+        if hasattr(data, 'graph_attr') and data.graph_attr is not None:
+            graph_attr = data.graph_attr
+            if graph_attr.dim() == 1:
+                num_features = self.num_graph_features or graph_attr.shape[0]
+                if num_features > 0 and graph_attr.numel() % num_features == 0:
+                    graph_attr = graph_attr.view(-1, num_features)
+                else:
+                    graph_attr = graph_attr.unsqueeze(0)
+        else:
+            graph_attr = None
+        
+        # Encode edge attributes
+        if self.edge_encoder is not None and edge_attr is not None:
+            edge_attr = self.edge_encoder(edge_attr)
+        
+        # Graph convolution layers
+        h = x
+        for i, (conv, bn) in enumerate(zip(self.conv_layers, self.batch_norms)):
+            if self.conv_type == 'gatv2':
+                h_new = conv(h, edge_index, edge_attr=edge_attr)
+            elif self.conv_type == 'cheby':
+                h_new = conv(h, edge_index)
+            
+            h_new = bn(h_new)
+            h_new = F.elu(h_new)
+            h_new = self.dropout(h_new)
+            
+            if i > 0 and h.shape[-1] == h_new.shape[-1]:
+                h = h + h_new
+            else:
+                h = h_new
+        
+        node_embeddings = h  # [num_nodes_total, hidden_dim]
+        
+        # Global pooling
+        if self.pooling_method == "attention":
+            h_graph = self.pool(h, batch)
+        elif self.pooling_method == "set2set":
+            h_graph = self.pool(h, batch)
+        elif self.pooling_method == "mean":
+            h_graph = global_mean_pool(h, batch)
+        elif self.pooling_method == "max":
+            h_graph = global_max_pool(h, batch)
+        elif self.pooling_method == "add":
+            h_graph = global_add_pool(h, batch)
+        else:
+            h_mean = global_mean_pool(h, batch)
+            h_max = global_max_pool(h, batch)
+            h_graph = torch.cat([h_mean, h_max], dim=1)
+        
+        graph_embeddings = h_graph  # [batch_size, pooled_dim]
+        
+        # Concatenate with graph-level features
+        if graph_attr is not None:
+            h_graph_with_features = torch.cat([h_graph, graph_attr], dim=1)
+        else:
+            h_graph_with_features = h_graph
+        
+        # Get logits (before softmax)
+        logits = self.mlp(h_graph_with_features)
+        
+        return {
+            'node_embeddings': node_embeddings,
+            'graph_embeddings': graph_embeddings,
+            'graph_embeddings_with_features': h_graph_with_features,
+            'logits': logits,
+            'batch': batch  # For separating per-graph node embeddings
+        }
 
 
 def create_model_from_config(config: Dict[str, Any],

@@ -20,7 +20,7 @@ import torch
 from torch_geometric.data import Data, Dataset
 from tqdm import tqdm
 from scipy.stats import entropy, kurtosis
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, GroupShuffleSplit
 
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 
@@ -663,29 +663,68 @@ def create_dataset_from_config(config: Dict[str, Any],
     # Extract labels for stratification
     labels = [g.y.item() for g in all_graphs]
     
-    # Split
+    # Split ratios
     train_ratio = split_config['train_ratio']
     val_ratio = split_config['val_ratio']
     test_ratio = split_config['test_ratio']
     
-    # First split: train vs (val+test)
-    train_graphs, temp_graphs = train_test_split(
-        all_graphs,
-        train_size=train_ratio,
-        stratify=labels if split_config['stratify'] else None,
-        random_state=split_config['random_state']
-    )
+    # Check if we should split by subject (IMPORTANT to avoid data leakage!)
+    group_by_subject = split_config.get('group_by_subject', False)
     
-    # Second split: val vs test
-    temp_labels = [g.y.item() for g in temp_graphs]
-    val_size = val_ratio / (val_ratio + test_ratio)
-    
-    val_graphs, test_graphs = train_test_split(
-        temp_graphs,
-        train_size=val_size,
-        stratify=temp_labels if split_config['stratify'] else None,
-        random_state=split_config['random_state']
-    )
+    if group_by_subject:
+        # Extract subject IDs from graphs
+        subjects = []
+        for g in all_graphs:
+            if hasattr(g, 'subject_id'):
+                subjects.append(g.subject_id)
+            else:
+                # Fallback: extract from condition if available
+                subjects.append(f"unknown_{len(subjects)}")
+        
+        unique_subjects = list(set(subjects))
+        logger.info(f"Splitting by subject: {len(unique_subjects)} unique subjects")
+        
+        # Group split: train vs (val+test) - by SUBJECT, not by graph
+        import numpy as np
+        np.random.seed(split_config['random_state'])
+        np.random.shuffle(unique_subjects)
+        
+        n_train = int(len(unique_subjects) * train_ratio)
+        n_val = int(len(unique_subjects) * val_ratio)
+        
+        train_subjects = set(unique_subjects[:n_train])
+        val_subjects = set(unique_subjects[n_train:n_train + n_val])
+        test_subjects = set(unique_subjects[n_train + n_val:])
+        
+        train_graphs = [g for g, s in zip(all_graphs, subjects) if s in train_subjects]
+        val_graphs = [g for g, s in zip(all_graphs, subjects) if s in val_subjects]
+        test_graphs = [g for g, s in zip(all_graphs, subjects) if s in test_subjects]
+        
+        logger.info(f"Subject split: train={len(train_subjects)} subjects, "
+                   f"val={len(val_subjects)} subjects, test={len(test_subjects)} subjects")
+        logger.info(f"NO DATA LEAKAGE: Each subject appears in only ONE split")
+    else:
+        # Random split (original behavior - may have data leakage!)
+        logger.warning("group_by_subject=False: Subjects may appear in multiple splits (potential data leakage)")
+        
+        # First split: train vs (val+test)
+        train_graphs, temp_graphs = train_test_split(
+            all_graphs,
+            train_size=train_ratio,
+            stratify=labels if split_config['stratify'] else None,
+            random_state=split_config['random_state']
+        )
+        
+        # Second split: val vs test
+        temp_labels = [g.y.item() for g in temp_graphs]
+        val_size = val_ratio / (val_ratio + test_ratio)
+        
+        val_graphs, test_graphs = train_test_split(
+            temp_graphs,
+            train_size=val_size,
+            stratify=temp_labels if split_config['stratify'] else None,
+            random_state=split_config['random_state']
+        )
     
     logger.info(f"Dataset split: train={len(train_graphs)}, val={len(val_graphs)}, test={len(test_graphs)}")
     

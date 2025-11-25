@@ -23,7 +23,11 @@ import torch.nn as nn
 import torch.optim as optim
 from torch_geometric.loader import DataLoader
 from torch.utils.tensorboard import SummaryWriter
-from sklearn.metrics import accuracy_score, precision_recall_fscore_support
+from sklearn.metrics import (
+    accuracy_score, precision_recall_fscore_support, 
+    balanced_accuracy_score, confusion_matrix as sklearn_confusion_matrix,
+    classification_report
+)
 
 # Add parent directory to path
 sys.path.append(str(Path(__file__).parent))
@@ -32,6 +36,8 @@ from data import create_dataset_from_config
 from models import create_model_from_config
 from utils import setup_logging, log_metrics, plot_training_curves, plot_confusion_matrix
 from utils import log_attention_to_tensorboard, plot_attention_distributions, plot_average_attention
+from utils import log_embeddings_to_tensorboard, save_embeddings_to_file, compute_attention_matrix_per_class
+from utils import generate_full_attention_analysis
 from utils.visualization import plot_graph_statistics
 
 logger = logging.getLogger(__name__)
@@ -79,10 +85,11 @@ def create_scheduler(optimizer: optim.Optimizer, config: Dict[str, Any]):
     """Create learning rate scheduler from config."""
     scheduler_config = config['training']['scheduler']
     
-    if scheduler_config['type'] is None:
+    scheduler_type = scheduler_config.get('type', None)
+    if scheduler_type is None or scheduler_type == 'none':
         return None
     
-    scheduler_type = scheduler_config['type'].lower()
+    scheduler_type = scheduler_type.lower()
     
     if scheduler_type == 'reduce_on_plateau':
         scheduler = optim.lr_scheduler.ReduceLROnPlateau(
@@ -136,11 +143,18 @@ def train_epoch(model: nn.Module,
         
         loss.backward()
         
-        # Gradient clipping
-        if config['training']['gradient_clipping']['enabled']:
+        # Gradient clipping (supports both formats)
+        grad_clip_config = config['training'].get('gradient_clipping', {})
+        grad_clip_value = config['training'].get('gradient_clip', None)  # Simple format from hyperparam search
+        
+        if grad_clip_value is not None and grad_clip_value > 0:
+            # Simple format: gradient_clip = 1.0 means clip to 1.0
+            torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip_value)
+        elif isinstance(grad_clip_config, dict) and grad_clip_config.get('enabled', False):
+            # Nested format: gradient_clipping.enabled, gradient_clipping.max_norm
             torch.nn.utils.clip_grad_norm_(
                 model.parameters(),
-                config['training']['gradient_clipping']['max_norm']
+                grad_clip_config['max_norm']
             )
         
         optimizer.step()
@@ -374,22 +388,76 @@ def main(config_path: str, force_rebuild: bool = False):
         log_metrics(logger, epoch, 'train', {'loss': train_loss, 'acc': train_acc})
         log_metrics(logger, epoch, 'val', {'loss': val_loss, 'acc': val_acc})
         
+        # Compute detailed validation metrics
+        class_names = config['data']['conditions']
+        val_balanced_acc = balanced_accuracy_score(val_labels, val_preds)
+        val_precision, val_recall, val_f1, _ = precision_recall_fscore_support(
+            val_labels, val_preds, average='macro', zero_division=0
+        )
+        val_precision_per_class, val_recall_per_class, val_f1_per_class, _ = precision_recall_fscore_support(
+            val_labels, val_preds, average=None, zero_division=0
+        )
+        
         # Log to TensorBoard
         if writer:
+            # Basic metrics
             writer.add_scalar('Loss/train', train_loss, epoch)
             writer.add_scalar('Loss/val', val_loss, epoch)
             writer.add_scalar('Accuracy/train', train_acc, epoch)
             writer.add_scalar('Accuracy/val', val_acc, epoch)
             writer.add_scalar('Learning_rate', optimizer.param_groups[0]['lr'], epoch)
             
-            # Log attention weights periodically (same frequency as checkpoints)
+            # Detailed metrics (important for imbalanced datasets)
+            writer.add_scalar('Metrics/val_balanced_accuracy', val_balanced_acc, epoch)
+            writer.add_scalar('Metrics/val_f1_macro', val_f1, epoch)
+            writer.add_scalar('Metrics/val_precision_macro', val_precision, epoch)
+            writer.add_scalar('Metrics/val_recall_macro', val_recall, epoch)
+            
+            # Per-class metrics
+            for i, cname in enumerate(class_names):
+                if i < len(val_recall_per_class):
+                    writer.add_scalar(f'Recall_PerClass/{cname}', val_recall_per_class[i], epoch)
+                    writer.add_scalar(f'Precision_PerClass/{cname}', val_precision_per_class[i], epoch)
+                    writer.add_scalar(f'F1_PerClass/{cname}', val_f1_per_class[i], epoch)
+            
+            # Log attention weights and embeddings periodically
             save_frequency = config['logging']['save_frequency']
-            if epoch % save_frequency == 0 and config['model']['architecture']['conv_type'] == 'gatv2':
+            if epoch % save_frequency == 0:
+                # Log attention weights (only for GATv2)
+                if config['model']['architecture']['conv_type'] == 'gatv2':
+                    try:
+                        logger.info(f"Logging attention weights for epoch {epoch}...")
+                        class_names = config['data']['conditions']
+                        log_attention_to_tensorboard(
+                            writer, model, val_loader, device, epoch, 
+                            num_samples=5, class_names=class_names, save_dir=output_dir
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to log attention weights: {e}")
+                    
+                    # Log full per-class attention analysis (includes MST graphs)
+                    if epoch % 10 == 0:
+                        try:
+                            logger.info(f"Generating per-class attention analysis for epoch {epoch}...")
+                            attention_analysis_dir = output_dir / 'attention' / f'epoch_{epoch}'
+                            generate_full_attention_analysis(
+                                model, val_loader, device,
+                                save_dir=attention_analysis_dir,
+                                class_names=class_names,
+                                writer=writer,
+                                epoch=epoch
+                            )
+                        except Exception as e:
+                            logger.warning(f"Failed to generate per-class attention analysis: {e}")
+                
+                # Log embeddings for visualization
                 try:
-                    logger.info(f"Logging attention weights for epoch {epoch}...")
-                    log_attention_to_tensorboard(writer, model, val_loader, device, epoch, num_samples=5)
+                    logger.info(f"Logging embeddings for epoch {epoch}...")
+                    class_names = config['data']['conditions']
+                    log_embeddings_to_tensorboard(writer, model, val_loader, device, epoch, 
+                                                   num_samples=300, class_names=class_names)
                 except Exception as e:
-                    logger.warning(f"Failed to log attention weights: {e}")
+                    logger.warning(f"Failed to log embeddings: {e}")
         
         # Scheduler step
         if scheduler:
@@ -450,32 +518,88 @@ def main(config_path: str, force_rebuild: bool = False):
         model, test_loader, criterion, device
     )
     
+    class_names = config['data']['conditions']
+    
     # Compute detailed metrics
     precision, recall, f1, _ = precision_recall_fscore_support(
-        test_labels, test_preds, average='macro'
+        test_labels, test_preds, average='macro', zero_division=0
     )
+    precision_per_class, recall_per_class, f1_per_class, support = precision_recall_fscore_support(
+        test_labels, test_preds, average=None, zero_division=0
+    )
+    balanced_acc = balanced_accuracy_score(test_labels, test_preds)
+    conf_matrix = sklearn_confusion_matrix(test_labels, test_preds)
     
-    logger.info(f"Test Loss:      {test_loss:.4f}")
-    logger.info(f"Test Accuracy:  {test_acc:.4f}")
-    logger.info(f"Test Precision: {precision:.4f}")
-    logger.info(f"Test Recall:    {recall:.4f}")
-    logger.info(f"Test F1:        {f1:.4f}")
+    # Log to console
+    logger.info(f"Test Loss:              {test_loss:.4f}")
+    logger.info(f"Test Accuracy:          {test_acc:.4f}")
+    logger.info(f"Test Balanced Accuracy: {balanced_acc:.4f}")
+    logger.info(f"Test Precision (macro): {precision:.4f}")
+    logger.info(f"Test Recall (macro):    {recall:.4f}")
+    logger.info(f"Test F1 (macro):        {f1:.4f}")
     
-    # Save test results
+    logger.info("\nPer-class metrics:")
+    for i, cname in enumerate(class_names):
+        if i < len(recall_per_class):
+            logger.info(f"  {cname:6s} - Precision: {precision_per_class[i]:.4f}, "
+                       f"Recall: {recall_per_class[i]:.4f}, F1: {f1_per_class[i]:.4f}, "
+                       f"Support: {support[i]}")
+    
+    logger.info(f"\nConfusion Matrix:\n{conf_matrix}")
+    
+    # Full classification report
+    report = classification_report(test_labels, test_preds, target_names=class_names, zero_division=0)
+    logger.info(f"\nClassification Report:\n{report}")
+    
+    # Save test results (comprehensive)
     results = {
-        'test_loss': test_loss,
-        'test_accuracy': test_acc,
-        'test_precision': precision,
-        'test_recall': recall,
-        'test_f1': f1,
-        'best_val_acc': best_val_acc,
-        'best_val_loss': best_val_loss,
-        'best_epoch': best_checkpoint['epoch']
+        'test_loss': float(test_loss),
+        'test_accuracy': float(test_acc),
+        'test_balanced_accuracy': float(balanced_acc),
+        'test_precision': float(precision),
+        'test_recall': float(recall),
+        'test_f1': float(f1),
+        'per_class': {
+            cname: {
+                'precision': float(precision_per_class[i]),
+                'recall': float(recall_per_class[i]),
+                'f1': float(f1_per_class[i]),
+                'support': int(support[i])
+            }
+            for i, cname in enumerate(class_names) if i < len(recall_per_class)
+        },
+        'confusion_matrix': conf_matrix.tolist(),
+        'best_val_acc': float(best_val_acc),
+        'best_val_loss': float(best_val_loss),
+        'best_epoch': int(best_checkpoint['epoch'])
     }
     
     import json
     with open(output_dir / 'test_results.json', 'w') as f:
         json.dump(results, f, indent=2)
+    
+    # Save classification report to file
+    with open(output_dir / 'classification_report.txt', 'w') as f:
+        f.write(f"Classification Report\n{'='*50}\n\n")
+        f.write(report)
+        f.write(f"\n\nConfusion Matrix:\n{conf_matrix}\n")
+        f.write(f"\nBalanced Accuracy: {balanced_acc:.4f}\n")
+    
+    # Log final metrics to TensorBoard
+    if writer:
+        writer.add_scalar('Test/loss', test_loss, best_checkpoint['epoch'])
+        writer.add_scalar('Test/accuracy', test_acc, best_checkpoint['epoch'])
+        writer.add_scalar('Test/balanced_accuracy', balanced_acc, best_checkpoint['epoch'])
+        writer.add_scalar('Test/f1_macro', f1, best_checkpoint['epoch'])
+        writer.add_scalar('Test/precision_macro', precision, best_checkpoint['epoch'])
+        writer.add_scalar('Test/recall_macro', recall, best_checkpoint['epoch'])
+        
+        # Per-class final metrics
+        for i, cname in enumerate(class_names):
+            if i < len(recall_per_class):
+                writer.add_scalar(f'Test_PerClass/{cname}_recall', recall_per_class[i], best_checkpoint['epoch'])
+                writer.add_scalar(f'Test_PerClass/{cname}_precision', precision_per_class[i], best_checkpoint['epoch'])
+                writer.add_scalar(f'Test_PerClass/{cname}_f1', f1_per_class[i], best_checkpoint['epoch'])
     
     # ========================================================================
     # VISUALIZATIONS
@@ -489,14 +613,24 @@ def main(config_path: str, force_rebuild: bool = False):
         )
     
     if config['visualization']['plot_confusion_matrix']:
+        cm_path = output_dir / 'confusion_matrix.png'
         plot_confusion_matrix(
             test_labels,
             test_preds,
             class_names=config['data']['conditions'],
-            save_path=output_dir / 'confusion_matrix.png',
+            save_path=cm_path,
             normalize=True,
             title='Test Set Confusion Matrix'
         )
+        
+        # Log confusion matrix to TensorBoard
+        if writer and cm_path.exists():
+            import matplotlib.pyplot as plt
+            cm_img = plt.imread(str(cm_path))
+            if cm_img.ndim == 3 and cm_img.shape[2] == 4:  # RGBA
+                cm_img = cm_img[:, :, :3]
+            cm_tensor = torch.tensor(cm_img.transpose(2, 0, 1))
+            writer.add_image('Test/confusion_matrix', cm_tensor, best_checkpoint['epoch'])
     
     # ========================================================================
     # ATTENTION VISUALIZATION (Final)
@@ -517,15 +651,76 @@ def main(config_path: str, force_rebuild: bool = False):
             plot_attention_distributions(attention_stats, save_path=attention_dir / 'attention_distributions.png')
             logger.info(f"✓ Saved attention distributions to {attention_dir / 'attention_distributions.png'}")
             
-            # Plot average attention matrices
+            # Plot average attention matrices (electrode names auto-loaded)
             num_nodes = test_graphs[0].num_nodes
-            channel_names = None  # Could load from extra.pkl if needed
             plot_average_attention(model, test_loader, device, num_nodes,
-                                 save_dir=attention_dir, channel_names=channel_names)
+                                 save_dir=attention_dir)
             logger.info(f"✓ Saved average attention matrices to {attention_dir}/")
             
         except Exception as e:
             logger.warning(f"Failed to generate attention visualizations: {e}")
+        
+        # Generate full attention analysis: per-class averages, differences, distributions by class
+        try:
+            logger.info("Generating full attention analysis per class...")
+            class_names = config['data']['conditions']
+            
+            generate_full_attention_analysis(
+                model, test_loader, device, 
+                save_dir=attention_dir / 'per_class_analysis',
+                class_names=class_names,
+                writer=writer,
+                epoch=best_checkpoint['epoch']
+            )
+            logger.info(f"✓ Saved full attention analysis to {attention_dir / 'per_class_analysis'}/")
+            
+            # Also save raw matrices as pickle for later analysis
+            import pickle
+            num_nodes = test_graphs[0].num_nodes
+            attention_per_class = compute_attention_matrix_per_class(
+                model, test_loader, device, num_nodes, class_names
+            )
+            with open(attention_dir / 'attention_per_class.pkl', 'wb') as f:
+                pickle.dump(attention_per_class, f)
+            logger.info(f"✓ Saved per-class attention matrices to {attention_dir / 'attention_per_class.pkl'}")
+            
+        except Exception as e:
+            logger.warning(f"Failed to compute per-class attention: {e}")
+    
+    # ========================================================================
+    # SAVE EMBEDDINGS FOR ANALYSIS
+    # ========================================================================
+    
+    logger.info("=" * 80)
+    logger.info("Saving embeddings for statistical analysis...")
+    logger.info("=" * 80)
+    
+    embeddings_dir = output_dir / 'embeddings'
+    embeddings_dir.mkdir(exist_ok=True)
+    
+    try:
+        class_names = config['data']['conditions']
+        
+        # Save train embeddings
+        train_emb = save_embeddings_to_file(
+            model, train_loader, device, 
+            save_path=embeddings_dir / 'train_embeddings.pkl',
+            num_samples=None,  # All samples
+            class_names=class_names
+        )
+        logger.info(f"✓ Saved {len(train_emb['graph_embeddings'])} train embeddings")
+        
+        # Save test embeddings
+        test_emb = save_embeddings_to_file(
+            model, test_loader, device,
+            save_path=embeddings_dir / 'test_embeddings.pkl',
+            num_samples=None,
+            class_names=class_names
+        )
+        logger.info(f"✓ Saved {len(test_emb['graph_embeddings'])} test embeddings")
+        
+    except Exception as e:
+        logger.warning(f"Failed to save embeddings: {e}")
     
     # Close TensorBoard writer
     if writer:
@@ -536,6 +731,7 @@ def main(config_path: str, force_rebuild: bool = False):
     logger.info(f"  - Model: {checkpoint_dir / 'best_model.pt'}")
     logger.info(f"  - Results: {output_dir / 'test_results.json'}")
     logger.info(f"  - Visualizations: {output_dir}")
+    logger.info(f"  - Embeddings: {embeddings_dir}")
     if config['model']['architecture']['conv_type'] == 'gatv2':
         logger.info(f"  - Attention: {attention_dir}")
     logger.info("=" * 80)
