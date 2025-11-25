@@ -57,5 +57,123 @@
       "best_epoch": 7,
       "status": "success"
     }
+  },
+  {
+    "name": "exp001_h512_l3_heads4_lr3e-03",
+    "index": 1,
+    "params": {
+      "model.architecture.hidden_dim": 512,
+      "model.architecture.num_gat_layers": 3,
+      "model.architecture.num_attention_heads": 4,
+      "model.architecture.dropout": 0.368374,
+      "model.architecture.use_skip_connections": false,
+      "model.pooling.method": "mean",
+      "model.mlp.hidden_dims": [
+        128,
+        64
+      ],
+      "model.mlp.dropout": 0.47678,
+      "training.optimizer": "adam",
+      "training.learning_rate": 0.002786,
+      "training.weight_decay": 2.1e-05,
+      "training.batch_size": 128,
+      "training.scheduler.type": "cosine",
+      "training.label_smoothing": 0.1
+    },
+    "results": {
+      "test_loss": 0.6604477634608352,
+      "test_accuracy": 0.6881878209831255,
+      "test_balanced_accuracy": 0.679009027399746,
+      "test_precision": 0.6745155141608732,
+      "test_recall": 0.679009027399746,
+      "test_f1": 0.6760339203153338,
+      "per_class": {
+        "DMT": {
+          "precision": 0.7588383838383839,
+          "recall": 0.7197604790419162,
+          "f1": 0.7387830362630609,
+          "support": 835
+        },
+        "EC": {
+          "precision": 0.5901926444833625,
+          "recall": 0.6382575757575758,
+          "f1": 0.6132848043676069,
+          "support": 528
+        }
+      },
+      "confusion_matrix": [
+        [
+          601,
+          234
+        ],
+        [
+          191,
+          337
+        ]
+      ],
+      "best_val_acc": 0.8179012345679012,
+      "best_val_loss": 0.6013175970242347,
+      "best_epoch": 34,
+      "status": "success"
+    }
+  },
+  {
+    "name": "exp002_h128_l1_heads8_lr4e-03",
+    "index": 2,
+    "params": {
+      "model.architecture.hidden_dim": 128,
+      "model.architecture.num_gat_layers": 1,
+      "model.architecture.num_attention_heads": 8,
+      "model.architecture.dropout": 0.230663,
+      "model.architecture.use_skip_connections": false,
+      "model.pooling.method": "mean",
+      "model.mlp.hidden_dims": [
+        128,
+        64
+      ],
+      "model.mlp.dropout": 0.554248,
+      "training.optimizer": "adamw",
+      "training.learning_rate": 0.003599,
+      "training.weight_decay": 0.000288,
+      "training.batch_size": 64,
+      "training.scheduler.type": "cosine",
+      "training.label_smoothing": 0.0
+    },
+    "results": {
+      "test_loss": 0.647548601501406,
+      "test_accuracy": 0.6353631694790902,
+      "test_balanced_accuracy": 0.6456439393939394,
+      "test_precision": 0.638346303669614,
+      "test_recall": 0.6456439393939394,
+      "test_f1": 0.6316963278425769,
+      "per_class": {
+        "DMT": {
+          "precision": 0.7545180722891566,
+          "recall": 0.6,
+          "f1": 0.6684456304202802,
+          "support": 835
+        },
+        "EC": {
+          "precision": 0.5221745350500715,
+          "recall": 0.6912878787878788,
+          "f1": 0.5949470252648736,
+          "support": 528
+        }
+      },
+      "confusion_matrix": [
+        [
+          501,
+          334
+        ],
+        [
+          163,
+          365
+        ]
+      ],
+      "best_val_acc": 0.6828703703703703,
+      "best_val_loss": 0.6147436308272091,
+      "best_epoch": 6,
+      "status": "success"
+    }
   }
 ]
