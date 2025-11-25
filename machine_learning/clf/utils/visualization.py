@@ -164,17 +164,29 @@ def plot_graph_statistics(train_graphs: List[Any],
     num_edges = [g.edge_index.shape[1] // 2 for g in all_graphs]  # Undirected
     labels = [g.y.item() for g in all_graphs]
     
-    # 1. Class distribution
+    # 1. Class distribution (using bar chart for accurate categorical counts)
+    from collections import Counter
     fig, axes = plt.subplots(1, 3, figsize=(15, 4))
     
     for i, split_name in enumerate(['train', 'val', 'test']):
         split_labels = [l for l, s in zip(labels, splits) if s == split_name]
-        axes[i].hist(split_labels, bins=len(class_names), edgecolor='black')
+        
+        # Count each class explicitly
+        label_counts = Counter(split_labels)
+        counts = [label_counts.get(j, 0) for j in range(len(class_names))]
+        
+        # Use bar chart (not histogram) for categorical data
+        bars = axes[i].bar(range(len(class_names)), counts, edgecolor='black')
         axes[i].set_xlabel('Class')
         axes[i].set_ylabel('Count')
         axes[i].set_title(f'{split_name.capitalize()} Set Class Distribution')
         axes[i].set_xticks(range(len(class_names)))
         axes[i].set_xticklabels(class_names)
+        
+        # Add count labels on top of bars
+        for bar, count in zip(bars, counts):
+            axes[i].text(bar.get_x() + bar.get_width()/2, bar.get_height() + 10, 
+                        str(count), ha='center', va='bottom', fontsize=10)
     
     plt.tight_layout()
     plt.savefig(save_dir / 'class_distribution.png', dpi=300, bbox_inches='tight')

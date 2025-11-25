@@ -75,7 +75,7 @@ model:
 
 # Training configuration
 training:
-  num_epochs: 300
+  num_epochs: 500
   batch_size: 32
   learning_rate: 0.001
   weight_decay: 5e-4
@@ -87,7 +87,7 @@ training:
     min_lr: 1e-6
   
   early_stopping:
-    patience: 50
+    patience: 20
     min_delta: 0.001
   
   gradient_clipping:
@@ -108,6 +108,9 @@ evaluation:
   average: "macro"  # For multi-class metrics
   save_predictions: true
   save_attention_weights: true
+
+# Validation
+strict_validation: true  # If false, continue training even if dataset validation fails
 
 # Reproducibility
 seed: 42

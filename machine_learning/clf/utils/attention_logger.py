@@ -641,6 +641,8 @@ def log_embeddings_to_tensorboard(writer, model, data_loader, device, epoch: int
                                    num_samples: int = 500, class_names: List[str] = None):
     """
     Log graph embeddings to TensorBoard for visualization (t-SNE/UMAP projector).
+    Uses STRATIFIED sampling to ensure all classes are represented.
+    
     Logs 3 types of embeddings:
       - GAT_pooled: After GAT layers + pooling (before graph features)
       - GAT_features: After concatenating graph-level features
@@ -652,18 +654,47 @@ def log_embeddings_to_tensorboard(writer, model, data_loader, device, epoch: int
         data_loader: DataLoader with graphs
         device: torch device
         epoch: Current epoch number
-        num_samples: Number of samples to visualize
+        num_samples: Number of samples to visualize (per class, to ensure balance)
         class_names: List of class names
     """
     if class_names is None:
         class_names = ['DMT', 'EC', 'EO']
     
-    # Extract embeddings
-    emb_data = extract_embeddings_for_analysis(model, data_loader, device, num_samples, class_names)
+    # Extract ALL embeddings first (no limit)
+    emb_data = extract_embeddings_for_analysis(model, data_loader, device, num_samples=None, class_names=class_names)
+    
+    # STRATIFIED sampling: equal samples per class
+    conditions = emb_data['conditions']
+    samples_per_class = num_samples // len(class_names)
+    
+    # Find indices for each class
+    selected_indices = []
+    for class_name in class_names:
+        class_indices = [i for i, c in enumerate(conditions) if c == class_name]
+        if len(class_indices) > samples_per_class:
+            # Random sample
+            import random
+            random.seed(42)  # Reproducible
+            class_indices = random.sample(class_indices, samples_per_class)
+        selected_indices.extend(class_indices)
+    
+    # Subsample all arrays
+    selected_indices = sorted(selected_indices)
+    
+    emb_data_sampled = {
+        'graph_GAT_embedding': emb_data['graph_GAT_embedding'][selected_indices],
+        'graph_GAT_features_embedding': emb_data['graph_GAT_features_embedding'][selected_indices],
+        'graph_GAT_MLP_embedding': emb_data['graph_GAT_MLP_embedding'][selected_indices],
+        'conditions': emb_data['conditions'][selected_indices],
+    }
     
     # Create metadata labels
-    conditions = emb_data['conditions']
-    label_list = [str(cond) for cond in conditions]
+    label_list = [str(cond) for cond in emb_data_sampled['conditions']]
+    
+    # Log class distribution
+    from collections import Counter
+    class_counts = Counter(label_list)
+    logger.info(f"Embedding class distribution (stratified): {dict(class_counts)}")
     
     # Define embedding types to log
     embedding_types = [
@@ -674,10 +705,10 @@ def log_embeddings_to_tensorboard(writer, model, data_loader, device, epoch: int
     
     logged_count = 0
     for tag_name, emb_key in embedding_types:
-        if emb_key not in emb_data or emb_data[emb_key] is None:
+        if emb_key not in emb_data_sampled or emb_data_sampled[emb_key] is None:
             continue
             
-        emb_tensor = torch.tensor(emb_data[emb_key], dtype=torch.float32)
+        emb_tensor = torch.tensor(emb_data_sampled[emb_key], dtype=torch.float32)
         
         try:
             writer.add_embedding(

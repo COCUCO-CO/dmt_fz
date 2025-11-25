@@ -20,6 +20,9 @@ clf/
 ├── analysis/
 │   ├── analyze_graphs.py     # Análisis estadístico DMT vs EC
 │   └── visualize_attention.py
+├── tests/                    # Suite de validación de datasets
+│   ├── test_dataset.py       # Tests completos (pytest compatible)
+│   └── validate_before_train.py  # Validación rápida pre-training
 ├── train.py                  # Entrenamiento principal
 ├── train_per_band.py         # Entrenamiento por banda (recomendado)
 ├── ensemble_bands.py         # Combinar predicciones de múltiples bandas
@@ -66,8 +69,12 @@ cat band_comparison_results.json
 python ensemble_bands.py --method average
 ```
 
-### Opción 4: Verificar dataset antes de entrenar
+### Opción 4: Validar dataset antes de entrenar
 ```bash
+# Validación completa (recomendado)
+python tests/validate_before_train.py --config config/config.yaml
+
+# O análisis detallado con visualizaciones
 python verify_dataset.py --config config/config.yaml
 ```
 Genera: distribución de labels, separabilidad de clases (silhouette score), detección de data leakage.
@@ -176,6 +183,88 @@ training:
 | EEGNet | EEG crudo | End-to-end | Máximo poder predictivo |
 | Random Forest | PSD features | Rápido, interpretable | Baseline |
 | **GAT** | Grafos sync | Usa tu pipeline, attention interpretable | Leveraging análisis de sync |
+
+## Tests y Validación
+
+El proyecto incluye una suite de tests para validar el dataset **antes** de entrenar, evitando errores comunes.
+
+### Estructura de Tests
+
+```
+tests/
+├── __init__.py
+├── test_dataset.py          # Suite completa de validaciones
+└── validate_before_train.py # Script rápido pre-entrenamiento
+```
+
+### Qué se valida
+
+| Test | Qué verifica | Por qué importa |
+|------|--------------|-----------------|
+| `check_labels_valid` | Labels en rango [0, N-1] | Labels fuera de rango causan errores de training |
+| `check_class_distribution` | Distribución similar entre splits | Diferencias >30% indican problemas de split |
+| `check_data_leakage` | Ningún sujeto en múltiples splits | Data leakage causa overfitting artificial |
+| `check_feature_integrity` | No NaN/Inf en features | Valores inválidos corrompen el modelo |
+| `check_graph_structure` | Shapes correctas, grafos no vacíos | Grafos malformados causan errores |
+
+### Cómo correr los tests
+
+```bash
+# 1. Validación rápida (antes de entrenar)
+python tests/validate_before_train.py --config config/config.yaml
+
+# 2. Validación desde cache existente
+python tests/test_dataset.py --cache data/cache/dataset_*.pkl --classes DMT EC
+
+# 3. Con pytest (para CI/CD)
+pytest tests/test_dataset.py -v
+
+# 4. Tests específicos
+pytest tests/test_dataset.py::test_no_data_leakage -v
+pytest tests/test_dataset.py::test_class_distribution_balanced -v
+```
+
+### Validación automática en training
+
+La validación se ejecuta **automáticamente** al inicio de `train.py`. Si hay errores críticos, el entrenamiento no comienza.
+
+Para desactivar (no recomendado):
+```yaml
+# En config.yaml
+strict_validation: false
+```
+
+### Output de ejemplo
+
+```
+======================================================================
+DATASET VALIDATION
+======================================================================
+
+--- INFO ---
+✓ train: All 6700 labels valid (range [0, 1])
+✓ val: All 1300 labels valid (range [0, 1])
+✓ test: All 1400 labels valid (range [0, 1])
+✓ train: DMT: 3500 (52.2%), EC: 3200 (47.8%)
+✓ val: DMT: 680 (52.3%), EC: 620 (47.7%)
+✓ test: DMT: 730 (52.1%), EC: 670 (47.9%)
+✓ No subject overlap between train and val (15 train, 3 val)
+✓ No subject overlap between train and test (15 train, 4 test)
+✓ No NaN values
+
+======================================================================
+VALIDATION PASSED ✓
+======================================================================
+```
+
+### Errores comunes detectados
+
+| Error | Causa | Solución |
+|-------|-------|----------|
+| "DATA LEAKAGE: subjects in both train and val" | Split no agrupa por sujeto | Activar `group_by_subject: true` |
+| "train/val ratio differs by >30%" | Split no estratificado | El fix ya está aplicado, borrar cache |
+| "NaN in node features" | Datos corruptos en phases-*.pkl | Revisar pipeline de preprocesamiento |
+| "Invalid label 2, expected [0, 1]" | Más clases de las esperadas | Verificar `conditions` en config |
 
 ## Referencias
 

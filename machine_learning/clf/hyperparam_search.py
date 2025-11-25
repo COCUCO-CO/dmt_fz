@@ -56,12 +56,12 @@ SEARCH_SPACE_FULL = {
     'model.architecture.dropout': {
         'type': 'uniform',
         'low': 0.1,
-        'high': 0.6
+        'high': 0.5
     },
     'model.architecture.attention_dropout': {
         'type': 'uniform',
         'low': 0.0,
-        'high': 0.4
+        'high': 0.3
     },
     'model.architecture.concat_heads': {
         'type': 'choice',
@@ -73,7 +73,7 @@ SEARCH_SPACE_FULL = {
     },
     'model.architecture.negative_slope': {
         'type': 'choice',
-        'values': [0.01, 0.1, 0.2, 0.3]  # LeakyReLU slope
+        'values': [0.2]  # LeakyReLU slope
     },
     
     # =========================================================================
@@ -100,11 +100,11 @@ SEARCH_SPACE_FULL = {
     'model.mlp.dropout': {
         'type': 'uniform',
         'low': 0.2,
-        'high': 0.7
+        'high': 0.6
     },
     'model.mlp.activation': {
         'type': 'choice',
-        'values': ['relu', 'elu', 'leaky_relu']
+        'values': ['relu']
     },
     
     # =========================================================================
@@ -112,7 +112,7 @@ SEARCH_SPACE_FULL = {
     # =========================================================================
     'training.optimizer': {
         'type': 'choice',
-        'values': ['adam', 'adamw', 'sgd']
+        'values': ['adam', 'adamw']
     },
     'training.learning_rate': {
         'type': 'loguniform',
@@ -121,8 +121,8 @@ SEARCH_SPACE_FULL = {
     },
     'training.weight_decay': {
         'type': 'loguniform',
-        'low': 1e-6,
-        'high': 1e-2
+        'low': 1e-5,
+        'high': 1e-3
     },
     'training.batch_size': {
         'type': 'choice',
@@ -180,7 +180,7 @@ SEARCH_SPACE_FOCUSED = {
     },
     'model.architecture.num_gat_layers': {
         'type': 'choice',
-        'values': [2, 3]
+        'values': [1, 2, 3]
     },
     'model.architecture.num_attention_heads': {
         'type': 'choice',
@@ -230,7 +230,7 @@ SEARCH_SPACE_FOCUSED = {
     },
     'training.batch_size': {
         'type': 'choice',
-        'values': [32, 64]
+        'values': [64, 128]
     },
     
     # Scheduler

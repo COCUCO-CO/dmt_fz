@@ -672,33 +672,74 @@ def create_dataset_from_config(config: Dict[str, Any],
     group_by_subject = split_config.get('group_by_subject', False)
     
     if group_by_subject:
-        # Extract subject IDs from graphs
-        subjects = []
+        # Extract subject IDs and group graphs by subject
+        from collections import defaultdict
+        subject_graphs = defaultdict(list)
+        
         for g in all_graphs:
             if hasattr(g, 'subject_id'):
-                subjects.append(g.subject_id)
+                subject_graphs[g.subject_id].append(g)
             else:
-                # Fallback: extract from condition if available
-                subjects.append(f"unknown_{len(subjects)}")
+                subject_graphs[f"unknown_{len(subject_graphs)}"].append(g)
         
-        unique_subjects = list(set(subjects))
+        unique_subjects = list(subject_graphs.keys())
         logger.info(f"Splitting by subject: {len(unique_subjects)} unique subjects")
         
-        # Group split: train vs (val+test) - by SUBJECT, not by graph
-        import numpy as np
-        np.random.seed(split_config['random_state'])
-        np.random.shuffle(unique_subjects)
+        # Calculate class distribution per subject for stratification
+        # Use the DOMINANT class of each subject for stratification
+        subject_dominant_class = {}
+        for subj, graphs in subject_graphs.items():
+            class_counts = defaultdict(int)
+            for g in graphs:
+                class_counts[g.y.item()] += 1
+            # Dominant class is the one with most graphs
+            subject_dominant_class[subj] = max(class_counts.keys(), key=lambda k: class_counts[k])
         
-        n_train = int(len(unique_subjects) * train_ratio)
-        n_val = int(len(unique_subjects) * val_ratio)
+        # STRATIFIED split by subject's dominant class  
+        subjects_array = np.array(unique_subjects)
+        subject_labels = np.array([subject_dominant_class[s] for s in unique_subjects])
         
-        train_subjects = set(unique_subjects[:n_train])
-        val_subjects = set(unique_subjects[n_train:n_train + n_val])
-        test_subjects = set(unique_subjects[n_train + n_val:])
+        # First split: train vs (val+test)
+        train_subjects_arr, temp_subjects_arr = train_test_split(
+            subjects_array,
+            train_size=train_ratio,
+            stratify=subject_labels if split_config['stratify'] else None,
+            random_state=split_config['random_state']
+        )
         
-        train_graphs = [g for g, s in zip(all_graphs, subjects) if s in train_subjects]
-        val_graphs = [g for g, s in zip(all_graphs, subjects) if s in val_subjects]
-        test_graphs = [g for g, s in zip(all_graphs, subjects) if s in test_subjects]
+        # Second split: val vs test
+        temp_labels = np.array([subject_dominant_class[s] for s in temp_subjects_arr])
+        val_size = val_ratio / (val_ratio + test_ratio)
+        
+        val_subjects_arr, test_subjects_arr = train_test_split(
+            temp_subjects_arr,
+            train_size=val_size,
+            stratify=temp_labels if split_config['stratify'] else None,
+            random_state=split_config['random_state']
+        )
+        
+        train_subjects = set(train_subjects_arr)
+        val_subjects = set(val_subjects_arr)
+        test_subjects = set(test_subjects_arr)
+        
+        # Collect graphs for each split
+        train_graphs = [g for s in train_subjects for g in subject_graphs[s]]
+        val_graphs = [g for s in val_subjects for g in subject_graphs[s]]
+        test_graphs = [g for s in test_subjects for g in subject_graphs[s]]
+        
+        # SHUFFLE graphs within each split (important for training!)
+        import random
+        random.seed(split_config['random_state'])
+        random.shuffle(train_graphs)
+        random.shuffle(val_graphs)
+        random.shuffle(test_graphs)
+        
+        # Log class distribution per split
+        for split_name, split_graphs in [('train', train_graphs), ('val', val_graphs), ('test', test_graphs)]:
+            class_counts = defaultdict(int)
+            for g in split_graphs:
+                class_counts[g.y.item()] += 1
+            logger.info(f"  {split_name} class distribution: {dict(class_counts)}")
         
         logger.info(f"Subject split: train={len(train_subjects)} subjects, "
                    f"val={len(val_subjects)} subjects, test={len(test_subjects)} subjects")

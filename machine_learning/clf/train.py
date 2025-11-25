@@ -39,6 +39,7 @@ from utils import log_attention_to_tensorboard, plot_attention_distributions, pl
 from utils import log_embeddings_to_tensorboard, save_embeddings_to_file, compute_attention_matrix_per_class
 from utils import generate_full_attention_analysis
 from utils.visualization import plot_graph_statistics
+from tests.test_dataset import DatasetValidator
 
 logger = logging.getLogger(__name__)
 
@@ -253,6 +254,16 @@ def main(config_path: str, force_rebuild: bool = False):
     logger.info(f"Train: {len(train_graphs)} graphs")
     logger.info(f"Val:   {len(val_graphs)} graphs")
     logger.info(f"Test:  {len(test_graphs)} graphs")
+    
+    # Validate dataset before training
+    class_names = config['data']['conditions']
+    validator = DatasetValidator(train_graphs, val_graphs, test_graphs, class_names)
+    if not validator.validate_all():
+        logger.error("Dataset validation FAILED! Check errors above.")
+        if config.get('strict_validation', True):
+            raise ValueError("Dataset validation failed. Set 'strict_validation: false' in config to skip.")
+        else:
+            logger.warning("Continuing despite validation errors (strict_validation=false)")
     
     # Create data loaders
     batch_size = config['training']['batch_size']
