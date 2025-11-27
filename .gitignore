@@ -29,6 +29,13 @@ frames/
 !visualizations/**/*.html
 !visualizations/**
 
+# Allow readme/ folder for documentation assets
+!readme/**
+!readme/**/*.png
+!readme/**/*.gif
+!readme/**/*.mp4
+!readme/**/*.html
+
 # MATLAB files
 *.mat
 

@@ -1,0 +1,441 @@
+{
+  "total_experiments": 15,
+  "successful_experiments": 15,
+  "failed_experiments": 0,
+  "best_experiment": {
+    "name": "exp010_h128_l1_heads4_lr2e-03",
+    "index": 10,
+    "params": {
+      "model.architecture.hidden_dim": 128,
+      "model.architecture.num_gat_layers": 1,
+      "model.architecture.num_attention_heads": 4,
+      "model.architecture.dropout": 0.225696,
+      "model.architecture.use_skip_connections": false,
+      "model.pooling.method": "mean",
+      "model.mlp.hidden_dims": [
+        512,
+        256,
+        128
+      ],
+      "model.mlp.dropout": 0.52975,
+      "training.optimizer": "adam",
+      "training.learning_rate": 0.001648,
+      "training.weight_decay": 0.000783,
+      "training.batch_size": 64,
+      "training.scheduler.type": "cosine",
+      "training.label_smoothing": 0.1
+    },
+    "results": {
+      "test_loss": 0.6154531907353082,
+      "test_accuracy": 0.7278063096111519,
+      "test_balanced_accuracy": 0.7022920068953002,
+      "test_precision": 0.7135845486984218,
+      "test_recall": 0.7022920068953002,
+      "test_f1": 0.7061525310758692,
+      "per_class": {
+        "DMT": {
+          "precision": 0.7583518930957683,
+          "recall": 0.8155688622754491,
+          "f1": 0.7859203693017888,
+          "support": 835
+        },
+        "EC": {
+          "precision": 0.6688172043010753,
+          "recall": 0.5890151515151515,
+          "f1": 0.6263846928499497,
+          "support": 528
+        }
+      },
+      "confusion_matrix": [
+        [
+          681,
+          154
+        ],
+        [
+          217,
+          311
+        ]
+      ],
+      "best_val_acc": 0.8248456790123457,
+      "best_val_loss": 0.5326141155796287,
+      "best_epoch": 13,
+      "status": "success"
+    }
+  },
+  "top_5": [
+    {
+      "name": "exp010_h128_l1_heads4_lr2e-03",
+      "index": 10,
+      "params": {
+        "model.architecture.hidden_dim": 128,
+        "model.architecture.num_gat_layers": 1,
+        "model.architecture.num_attention_heads": 4,
+        "model.architecture.dropout": 0.225696,
+        "model.architecture.use_skip_connections": false,
+        "model.pooling.method": "mean",
+        "model.mlp.hidden_dims": [
+          512,
+          256,
+          128
+        ],
+        "model.mlp.dropout": 0.52975,
+        "training.optimizer": "adam",
+        "training.learning_rate": 0.001648,
+        "training.weight_decay": 0.000783,
+        "training.batch_size": 64,
+        "training.scheduler.type": "cosine",
+        "training.label_smoothing": 0.1
+      },
+      "results": {
+        "test_loss": 0.6154531907353082,
+        "test_accuracy": 0.7278063096111519,
+        "test_balanced_accuracy": 0.7022920068953002,
+        "test_precision": 0.7135845486984218,
+        "test_recall": 0.7022920068953002,
+        "test_f1": 0.7061525310758692,
+        "per_class": {
+          "DMT": {
+            "precision": 0.7583518930957683,
+            "recall": 0.8155688622754491,
+            "f1": 0.7859203693017888,
+            "support": 835
+          },
+          "EC": {
+            "precision": 0.6688172043010753,
+            "recall": 0.5890151515151515,
+            "f1": 0.6263846928499497,
+            "support": 528
+          }
+        },
+        "confusion_matrix": [
+          [
+            681,
+            154
+          ],
+          [
+            217,
+            311
+          ]
+        ],
+        "best_val_acc": 0.8248456790123457,
+        "best_val_loss": 0.5326141155796287,
+        "best_epoch": 13,
+        "status": "success"
+      }
+    },
+    {
+      "name": "exp004_h256_l3_heads8_lr1e-03",
+      "index": 4,
+      "params": {
+        "model.architecture.hidden_dim": 256,
+        "model.architecture.num_gat_layers": 3,
+        "model.architecture.num_attention_heads": 8,
+        "model.architecture.dropout": 0.248796,
+        "model.architecture.use_skip_connections": false,
+        "model.pooling.method": "mean",
+        "model.mlp.hidden_dims": [
+          512,
+          256,
+          128
+        ],
+        "model.mlp.dropout": 0.380093,
+        "training.optimizer": "adam",
+        "training.learning_rate": 0.001261,
+        "training.weight_decay": 2.2e-05,
+        "training.batch_size": 64,
+        "training.scheduler.type": "reduce_on_plateau",
+        "training.label_smoothing": 0.1
+      },
+      "results": {
+        "test_loss": 0.5700713058691731,
+        "test_accuracy": 0.7241379310344828,
+        "test_balanced_accuracy": 0.7013869987298131,
+        "test_precision": 0.709087890505414,
+        "test_recall": 0.7013869987298131,
+        "test_f1": 0.7043042765815043,
+        "per_class": {
+          "DMT": {
+            "precision": 0.7604994324631101,
+            "recall": 0.8023952095808383,
+            "f1": 0.7808857808857809,
+            "support": 835
+          },
+          "EC": {
+            "precision": 0.6576763485477178,
+            "recall": 0.6003787878787878,
+            "f1": 0.6277227722772277,
+            "support": 528
+          }
+        },
+        "confusion_matrix": [
+          [
+            670,
+            165
+          ],
+          [
+            211,
+            317
+          ]
+        ],
+        "best_val_acc": 0.8317901234567902,
+        "best_val_loss": 0.49501974273611,
+        "best_epoch": 112,
+        "status": "success"
+      }
+    },
+    {
+      "name": "exp001_h512_l3_heads4_lr3e-03",
+      "index": 1,
+      "params": {
+        "model.architecture.hidden_dim": 512,
+        "model.architecture.num_gat_layers": 3,
+        "model.architecture.num_attention_heads": 4,
+        "model.architecture.dropout": 0.368374,
+        "model.architecture.use_skip_connections": false,
+        "model.pooling.method": "mean",
+        "model.mlp.hidden_dims": [
+          128,
+          64
+        ],
+        "model.mlp.dropout": 0.47678,
+        "training.optimizer": "adam",
+        "training.learning_rate": 0.002786,
+        "training.weight_decay": 2.1e-05,
+        "training.batch_size": 128,
+        "training.scheduler.type": "cosine",
+        "training.label_smoothing": 0.1
+      },
+      "results": {
+        "test_loss": 0.6341319268710107,
+        "test_accuracy": 0.677916360968452,
+        "test_balanced_accuracy": 0.6702776265650516,
+        "test_precision": 0.665087742446233,
+        "test_recall": 0.6702776265650516,
+        "test_f1": 0.6665169303308041,
+        "per_class": {
+          "DMT": {
+            "precision": 0.7538461538461538,
+            "recall": 0.704191616766467,
+            "f1": 0.7281733746130031,
+            "support": 835
+          },
+          "EC": {
+            "precision": 0.5763293310463122,
+            "recall": 0.6363636363636364,
+            "f1": 0.6048604860486049,
+            "support": 528
+          }
+        },
+        "confusion_matrix": [
+          [
+            588,
+            247
+          ],
+          [
+            192,
+            336
+          ]
+        ],
+        "best_val_acc": 0.816358024691358,
+        "best_val_loss": 0.5288590494497323,
+        "best_epoch": 118,
+        "status": "success"
+      }
+    },
+    {
+      "name": "exp008_h512_l3_heads4_lr1e-04",
+      "index": 8,
+      "params": {
+        "model.architecture.hidden_dim": 512,
+        "model.architecture.num_gat_layers": 3,
+        "model.architecture.num_attention_heads": 4,
+        "model.architecture.dropout": 0.404513,
+        "model.architecture.use_skip_connections": false,
+        "model.pooling.method": "mean+max",
+        "model.mlp.hidden_dims": [
+          128,
+          64
+        ],
+        "model.mlp.dropout": 0.333466,
+        "training.optimizer": "adamw",
+        "training.learning_rate": 0.000116,
+        "training.weight_decay": 1e-05,
+        "training.batch_size": 128,
+        "training.scheduler.type": "reduce_on_plateau",
+        "training.label_smoothing": 0.0
+      },
+      "results": {
+        "test_loss": 0.6304005519572374,
+        "test_accuracy": 0.6698459280997799,
+        "test_balanced_accuracy": 0.6549866176737433,
+        "test_precision": 0.6533669557566617,
+        "test_recall": 0.6549866176737433,
+        "test_f1": 0.6540780829829089,
+        "per_class": {
+          "DMT": {
+            "precision": 0.7350427350427351,
+            "recall": 0.7209580838323353,
+            "f1": 0.727932285368803,
+            "support": 835
+          },
+          "EC": {
+            "precision": 0.5716911764705882,
+            "recall": 0.5890151515151515,
+            "f1": 0.5802238805970149,
+            "support": 528
+          }
+        },
+        "confusion_matrix": [
+          [
+            602,
+            233
+          ],
+          [
+            217,
+            311
+          ]
+        ],
+        "best_val_acc": 0.7268518518518519,
+        "best_val_loss": 0.6009577748216228,
+        "best_epoch": 66,
+        "status": "success"
+      }
+    },
+    {
+      "name": "exp005_h256_l2_heads4_lr2e-04",
+      "index": 5,
+      "params": {
+        "model.architecture.hidden_dim": 256,
+        "model.architecture.num_gat_layers": 2,
+        "model.architecture.num_attention_heads": 4,
+        "model.architecture.dropout": 0.405384,
+        "model.architecture.use_skip_connections": true,
+        "model.pooling.method": "mean",
+        "model.mlp.hidden_dims": [
+          256,
+          128
+        ],
+        "model.mlp.dropout": 0.541514,
+        "training.optimizer": "adamw",
+        "training.learning_rate": 0.000207,
+        "training.weight_decay": 2.6e-05,
+        "training.batch_size": 128,
+        "training.scheduler.type": "reduce_on_plateau",
+        "training.label_smoothing": 0.1
+      },
+      "results": {
+        "test_loss": 0.635745396879956,
+        "test_accuracy": 0.6625091709464417,
+        "test_balanced_accuracy": 0.6573546089638904,
+        "test_precision": 0.651432369543484,
+        "test_recall": 0.6573546089638904,
+        "test_f1": 0.6523499013019274,
+        "per_class": {
+          "DMT": {
+            "precision": 0.7463863337713534,
+            "recall": 0.6802395209580838,
+            "f1": 0.7117794486215538,
+            "support": 835
+          },
+          "EC": {
+            "precision": 0.5564784053156147,
+            "recall": 0.634469696969697,
+            "f1": 0.5929203539823009,
+            "support": 528
+          }
+        },
+        "confusion_matrix": [
+          [
+            568,
+            267
+          ],
+          [
+            193,
+            335
+          ]
+        ],
+        "best_val_acc": 0.7268518518518519,
+        "best_val_loss": 0.6135255525141586,
+        "best_epoch": 102,
+        "status": "success"
+      }
+    }
+  ],
+  "all_accuracies": [
+    {
+      "name": "exp010_h128_l1_heads4_lr2e-03",
+      "accuracy": 0.7278063096111519,
+      "f1": 0.7061525310758692
+    },
+    {
+      "name": "exp004_h256_l3_heads8_lr1e-03",
+      "accuracy": 0.7241379310344828,
+      "f1": 0.7043042765815043
+    },
+    {
+      "name": "exp001_h512_l3_heads4_lr3e-03",
+      "accuracy": 0.677916360968452,
+      "f1": 0.6665169303308041
+    },
+    {
+      "name": "exp008_h512_l3_heads4_lr1e-04",
+      "accuracy": 0.6698459280997799,
+      "f1": 0.6540780829829089
+    },
+    {
+      "name": "exp005_h256_l2_heads4_lr2e-04",
+      "accuracy": 0.6625091709464417,
+      "f1": 0.6523499013019274
+    },
+    {
+      "name": "exp014_h256_l3_heads8_lr1e-04",
+      "accuracy": 0.6603081438004402,
+      "f1": 0.6434946583713386
+    },
+    {
+      "name": "exp011_h128_l3_heads4_lr1e-04",
+      "accuracy": 0.6595744680851063,
+      "f1": 0.6508878614044152
+    },
+    {
+      "name": "exp013_h512_l3_heads8_lr3e-04",
+      "accuracy": 0.6595744680851063,
+      "f1": 0.6489609236234458
+    },
+    {
+      "name": "exp006_h256_l3_heads8_lr3e-03",
+      "accuracy": 0.640498899486427,
+      "f1": 0.6272464447569932
+    },
+    {
+      "name": "exp007_h128_l3_heads8_lr1e-03",
+      "accuracy": 0.6272927366104182,
+      "f1": 0.6245260509305453
+    },
+    {
+      "name": "exp000_h512_l1_heads4_lr1e-03",
+      "accuracy": 0.6250917094644167,
+      "f1": 0.6152493170813895
+    },
+    {
+      "name": "exp009_h512_l2_heads4_lr7e-04",
+      "accuracy": 0.6221570066030815,
+      "f1": 0.6184693770508198
+    },
+    {
+      "name": "exp003_h512_l2_heads8_lr9e-03",
+      "accuracy": 0.6177549523110785,
+      "f1": 0.6105015815833166
+    },
+    {
+      "name": "exp002_h128_l1_heads8_lr4e-03",
+      "accuracy": 0.59501100513573,
+      "f1": 0.5915759028610141
+    },
+    {
+      "name": "exp012_h512_l1_heads4_lr7e-05",
+      "accuracy": 0.5443873807776962,
+      "f1": 0.5443785517079149
+    }
+  ]
+}

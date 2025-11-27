@@ -1,0 +1,57 @@
+[
+  {
+    "name": "exp000_h128_l3_heads8_lr8e-04",
+    "index": 0,
+    "params": {
+      "model.architecture.hidden_dim": 128,
+      "model.architecture.num_gat_layers": 3,
+      "model.architecture.num_attention_heads": 8,
+      "model.architecture.dropout": 0.281782,
+      "model.architecture.use_skip_connections": true,
+      "model.pooling.method": "mean+max",
+      "model.mlp.hidden_dims": [
+        512,
+        256,
+        128
+      ],
+      "model.mlp.dropout": 0.496914,
+      "training.optimizer": "adam",
+      "training.learning_rate": 0.000794,
+      "training.weight_decay": 9.3e-05,
+      "training.batch_size": 64,
+      "training.scheduler.type": "reduce_on_plateau",
+      "training.label_smoothing": 0.1
+    },
+    "results": {
+      "status": "failed",
+      "error": "0, in <module>\n    main(args.config, args.force_rebuild)\n  File \"/media/storage_hdd/dmt_fz/machine_learning/clf/train.py\", line 248, in main\n    train_graphs, val_graphs, test_graphs = create_dataset_from_config(\n  File \"/media/storage_hdd/dmt_fz/machine_learning/clf/data/dataset_builder.py\", line 660, in create_dataset_from_config\n    raise ValueError(\"No graphs were created! Check your data paths and configuration.\")\nValueError: No graphs were created! Check your data paths and configuration.\n"
+    }
+  },
+  {
+    "name": "exp001_h256_l2_heads4_lr7e-04",
+    "index": 1,
+    "params": {
+      "model.architecture.hidden_dim": 256,
+      "model.architecture.num_gat_layers": 2,
+      "model.architecture.num_attention_heads": 4,
+      "model.architecture.dropout": 0.467318,
+      "model.architecture.use_skip_connections": false,
+      "model.pooling.method": "attention",
+      "model.mlp.hidden_dims": [
+        256,
+        128
+      ],
+      "model.mlp.dropout": 0.504764,
+      "training.optimizer": "adamw",
+      "training.learning_rate": 0.000676,
+      "training.weight_decay": 9.2e-05,
+      "training.batch_size": 64,
+      "training.scheduler.type": "reduce_on_plateau",
+      "training.label_smoothing": 0.1
+    },
+    "results": {
+      "status": "failed",
+      "error": "0, in <module>\n    main(args.config, args.force_rebuild)\n  File \"/media/storage_hdd/dmt_fz/machine_learning/clf/train.py\", line 248, in main\n    train_graphs, val_graphs, test_graphs = create_dataset_from_config(\n  File \"/media/storage_hdd/dmt_fz/machine_learning/clf/data/dataset_builder.py\", line 660, in create_dataset_from_config\n    raise ValueError(\"No graphs were created! Check your data paths and configuration.\")\nValueError: No graphs were created! Check your data paths and configuration.\n"
+    }
+  }
+]
