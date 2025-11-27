@@ -1,0 +1,16 @@
+{
+  "input_type": "spectral",
+  "model_type": "mlp",
+  "hidden_dims": [
+    16,
+    8
+  ],
+  "dropout": 0.6,
+  "activation": "elu",
+  "weight_decay": 0.01,
+  "learning_rate": 0.0005,
+  "batch_size": 4,
+  "loss": "huber",
+  "scheduler_patience": 30,
+  "early_stopping_patience": 60
+}
