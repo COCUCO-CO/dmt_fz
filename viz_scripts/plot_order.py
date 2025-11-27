@@ -11,6 +11,7 @@ first to generate the required .pkl files:
   - r_kuramoto_nets_all_mean.pkl (for network pair analysis)
 
 Usage:
+  cd viz_scripts
   python plot_order.py                    # Generate all plots
   python plot_order.py --max-subjects 5   # Limit subjects for testing
 """
@@ -19,9 +20,15 @@ import argparse
 import os
 import pickle
 import re
+import sys
 from itertools import product
 from multiprocessing import Pool, cpu_count
 from pathlib import Path
+
+# Add pipeline directory to path for imports
+_SCRIPT_DIR = Path(__file__).resolve().parent
+_PROJECT_ROOT = _SCRIPT_DIR.parent
+sys.path.insert(0, str(_PROJECT_ROOT / "pipeline"))
 
 import matplotlib
 matplotlib.use('Agg')  # Use non-GUI backend for multiprocessing compatibility

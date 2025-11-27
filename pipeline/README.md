@@ -10,9 +10,13 @@ Esta carpeta contiene los scripts principales del pipeline de análisis de sincr
 3. **multi2pool2.py** - Filtrado por redes cerebrales
 4. **calculate_syncro.py** - Análisis temporal con splits
 5. **generate_order.py** - Cálculo de order parameter por red
-6. **plot_order.py** - Visualización y gráficos
+6. **build_order_data.py** - Generar datos agregados de Kuramoto
 7. **pearson.py** - Correlaciones con cuestionarios
 8. **clustering.py** - Identificación de estados cerebrales
+
+### Visualización (en `viz_scripts/`):
+- **viz_scripts/plot_order.py** - Histogramas y estadísticas de Kuramoto
+- **viz_scripts/plot.py** - Frames y videos de sincronización
 
 ### Archivos de configuración:
 - **paths.py** - Configuración de rutas (apunta al directorio padre)
@@ -24,44 +28,47 @@ Esta carpeta contiene los scripts principales del pipeline de análisis de sincr
 
 **Linux/Mac:**
 ```bash
-cd /media/storage_hdd/dmt_fz/dmt/pipeline
+cd /media/storage_hdd/dmt_fz/pipeline
 ./run_pipeline.sh
 ```
 
 **Windows:**
 ```cmd
-cd C:\ruta\a\dmt\pipeline
+cd C:\ruta\a\dmt_fz\pipeline
 run_pipeline.bat
 ```
 
 ### Ejecutar scripts individuales:
 
 ```bash
-cd /media/storage_hdd/dmt_fz/dmt/pipeline
+cd /media/storage_hdd/dmt_fz
 
 # Paso 1: Procesamiento EEG (3-4 horas con 7 workers)
-python fwd.py --jobs 0 --workers 7 --conditions DMT EC EO
+python pipeline/fwd.py --jobs 0 --workers 7 --conditions DMT EC EO
 
 # Paso 2a: Consolidar fases
-python save_load_pickle.py --conditions DMT EC EO
+python pipeline/save_load_pickle.py --conditions DMT EC EO
 
 # Paso 2b: Filtrar por redes (2-5 min)
-python multi2pool2.py
+python pipeline/multi2pool2.py
 
 # Paso 2c: Análisis temporal (10-15 min, opcional)
-python calculate_syncro.py --workers 20 --conditions DMT EC EO
+python pipeline/calculate_syncro.py --workers 20 --conditions DMT EC EO
 
 # Paso 2d: Order parameter (30 seg - 1 min)
-python generate_order.py --workers 20 --conditions DMT EC EO
+python pipeline/generate_order.py --workers 20 --conditions DMT EC EO
 
-# Paso 3: Gráficos (5-10 min)
-python plot_order.py --workers 20
+# Paso 2e: Datos agregados (2-5 min, opcional pero recomendado)
+python pipeline/build_order_data.py --build-all
+
+# Paso 3: Visualización de Kuramoto (5-10 min)
+python ../viz_scripts/plot_order.py --workers 20
 
 # Paso 4: Correlaciones (3-5 min)
-python pearson.py
+python pipeline/pearson.py
 
 # Paso 5: Clustering (2-4 horas, opcional)
-python clustering.py
+python pipeline/clustering.py
 ```
 
 ## 📂 Estructura de directorios
@@ -69,14 +76,17 @@ python clustering.py
 Los scripts en esta carpeta acceden a datos en el directorio padre:
 
 ```
-dmt/                          (directorio padre)
-├── pipeline/                 (esta carpeta)
+dmt_fz/                       (directorio raíz)
+├── pipeline/                 (esta carpeta - procesamiento de datos)
 │   ├── fwd.py
-│   ├── multi2pool2.py
+│   ├── build_order_data.py
 │   └── ...
+├── viz_scripts/              (visualizaciones)
+│   ├── plot_order.py         # Histogramas de Kuramoto
+│   └── plot.py               # Frames y videos
 ├── EEG_CLEAN/               (datos de entrada)
 ├── fwd-inv-stc/             (resultados intermedios)
-├── plot_order_results/      (gráficos)
+├── plot_order_results/      (gráficos de plot_order.py)
 ├── pearson_results/         (correlaciones)
 └── spectral_sources/        (datos de cuestionarios)
 ```
@@ -89,10 +99,10 @@ Si necesitás usar una ruta personalizada:
 2. Editar y descomentar `CUSTOM_BASE_DIR` con tu ruta:
    ```python
    # Windows:
-   CUSTOM_BASE_DIR = Path("D:/Proyectos/dmt_fz/dmt")
+   CUSTOM_BASE_DIR = Path("D:/Proyectos/dmt_fz")
    
    # Linux/Mac:
-   CUSTOM_BASE_DIR = Path("/home/usuario/proyectos/dmt_fz/dmt")
+   CUSTOM_BASE_DIR = Path("/home/usuario/proyectos/dmt_fz")
    ```
 3. Los scripts automáticamente usarán esa ruta
 
@@ -122,8 +132,8 @@ Esta versión incluye las siguientes correcciones:
 ## 📚 Documentación completa
 
 Ver documentación en el directorio padre:
-- `docs/README.md` - Descripción general del proyecto
+- `README.md` - Descripción general del proyecto
 - `docs/WORKFLOW.md` - Pipeline detallado paso a paso
 - `docs/TECHNICAL_DETAILS.md` - Detalles matemáticos
 - `docs/QUICKSTART.md` - Guía rápida
-
+- `viz_scripts/README.md` - Documentación de visualizaciones

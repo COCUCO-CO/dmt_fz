@@ -46,14 +46,16 @@ Este proyecto analiza la **sincronización de fases** en señales EEG mediante *
 dmt_fz/
 ├── pipeline/                    # 🔧 Pipeline principal de análisis
 │   ├── fwd.py                   # ⭐ PASO 1: Forward/Inverse + Sincronización
+│   ├── calculate_syncro.py      # ⏱️ PASO 1b: Análisis temporal (opcional)
 │   ├── multi2pool2.py           # 🔄 PASO 2a: Filtrado por redes cerebrales
 │   ├── generate_order.py        # 📊 PASO 2b: Cálculo de Kuramoto
-│   ├── plot_order.py            # 📈 PASO 3: Visualización estadística
-│   ├── pearson.py               # 🔗 PASO 4: Correlaciones
-│   └── clustering.py            # 🎯 PASO 5: Estados cerebrales
+│   ├── build_order_data.py      # 📦 PASO 2c: Generar datos agregados
+│   ├── pearson.py               # 🔗 PASO 3: Correlaciones
+│   └── clustering.py            # 🎯 PASO 4: Estados cerebrales
 │
-├── viz_scripts/                 # 🎨 Visualizaciones avanzadas
-│   ├── plot.py                  # Entry point principal
+├── viz_scripts/                 # 🎨 Visualizaciones
+│   ├── plot.py                  # Entry point para frames/videos
+│   ├── plot_order.py            # 📈 Visualización de Kuramoto
 │   ├── plot_frames.py           # Generación de frames
 │   └── plot_videos.py           # Generación de videos
 │
@@ -88,27 +90,44 @@ dmt_fz/
                     │ • Kuramoto        │
                     └─────────┬─────────┘
                               │
-              ┌───────────────┼───────────────┐
-              │               │               │
-        phases-*.pkl    extra.pkl    (metadata)
+              ┌───────────────┴───────────────┐
+              │                               │
+        phases-*.pkl                     extra.pkl
+        (phases, amplitudes, syncros,
+         kuramoto por banda)
               │
-    ┌─────────┴─────────┐
-    │                   │
-┌───▼────────┐   ┌──────▼───────────┐
-│multi2pool2 │   │ generate_order.py│  ⭐ PASO 2
-│   .py      │   │                  │
-└───┬────────┘   └────────┬─────────┘
-    │                     │
-order_all-*.pkl      order-*.pkl
-    │                     │
-    └──────────┬──────────┘
-               │
-    ┌──────────┼──────────┬──────────┐
-    │          │          │          │
-┌───▼───┐  ┌───▼───┐  ┌───▼───┐  ┌───▼───┐
-│pearson│  │plot_  │  │cluster│  │GAT    │
-│  .py  │  │order  │  │ing.py │  │ CLF   │
-└───────┘  └───────┘  └───────┘  └───────┘
+    ┌─────────┼─────────────────────────────────┐
+    │         │                                 │
+    │   ┌─────▼──────────┐               ┌──────▼───────────┐
+    │   │calculate_syncro│               │ generate_order.py│
+    │   │.py (opcional)  │               │                  │
+    │   └─────┬──────────┘               └────────┬─────────┘
+    │         │                                   │
+    │   syncro-*.pkl                        order-*.pkl
+    │   (análisis temporal)                       │
+    │                                             │
+┌───▼────────┐                                    │
+│multi2pool2 │  ⭐ PASO 2                         │
+│   .py      │                                    │
+└───┬────────┘                                    │
+    │                                             │
+order_all-*.pkl                                   │
+    │                                             │
+    └──────────────────────┬──────────────────────┘
+                           │
+                ┌──────────▼──────────┐
+                │ build_order_data.py │  📦 PASO 2c (opcional)
+                │ --build-all         │
+                └──────────┬──────────┘
+                           │
+                r_kuramoto_nets_*.pkl
+                           │
+    ┌──────────────────────┼──────────────────────┐
+    │                      │                      │
+┌───▼───┐            ┌─────▼─────┐          ┌─────▼─────┐
+│pearson│  ⭐ PASO 3 │plot_order │          │clustering │  ⭐ PASO 4
+│  .py  │            │   .py     │          │   .py     │
+└───────┘            └───────────┘          └───────────┘
 ```
 
 ---
@@ -166,6 +185,26 @@ python pipeline/fwd.py --jobs 0 --workers 7 --conditions DMT EC EO
 
 **Tiempo:** ~3-4 horas (29 sujetos, 7 workers)
 
+#### 🎨 Visualizaciones disponibles después de este paso
+
+Una vez generados los archivos `phases-*.pkl`, se pueden generar visualizaciones:
+
+```bash
+cd viz_scripts
+
+# Frames de sincronización EEG + Source Space
+python plot.py -s S01 -c DMT -b Alpha -m all --max-epochs 10
+
+# Frames con tema oscuro y efectos glow
+python plot.py -s S01 -c DMT -b Alpha -m advanced --max-epochs 10
+
+# Videos animados
+python plot.py -s S01 -c DMT -b Alpha -m video_advanced --max-epochs 5
+
+# Cerebro 3D con rotación
+python plot.py -s S01 -c DMT -b Alpha -m video_3d --max-epochs 5
+```
+
 ---
 
 ### 🔄 PASO 2: Análisis por Redes Cerebrales
@@ -196,25 +235,43 @@ Calcula el parámetro de Kuramoto para cada red y banda:
 python pipeline/generate_order.py --workers 20 --conditions DMT EC EO
 ```
 
----
+#### 2c. `build_order_data.py` - Generar Datos Agregados (Opcional)
 
-### 📊 PASO 3: `plot_order.py` - Visualización
-
-Genera gráficos estadísticos comparando condiciones DMT vs EC vs EO.
-
-<p align="center">
-  <img src="readme/ml_images/clf/band_comparison_kuramoto_mean.png" alt="Kuramoto by Band" width="700"/>
-</p>
-
-<p align="center"><em>Comparación del parámetro de Kuramoto promedio por banda de frecuencia y condición</em></p>
+Genera archivos `.pkl` con datos agregados que aceleran las visualizaciones y análisis:
 
 ```bash
-python pipeline/plot_order.py --workers 20
+# Generar r_kuramoto_nets_epochs_mean.pkl (requerido para algunos plots)
+python pipeline/build_order_data.py --build-epochs-mean
+
+# Generar r_kuramoto_nets_all_mean.pkl
+python pipeline/build_order_data.py --build-all-mean
+
+# Generar ambos
+python pipeline/build_order_data.py --build-all
 ```
+
+#### 🎨 Visualizaciones disponibles después de este paso
+
+Con los archivos `order-*.pkl` generados:
+
+```bash
+cd viz_scripts
+
+# Histogramas y comparaciones estadísticas de Kuramoto
+python plot_order.py --workers 20
+
+# Comparaciones específicas con menos sujetos (testing)
+python plot_order.py --max-subjects 5
+```
+
+**Outputs en `plot_order_results/`:**
+- Histogramas de Kuramoto por banda y red
+- Trayectorias temporales del parámetro de orden
+- Comparaciones DMT vs EC vs EO con tests estadísticos (FDR)
 
 ---
 
-### 🔗 PASO 4: `pearson.py` - Correlaciones con Experiencia Subjetiva
+### 🔗 PASO 3: `pearson.py` - Correlaciones con Experiencia Subjetiva
 
 Correlaciona medidas de sincronización con 23 escalas de cuestionarios subjetivos. Se analizan dos métricas principales:
 
@@ -225,6 +282,10 @@ Correlaciona medidas de sincronización con 23 escalas de cuestionarios subjetiv
 - **ASC** (Altered States of Consciousness): Unity, Spiritual, Blissful, Insightfulness, Disembodiment, Impaired, Anxiety, Complex/Elementary imagery, Audiovisual, Changed
 - **MEQ** (Mystical Experience): Mystical, Positive, Transcendental, Ineffability, Awe
 - **NDE** (Near Death Experience): Cognition, Affect, Paranormal, Transcendental
+
+```bash
+python pipeline/pearson.py
+```
 
 #### Matrices de Correlación (Todas las Bandas × Redes)
 
@@ -250,9 +311,22 @@ Correlaciona medidas de sincronización con 23 escalas de cuestionarios subjetiv
 
 <p align="center"><em>Distribución del parámetro r de Kuramoto para DMT (azul) vs EC (naranja) en cada combinación de banda de frecuencia (filas) y red cerebral (columnas). Los p-values indican diferencias significativas entre condiciones. Se observa que DMT muestra patrones de sincronización distintos a Eyes Closed en múltiples redes, especialmente en DMN y FPN.</em></p>
 
+**Outputs en `pearson_results/`:**
+- Matrices de correlación (heatmaps)
+- Scatter plots de correlaciones significativas
+- Histogramas comparativos por condición
+
+---
+
+### 🎯 PASO 4: `clustering.py` - Estados Cerebrales
+
+Identificación de estados cerebrales discretos mediante clustering.
+
 ```bash
-python pipeline/pearson.py
+python pipeline/clustering.py
 ```
+
+**Tiempo:** ~2-4 horas
 
 ---
 
@@ -284,6 +358,15 @@ El módulo `viz_scripts/` genera visualizaciones dinámicas de la sincronizació
 | ⭕ Círculo de fases | Posición angular de osciladores | Agrupados = sincronizados |
 | 🏹 Flecha dorada | Vector medio de fases | Longitud = r, dirección = fase media |
 
+### Scripts Disponibles
+
+| Script | Descripción | Requiere |
+|--------|-------------|----------|
+| `plot.py` | Frames y videos de sincronización | `phases-*.pkl` |
+| `plot_order.py` | Histogramas y estadísticas de Kuramoto | `order-*.pkl`, `phases-*.pkl` |
+| `visualize_brain_3d.py` | Cerebro 3D interpolado | `phases-*.pkl` |
+| `visualize_results.py` | Estadísticas comparativas | `order-*.pkl` |
+
 ### Modos Disponibles
 
 ```bash
@@ -300,6 +383,9 @@ python plot.py -s S01 -c DMT -b Alpha -m video_advanced --max-epochs 5
 
 # Cerebro 3D con rotación
 python plot.py -s S01 -c DMT -b Alpha -m video_3d --max-epochs 5
+
+# Estadísticas de Kuramoto
+python plot_order.py --workers 20
 ```
 
 ---
@@ -435,23 +521,53 @@ pip install torch-geometric pyg_lib torch_scatter torch_sparse
 ```bash
 cd /media/storage_hdd/dmt_fz
 
+# ═══════════════════════════════════════════════════════════════════
 # PASO 1: Procesar EEG (3-4 horas)
+# ═══════════════════════════════════════════════════════════════════
 python pipeline/fwd.py --jobs 0 --workers 7 --conditions DMT EC EO
 
+# 🎨 Visualizaciones disponibles:
+cd viz_scripts
+python plot.py -s S01 -c DMT -b Alpha -m advanced --max-epochs 5
+cd ..
+
+# ═══════════════════════════════════════════════════════════════════
 # PASO 2a: Filtrar por redes (2-5 min)
+# ═══════════════════════════════════════════════════════════════════
 python pipeline/multi2pool2.py
 
+# ═══════════════════════════════════════════════════════════════════
 # PASO 2b: Calcular order parameter (30 seg - 1 min)
+# ═══════════════════════════════════════════════════════════════════
 python pipeline/generate_order.py --workers 20 --conditions DMT EC EO
 
-# PASO 3: Visualización (5-10 min)
-python pipeline/plot_order.py --workers 20
+# ═══════════════════════════════════════════════════════════════════
+# PASO 2c: Generar datos agregados (opcional, 2-5 min)
+# ═══════════════════════════════════════════════════════════════════
+python pipeline/build_order_data.py --build-all
 
-# PASO 4: Correlaciones (3-5 min)
+# 🎨 Visualizaciones disponibles:
+cd viz_scripts
+python plot_order.py --workers 20
+cd ..
+
+# ═══════════════════════════════════════════════════════════════════
+# PASO 3: Correlaciones (3-5 min)
+# ═══════════════════════════════════════════════════════════════════
 python pipeline/pearson.py
 
-# PASO 5: Clustering (opcional, 2-4 horas)
+# 🎨 Outputs en pearson_results/
+
+# ═══════════════════════════════════════════════════════════════════
+# PASO 4: Clustering (opcional, 2-4 horas)
+# ═══════════════════════════════════════════════════════════════════
 python pipeline/clustering.py
+
+# ═══════════════════════════════════════════════════════════════════
+# Machine Learning: GAT Classifier
+# ═══════════════════════════════════════════════════════════════════
+cd machine_learning/clf
+./quick_train_alpha.sh
 ```
 
 ### Pipeline Rápido (Testing)
@@ -461,7 +577,10 @@ python pipeline/clustering.py
 python pipeline/fwd.py --max-subjects 3 --workers 3 --conditions DMT
 python pipeline/multi2pool2.py
 python pipeline/generate_order.py --workers 10 --conditions DMT
-python pipeline/plot_order.py --max-subjects 3
+python pipeline/build_order_data.py --build-epochs-mean
+
+cd viz_scripts
+python plot_order.py --max-subjects 3
 ```
 
 ---
@@ -473,7 +592,7 @@ python pipeline/plot_order.py --max-subjects 3
 | `fwd.py` | Procesamiento principal | ~3-4 horas |
 | `multi2pool2.py` | Filtrado por redes | ~2-5 min |
 | `generate_order.py` | Kuramoto por red | ~30 seg - 1 min |
-| `plot_order.py` | Visualización | ~5-10 min |
+| `build_order_data.py` | Datos agregados | ~2-5 min |
 | `pearson.py` | Correlaciones | ~3-5 min |
 | `clustering.py` | Estados cerebrales | ~2-4 horas |
 | **Total** | Pipeline completo | **~4-5 horas** |
@@ -485,16 +604,20 @@ python pipeline/plot_order.py --max-subjects 3
 ```
 fwd-inv-stc/
 ├── DMT/, EC/, EO/
-│   ├── phases-*.pkl         # Fases, amplitudes, syncros (~100-500 MB)
-│   ├── order_all-*.pkl      # DataFrames por red (~50-200 MB)
-│   └── order-*.pkl          # Order parameter (~50-200 MB)
-├── extra.pkl                # Metadata (labels, coordinates)
-├── r_kuramoto_*.pkl         # Datos agregados
-└── clusters_*.pkl           # Estados identificados
+│   ├── phases-*.pkl         # [fwd.py] Fases, amplitudes, syncros, kuramoto
+│   │                        # Contiene por banda: phases_eeg/stc,
+│   │                        # amplitudes_eeg/stc, syncros_eeg/stc, kuramoto_eeg/stc
+│   ├── syncro-*.pkl         # [calculate_syncro.py] Análisis temporal con splits
+│   │                        # Sincronización y Kuramoto en ventanas temporales
+│   ├── order_all-*.pkl      # [multi2pool2.py] DataFrames de fases por red
+│   └── order-*.pkl          # [generate_order.py] Order parameter por red
+├── extra.pkl                # [fwd.py] Metadata (labels, coordinates, mapping)
+├── r_kuramoto_nets_epochs_mean.pkl  # [build_order_data.py] Datos agregados
+└── r_kuramoto_nets_all_mean.pkl     # [build_order_data.py] Datos agregados
 
-plot_order_results/          # Gráficos estadísticos
-pearson_results/             # Matrices de correlación
-visualizations/              # Videos y frames
+plot_order_results/          # Gráficos de Kuramoto (plot_order.py)
+pearson_results/             # Matrices de correlación (pearson.py)
+visualizations/              # Videos y frames (viz_scripts/)
 ```
 
 ---
@@ -570,4 +693,3 @@ Parcelas del atlas Schaefer2018 organizadas en 7 redes funcionales basadas en co
   <strong>🧠 DMT Phase Synchronization Analysis</strong><br>
   <em>Explorando la consciencia a través de la sincronización cerebral</em>
 </p>
-

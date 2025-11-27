@@ -99,9 +99,13 @@ main() {
     run_timed "PASO 2d: Order parameter" \
         python generate_order.py --workers "$WORKERS" --conditions $CONDITIONS
     
+    # PASO 2e: Datos agregados
+    run_timed "PASO 2e: Datos agregados" \
+        python build_order_data.py --build-epochs-mean --workers "$WORKERS"
+    
     # PASO 3: Gráficos
     run_timed "PASO 3: Gráficos" \
-        python plot_order.py --max-subjects "$MAX_SUBJECTS" --workers "$WORKERS"
+        python ../viz_scripts/plot_order.py --max-subjects "$MAX_SUBJECTS" --workers "$WORKERS"
     
     # PASO 4: Correlaciones
     run_timed "PASO 4: Correlaciones" \

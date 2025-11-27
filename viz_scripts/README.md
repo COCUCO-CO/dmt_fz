@@ -2,7 +2,18 @@
 
 Visualización de sincronización EEG/Source Space para análisis de estados alterados de consciencia.
 
-## Uso
+## Scripts Disponibles
+
+| Script | Descripción | Input requerido |
+|--------|-------------|-----------------|
+| `plot.py` | Entry point para frames y videos | `phases-*.pkl`, `syncro-*.pkl` |
+| `plot_order.py` | Histogramas y estadísticas de Kuramoto | `order-*.pkl`, `syncro-*.pkl` |
+| `visualize_brain_3d.py` | Cerebro 3D interpolado | `phases-*.pkl` |
+| `visualize_results.py` | Estadísticas comparativas | `order-*.pkl` |
+
+---
+
+## plot.py - Frames y Videos
 
 ```bash
 cd viz_scripts
@@ -29,7 +40,7 @@ python plot.py -s S01 -c DMT -b Alpha -m video_advanced --max-epochs 5
 python plot.py -m frames_to_video --source advanced --fps 30
 ```
 
-## Modos
+### Modos
 
 | Modo | Descripción | Output |
 |------|-------------|--------|
@@ -43,7 +54,7 @@ python plot.py -m frames_to_video --source advanced --fps 30
 | `video_advanced` | Video estilo oscuro | MP4 |
 | `frames_to_video` | Une frames con ffmpeg | MP4 |
 
-## Argumentos
+### Argumentos
 
 ```
 -s, --subject       Sujeto (S01, S02, ...) [default: S01]
@@ -62,37 +73,97 @@ python plot.py -m frames_to_video --source advanced --fps 30
 -o, --output        Nombre archivo salida
 ```
 
+---
+
+## plot_order.py - Estadísticas de Kuramoto
+
+Genera histogramas y análisis estadísticos del parámetro de orden de Kuramoto.
+
+```bash
+cd viz_scripts
+
+# Generar todos los plots
+python plot_order.py
+
+# Limitar sujetos (para testing)
+python plot_order.py --max-subjects 5
+
+# Controlar paralelismo
+python plot_order.py --workers 8
+```
+
+### Argumentos
+
+```
+--max-subjects N    Límite de sujetos por condición [default: todos]
+--workers N         Workers paralelos [default: cpu_count()]
+```
+
+### Outputs (en `plot_order_results/`)
+
+| Tipo de plot | Descripción |
+|--------------|-------------|
+| `kuramoto_epochs_summary_*.png` | Trayectorias temporales por sujeto |
+| `kuramoto_gamma_summary_*.png` | Promedios por condición |
+| `hist_kuramoto_stc_*.png` | Histogramas por banda |
+| `hist_kuramoto_pair_*.png` | Histogramas por red/hemisferio |
+| `histogram_kuramoto_full_*.png` | Grid comparativo con tests FDR |
+
+### Requisitos
+
+Requiere archivos generados por el pipeline:
+- `syncro-*.pkl` (de `fwd.py`)
+- `order-*.pkl` (de `generate_order.py`)
+- `r_kuramoto_nets_epochs_mean.pkl` (opcional, de `build_order_data.py`)
+
+---
+
 ## Outputs
 
-Cada modo guarda en su carpeta:
+Cada script guarda en su carpeta:
+
 ```
 visualizations/plot/
 ├── all/            # Frames modo all
 ├── advanced/       # Frames modo advanced
 ├── video_smooth/   # Videos
 └── videos/         # Videos desde frames
+
+plot_order_results/
+├── kuramoto_epochs_summary_*.png
+├── hist_kuramoto_*.png
+└── histogram_kuramoto_full_*.png
 ```
+
+---
 
 ## Arquitectura
 
 ```
 viz_scripts/
-├── plot.py          # Entry point (ejecutar este)
-├── plot_utils.py    # Funciones compartidas
-├── plot_frames.py   # Generación de frames
-├── plot_videos.py   # Generación de videos
-└── docs/            # Documentación extendida
+├── plot.py              # Entry point frames/videos
+├── plot_order.py        # Estadísticas de Kuramoto
+├── plot_utils.py        # Funciones compartidas
+├── plot_frames.py       # Generación de frames
+├── plot_videos.py       # Generación de videos
+├── visualize_brain_3d.py
+├── visualize_results.py
+└── docs/                # Documentación extendida
 ```
+
+---
 
 ## Lo que muestra cada frame
 
 | Componente | Qué muestra | Interpretación |
 |------------|-------------|----------------|
-| Timeline Kuramoto | r(t) promedio por época | Alto = sincronización global |
-| Matriz | PLV entre canales/parcelas | Colores = fuerza de conexión |
-| Grafo | Red de conectividad | Aristas = PLV > umbral |
-| Círculo de fases | Posición angular de osciladores | Agrupados = sincronizados |
-| Flecha dorada | Vector medio de fases | Longitud = r, dirección = fase media |
+| 📈 Timeline Kuramoto | r(t) promedio por época | Alto = sincronización global |
+| 🟥 Matriz | PLV entre canales/parcelas | Colores = fuerza de conexión |
+| 🕸️ Grafo | Red de conectividad | Aristas = PLV > umbral |
+| ⭕ Círculo de fases | Posición angular de osciladores | Agrupados = sincronizados |
+| 🏹 Flecha dorada | Vector medio de fases | Longitud = r, dirección = fase media |
+
+---
 
 ## Scripts adicionales
 
@@ -101,6 +172,10 @@ viz_scripts/
 | `visualize_results.py` | Estadísticas comparativas |
 | `visualize_brain_3d.py` | Cerebro 3D interpolado |
 | `create_video_from_frames.py` | ffmpeg wrapper (legacy) |
+| `generate_frames.py` | Generación batch de frames |
+| `generate_video.py` | Generación batch de videos |
+
+---
 
 ## Troubleshooting
 
@@ -113,6 +188,7 @@ rm -rf __pycache__
 
 # Ver ayuda
 python plot.py --help
+python plot_order.py --help
 ```
 
 Ver `docs/` para documentación técnica detallada.

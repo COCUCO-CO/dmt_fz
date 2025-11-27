@@ -46,8 +46,12 @@ echo [PASO 2d] Order parameter
 python generate_order.py --workers %WORKERS% --conditions %CONDITIONS%
 if %errorlevel% neq 0 goto error
 
-echo [PASO 3] Generación de gráficos
-python plot_order.py --workers %WORKERS%
+echo [PASO 2e] Datos agregados
+python build_order_data.py --build-all --workers %WORKERS%
+if %errorlevel% neq 0 goto error
+
+echo [PASO 3] Visualización de Kuramoto
+python ..\viz_scripts\plot_order.py --workers %WORKERS%
 if %errorlevel% neq 0 goto error
 
 echo [PASO 4] Correlaciones
