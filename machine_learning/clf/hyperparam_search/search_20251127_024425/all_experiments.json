@@ -1,0 +1,301 @@
+[
+  {
+    "name": "exp000_h128_l3_heads8_lr8e-04",
+    "index": 0,
+    "params": {
+      "model.architecture.hidden_dim": 128,
+      "model.architecture.num_gat_layers": 3,
+      "model.architecture.num_attention_heads": 8,
+      "model.architecture.dropout": 0.281782,
+      "model.architecture.use_skip_connections": true,
+      "model.pooling.method": "mean+max",
+      "model.mlp.hidden_dims": [
+        512,
+        256,
+        128
+      ],
+      "model.mlp.dropout": 0.496914,
+      "training.optimizer": "adam",
+      "training.learning_rate": 0.000794,
+      "training.weight_decay": 9.3e-05,
+      "training.batch_size": 64,
+      "training.scheduler.type": "reduce_on_plateau",
+      "training.label_smoothing": 0.1
+    },
+    "results": {
+      "status": "failed",
+      "error": "psutil/__init__.py\", line 250, in <module>\n    raise ImportError(msg)\nImportError: version conflict: '/home/tomas/anaconda3/lib/python3.10/site-packages/psutil/_psutil_linux.cpython-310-x86_64-linux-gnu.so' C extension module was built for another version of psutil (5.9.0 instead of 5.9.8); you may try to 'pip uninstall psutil', manually remove /home/tomas/anaconda3/lib/python3.10/site-packages/psutil/_psutil_linux.cpython-310-x86_64-linux-gnu.so or clean the virtual env somehow, then reinstall\n"
+    }
+  },
+  {
+    "name": "exp001_h256_l2_heads4_lr7e-04",
+    "index": 1,
+    "params": {
+      "model.architecture.hidden_dim": 256,
+      "model.architecture.num_gat_layers": 2,
+      "model.architecture.num_attention_heads": 4,
+      "model.architecture.dropout": 0.467318,
+      "model.architecture.use_skip_connections": false,
+      "model.pooling.method": "attention",
+      "model.mlp.hidden_dims": [
+        256,
+        128
+      ],
+      "model.mlp.dropout": 0.504764,
+      "training.optimizer": "adamw",
+      "training.learning_rate": 0.000676,
+      "training.weight_decay": 9.2e-05,
+      "training.batch_size": 64,
+      "training.scheduler.type": "reduce_on_plateau",
+      "training.label_smoothing": 0.1
+    },
+    "results": {
+      "status": "failed",
+      "error": "psutil/__init__.py\", line 250, in <module>\n    raise ImportError(msg)\nImportError: version conflict: '/home/tomas/anaconda3/lib/python3.10/site-packages/psutil/_psutil_linux.cpython-310-x86_64-linux-gnu.so' C extension module was built for another version of psutil (5.9.0 instead of 5.9.8); you may try to 'pip uninstall psutil', manually remove /home/tomas/anaconda3/lib/python3.10/site-packages/psutil/_psutil_linux.cpython-310-x86_64-linux-gnu.so or clean the virtual env somehow, then reinstall\n"
+    }
+  },
+  {
+    "name": "exp002_h128_l2_heads4_lr1e-03",
+    "index": 2,
+    "params": {
+      "model.architecture.hidden_dim": 128,
+      "model.architecture.num_gat_layers": 2,
+      "model.architecture.num_attention_heads": 4,
+      "model.architecture.dropout": 0.354931,
+      "model.architecture.use_skip_connections": true,
+      "model.pooling.method": "mean+max",
+      "model.mlp.hidden_dims": [
+        512,
+        256,
+        128
+      ],
+      "model.mlp.dropout": 0.570493,
+      "training.optimizer": "adam",
+      "training.learning_rate": 0.001083,
+      "training.weight_decay": 4e-05,
+      "training.batch_size": 64,
+      "training.scheduler.type": "cosine",
+      "training.label_smoothing": 0.0
+    },
+    "results": {
+      "status": "failed",
+      "error": "psutil/__init__.py\", line 250, in <module>\n    raise ImportError(msg)\nImportError: version conflict: '/home/tomas/anaconda3/lib/python3.10/site-packages/psutil/_psutil_linux.cpython-310-x86_64-linux-gnu.so' C extension module was built for another version of psutil (5.9.0 instead of 5.9.8); you may try to 'pip uninstall psutil', manually remove /home/tomas/anaconda3/lib/python3.10/site-packages/psutil/_psutil_linux.cpython-310-x86_64-linux-gnu.so or clean the virtual env somehow, then reinstall\n"
+    }
+  },
+  {
+    "name": "exp003_h256_l3_heads4_lr2e-03",
+    "index": 3,
+    "params": {
+      "model.architecture.hidden_dim": 256,
+      "model.architecture.num_gat_layers": 3,
+      "model.architecture.num_attention_heads": 4,
+      "model.architecture.dropout": 0.20512,
+      "model.architecture.use_skip_connections": true,
+      "model.pooling.method": "mean+max",
+      "model.mlp.hidden_dims": [
+        256,
+        128
+      ],
+      "model.mlp.dropout": 0.418053,
+      "training.optimizer": "adamw",
+      "training.learning_rate": 0.001723,
+      "training.weight_decay": 0.000128,
+      "training.batch_size": 128,
+      "training.scheduler.type": "reduce_on_plateau",
+      "training.label_smoothing": 0.0
+    },
+    "results": {
+      "status": "failed",
+      "error": "psutil/__init__.py\", line 250, in <module>\n    raise ImportError(msg)\nImportError: version conflict: '/home/tomas/anaconda3/lib/python3.10/site-packages/psutil/_psutil_linux.cpython-310-x86_64-linux-gnu.so' C extension module was built for another version of psutil (5.9.0 instead of 5.9.8); you may try to 'pip uninstall psutil', manually remove /home/tomas/anaconda3/lib/python3.10/site-packages/psutil/_psutil_linux.cpython-310-x86_64-linux-gnu.so or clean the virtual env somehow, then reinstall\n"
+    }
+  },
+  {
+    "name": "exp004_h512_l3_heads8_lr7e-04",
+    "index": 4,
+    "params": {
+      "model.architecture.hidden_dim": 512,
+      "model.architecture.num_gat_layers": 3,
+      "model.architecture.num_attention_heads": 8,
+      "model.architecture.dropout": 0.335609,
+      "model.architecture.use_skip_connections": false,
+      "model.pooling.method": "attention",
+      "model.mlp.hidden_dims": [
+        256,
+        128
+      ],
+      "model.mlp.dropout": 0.301147,
+      "training.optimizer": "adam",
+      "training.learning_rate": 0.000654,
+      "training.weight_decay": 0.000102,
+      "training.batch_size": 128,
+      "training.scheduler.type": "reduce_on_plateau",
+      "training.label_smoothing": 0.0
+    },
+    "results": {
+      "status": "failed",
+      "error": "psutil/__init__.py\", line 250, in <module>\n    raise ImportError(msg)\nImportError: version conflict: '/home/tomas/anaconda3/lib/python3.10/site-packages/psutil/_psutil_linux.cpython-310-x86_64-linux-gnu.so' C extension module was built for another version of psutil (5.9.0 instead of 5.9.8); you may try to 'pip uninstall psutil', manually remove /home/tomas/anaconda3/lib/python3.10/site-packages/psutil/_psutil_linux.cpython-310-x86_64-linux-gnu.so or clean the virtual env somehow, then reinstall\n"
+    }
+  },
+  {
+    "name": "exp005_h512_l2_heads8_lr6e-05",
+    "index": 5,
+    "params": {
+      "model.architecture.hidden_dim": 512,
+      "model.architecture.num_gat_layers": 2,
+      "model.architecture.num_attention_heads": 8,
+      "model.architecture.dropout": 0.342692,
+      "model.architecture.use_skip_connections": true,
+      "model.pooling.method": "attention",
+      "model.mlp.hidden_dims": [
+        256,
+        128
+      ],
+      "model.mlp.dropout": 0.575256,
+      "training.optimizer": "adamw",
+      "training.learning_rate": 6.3e-05,
+      "training.weight_decay": 2e-05,
+      "training.batch_size": 64,
+      "training.scheduler.type": "reduce_on_plateau",
+      "training.label_smoothing": 0.1
+    },
+    "results": {
+      "status": "failed",
+      "error": "psutil/__init__.py\", line 250, in <module>\n    raise ImportError(msg)\nImportError: version conflict: '/home/tomas/anaconda3/lib/python3.10/site-packages/psutil/_psutil_linux.cpython-310-x86_64-linux-gnu.so' C extension module was built for another version of psutil (5.9.0 instead of 5.9.8); you may try to 'pip uninstall psutil', manually remove /home/tomas/anaconda3/lib/python3.10/site-packages/psutil/_psutil_linux.cpython-310-x86_64-linux-gnu.so or clean the virtual env somehow, then reinstall\n"
+    }
+  },
+  {
+    "name": "exp006_h128_l3_heads8_lr2e-03",
+    "index": 6,
+    "params": {
+      "model.architecture.hidden_dim": 128,
+      "model.architecture.num_gat_layers": 3,
+      "model.architecture.num_attention_heads": 8,
+      "model.architecture.dropout": 0.331471,
+      "model.architecture.use_skip_connections": true,
+      "model.pooling.method": "mean",
+      "model.mlp.hidden_dims": [
+        256,
+        128
+      ],
+      "model.mlp.dropout": 0.369493,
+      "training.optimizer": "adam",
+      "training.learning_rate": 0.00153,
+      "training.weight_decay": 0.000244,
+      "training.batch_size": 128,
+      "training.scheduler.type": "reduce_on_plateau",
+      "training.label_smoothing": 0.0
+    },
+    "results": {
+      "status": "failed",
+      "error": "psutil/__init__.py\", line 250, in <module>\n    raise ImportError(msg)\nImportError: version conflict: '/home/tomas/anaconda3/lib/python3.10/site-packages/psutil/_psutil_linux.cpython-310-x86_64-linux-gnu.so' C extension module was built for another version of psutil (5.9.0 instead of 5.9.8); you may try to 'pip uninstall psutil', manually remove /home/tomas/anaconda3/lib/python3.10/site-packages/psutil/_psutil_linux.cpython-310-x86_64-linux-gnu.so or clean the virtual env somehow, then reinstall\n"
+    }
+  },
+  {
+    "name": "exp007_h512_l1_heads8_lr3e-04",
+    "index": 7,
+    "params": {
+      "model.architecture.hidden_dim": 512,
+      "model.architecture.num_gat_layers": 1,
+      "model.architecture.num_attention_heads": 8,
+      "model.architecture.dropout": 0.373246,
+      "model.architecture.use_skip_connections": false,
+      "model.pooling.method": "mean",
+      "model.mlp.hidden_dims": [
+        128,
+        64
+      ],
+      "model.mlp.dropout": 0.377043,
+      "training.optimizer": "adam",
+      "training.learning_rate": 0.000317,
+      "training.weight_decay": 0.000295,
+      "training.batch_size": 64,
+      "training.scheduler.type": "reduce_on_plateau",
+      "training.label_smoothing": 0.1
+    },
+    "results": {
+      "status": "failed",
+      "error": "psutil/__init__.py\", line 250, in <module>\n    raise ImportError(msg)\nImportError: version conflict: '/home/tomas/anaconda3/lib/python3.10/site-packages/psutil/_psutil_linux.cpython-310-x86_64-linux-gnu.so' C extension module was built for another version of psutil (5.9.0 instead of 5.9.8); you may try to 'pip uninstall psutil', manually remove /home/tomas/anaconda3/lib/python3.10/site-packages/psutil/_psutil_linux.cpython-310-x86_64-linux-gnu.so or clean the virtual env somehow, then reinstall\n"
+    }
+  },
+  {
+    "name": "exp008_h512_l3_heads4_lr7e-04",
+    "index": 8,
+    "params": {
+      "model.architecture.hidden_dim": 512,
+      "model.architecture.num_gat_layers": 3,
+      "model.architecture.num_attention_heads": 4,
+      "model.architecture.dropout": 0.403751,
+      "model.architecture.use_skip_connections": true,
+      "model.pooling.method": "attention",
+      "model.mlp.hidden_dims": [
+        128,
+        64
+      ],
+      "model.mlp.dropout": 0.509207,
+      "training.optimizer": "adam",
+      "training.learning_rate": 0.000664,
+      "training.weight_decay": 0.000195,
+      "training.batch_size": 128,
+      "training.scheduler.type": "reduce_on_plateau",
+      "training.label_smoothing": 0.1
+    },
+    "results": {
+      "status": "failed",
+      "error": "psutil/__init__.py\", line 250, in <module>\n    raise ImportError(msg)\nImportError: version conflict: '/home/tomas/anaconda3/lib/python3.10/site-packages/psutil/_psutil_linux.cpython-310-x86_64-linux-gnu.so' C extension module was built for another version of psutil (5.9.0 instead of 5.9.8); you may try to 'pip uninstall psutil', manually remove /home/tomas/anaconda3/lib/python3.10/site-packages/psutil/_psutil_linux.cpython-310-x86_64-linux-gnu.so or clean the virtual env somehow, then reinstall\n"
+    }
+  },
+  {
+    "name": "exp009_h256_l2_heads8_lr9e-05",
+    "index": 9,
+    "params": {
+      "model.architecture.hidden_dim": 256,
+      "model.architecture.num_gat_layers": 2,
+      "model.architecture.num_attention_heads": 8,
+      "model.architecture.dropout": 0.224961,
+      "model.architecture.use_skip_connections": false,
+      "model.pooling.method": "mean+max",
+      "model.mlp.hidden_dims": [
+        128,
+        64
+      ],
+      "model.mlp.dropout": 0.302224,
+      "training.optimizer": "adam",
+      "training.learning_rate": 9.3e-05,
+      "training.weight_decay": 0.000249,
+      "training.batch_size": 64,
+      "training.scheduler.type": "reduce_on_plateau",
+      "training.label_smoothing": 0.0
+    },
+    "results": {
+      "status": "failed",
+      "error": "psutil/__init__.py\", line 250, in <module>\n    raise ImportError(msg)\nImportError: version conflict: '/home/tomas/anaconda3/lib/python3.10/site-packages/psutil/_psutil_linux.cpython-310-x86_64-linux-gnu.so' C extension module was built for another version of psutil (5.9.0 instead of 5.9.8); you may try to 'pip uninstall psutil', manually remove /home/tomas/anaconda3/lib/python3.10/site-packages/psutil/_psutil_linux.cpython-310-x86_64-linux-gnu.so or clean the virtual env somehow, then reinstall\n"
+    }
+  },
+  {
+    "name": "exp010_h512_l2_heads8_lr9e-05",
+    "index": 10,
+    "params": {
+      "model.architecture.hidden_dim": 512,
+      "model.architecture.num_gat_layers": 2,
+      "model.architecture.num_attention_heads": 8,
+      "model.architecture.dropout": 0.363371,
+      "model.architecture.use_skip_connections": false,
+      "model.pooling.method": "mean",
+      "model.mlp.hidden_dims": [
+        128,
+        64
+      ],
+      "model.mlp.dropout": 0.581173,
+      "training.optimizer": "adam",
+      "training.learning_rate": 8.8e-05,
+      "training.weight_decay": 0.00023,
+      "training.batch_size": 64,
+      "training.scheduler.type": "cosine",
+      "training.label_smoothing": 0.0
+    },
+    "results": {
+      "status": "failed",
+      "error": "psutil/__init__.py\", line 250, in <module>\n    raise ImportError(msg)\nImportError: version conflict: '/home/tomas/anaconda3/lib/python3.10/site-packages/psutil/_psutil_linux.cpython-310-x86_64-linux-gnu.so' C extension module was built for another version of psutil (5.9.0 instead of 5.9.8); you may try to 'pip uninstall psutil', manually remove /home/tomas/anaconda3/lib/python3.10/site-packages/psutil/_psutil_linux.cpython-310-x86_64-linux-gnu.so or clean the virtual env somehow, then reinstall\n"
+    }
+  }
+]

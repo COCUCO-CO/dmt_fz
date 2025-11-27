@@ -1,0 +1,100 @@
+# =============================================================================
+# Hyperparameter Search Space Configuration
+# =============================================================================
+# Modify these values to customize the random search
+
+# Input type options
+input_type:
+  - spectral
+  - graphs
+
+# Model type
+model_type:
+  - mlp
+  - gnn
+
+# GNN convolution types (only used if model_type == 'gnn')
+gnn_conv_type:
+  - gcn      # Graph Convolutional Network (simple, fast)
+  - gatv2    # Graph Attention Network v2 (more expressive)
+  - sage     # GraphSAGE (good for inductive learning)
+  - cheby    # Chebyshev spectral (spectral-based)
+
+# MLP hidden layer configurations
+hidden_dims:
+  - [32]
+  - [64]
+  - [32, 16]
+  - [64, 32]
+  - [128, 64]
+  - [64, 32, 16]
+
+# GNN architecture
+gnn_hidden_dim:
+  - 16
+  - 32
+  - 64
+
+gnn_num_layers:
+  - 1
+  - 2
+
+gnn_num_heads:
+  - 1
+  - 2
+  - 4
+
+gnn_pooling:
+  - mean
+  - max
+  - mean+max
+
+# Regularization
+dropout:
+  - 0.3
+  - 0.4
+  - 0.5
+  - 0.6
+
+weight_decay:
+  - 0.00001  # 1e-5
+  - 0.0001   # 1e-4
+  - 0.001    # 1e-3
+  - 0.01     # 1e-2
+  - 0.1
+
+# Training parameters
+learning_rate:
+  - 0.0001   # 1e-4
+  - 0.0005   # 5e-4
+  - 0.001    # 1e-3
+  - 0.002    # 2e-3
+
+batch_size:
+  - 4
+  - 8
+  - 16
+
+loss:
+  - mse      # Mean Squared Error
+  - huber    # Huber loss (robust to outliers)
+  - l1       # Mean Absolute Error
+
+# Scheduler settings
+scheduler_patience:
+  - 15
+  - 25
+  - 40
+
+early_stopping_patience:
+  - 50
+  - 80
+  - 100
+
+# Activation functions
+activation:
+  - relu
+  - elu
+  - gelu
+  - leaky_relu
+

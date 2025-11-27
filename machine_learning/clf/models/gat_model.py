@@ -321,13 +321,13 @@ class BrainStateGAT(nn.Module):
             h_graph = global_max_pool(h, batch)
         elif self.pooling_method == "add":
             h_graph = global_add_pool(h, batch)
-        else:
-            # This should not happen with config pooling="mean"
-            logger.error(f"Unexpected pooling_method: '{self.pooling_method}' - using mean+max fallback")
+        elif self.pooling_method == "mean+max":
             # Combined mean + max pooling
             h_mean = global_mean_pool(h, batch)
             h_max = global_max_pool(h, batch)
             h_graph = torch.cat([h_mean, h_max], dim=1)
+        else:
+            raise ValueError(f"Unknown pooling_method: '{self.pooling_method}')")
         
         # Concatenate with graph-level features
         if graph_attr is not None:
@@ -469,10 +469,12 @@ class BrainStateGAT(nn.Module):
             h_graph = global_max_pool(h, batch)
         elif self.pooling_method == "add":
             h_graph = global_add_pool(h, batch)
-        else:
+        elif self.pooling_method == "mean+max":
             h_mean = global_mean_pool(h, batch)
             h_max = global_max_pool(h, batch)
             h_graph = torch.cat([h_mean, h_max], dim=1)
+        else:
+            raise ValueError(f"Unknown pooling_method: '{self.pooling_method}')")
         
         graph_embeddings = h_graph  # [batch_size, pooled_dim]
         

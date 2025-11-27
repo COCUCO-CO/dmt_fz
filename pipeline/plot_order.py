@@ -837,32 +837,32 @@ def main():
     file_catalog = build_file_catalog(COND_LIST, max_subjects=max_subjects)
     
     # Generate plots
-    print("\n" + "=" * 80)
-    print("GENERATING PLOTS (MEMORY OPTIMIZED - loads per section)")
-    print("=" * 80)
-    
-    # MEMORY OPTIMIZED: Load files per band, never cache full files
-    # Each function loads only what it needs for each band, then releases
-    
+        print("\n" + "=" * 80)
+        print("GENERATING PLOTS (MEMORY OPTIMIZED - loads per section)")
+        print("=" * 80)
+        
+        # MEMORY OPTIMIZED: Load files per band, never cache full files
+        # Each function loads only what it needs for each band, then releases
+        
     #print("\n[1/5] Kuramoto summary plots (loads per band)...")
-    #plot_kuramoto_summary_all_bands(file_catalog, metadata, workers=workers)
-    
+        #plot_kuramoto_summary_all_bands(file_catalog, metadata, workers=workers)
+        
     print("\n[2/5] Kuramoto mean trajectories (loads per band)...")
-    plot_kuramoto_mean_trajectories_all_bands(file_catalog, metadata, workers=workers, split=0)
-    
+        plot_kuramoto_mean_trajectories_all_bands(file_catalog, metadata, workers=workers, split=0)
+        
     print("\n[3/5] Kuramoto STC histograms (loads per band)...")
-    plot_hist_kuramoto_stc_all_bands(file_catalog, metadata, workers=workers, conditions=["DMT", "EC"])
-    
+        plot_hist_kuramoto_stc_all_bands(file_catalog, metadata, workers=workers, conditions=["DMT", "EC"])
+        
     print("\n[4/5] Phase histograms (loads per band/network)...")
-    for band in BAND_LIST:
-        for net in NET_LIST:
-            plot_hist_phases(file_catalog, metadata, band=band, hemi="both", 
-                           net=net, conditions=["DMT", "EC"], workers=workers)
-    
+        for band in BAND_LIST:
+            for net in NET_LIST:
+                plot_hist_phases(file_catalog, metadata, band=band, hemi="both", 
+                               net=net, conditions=["DMT", "EC"], workers=workers)
+        
     # Generate comprehensive histogram (requires pre-computed r_kuramoto_nets_epochs_mean.pkl)
     print("\n[5/5] Full Kuramoto histogram grid...")
-    plot_histogram_kuramoto_full(metadata)
-    
+        plot_histogram_kuramoto_full(metadata)
+        
     print("\n[PLOT_ORDER] ✓ All plots generated")
     print("\n" + "=" * 80)
     print("COMPLETE")

@@ -427,7 +427,8 @@ def run_search(base_config_path: str,
                bands: List[str] = None,
                conditions: List[str] = None,
                max_epochs: int = None,
-               seed: int = 42):
+               seed: int = 42,
+               num_workers: int = None):
     """
     Run hyperparameter random search.
     
@@ -455,6 +456,12 @@ def run_search(base_config_path: str,
     if conditions:
         base_config['data']['conditions'] = conditions
         logger.info(f"Using conditions: {conditions} ({len(conditions)}-class classification)")
+    
+    # Override num_workers if specified (useful for reducing memory usage)
+    if num_workers is not None:
+        base_config['num_workers'] = num_workers
+        base_config['dataset_workers'] = num_workers
+        logger.info(f"Using {num_workers} workers (overridden via CLI)")
     
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
@@ -594,6 +601,8 @@ def main():
                        help='Override max epochs (for faster search)')
     parser.add_argument('--seed', type=int, default=42,
                        help='Random seed')
+    parser.add_argument('--num_workers', type=int, default=None,
+                       help='Override number of dataloader workers (reduce if OOM)')
     
     args = parser.parse_args()
     
@@ -604,7 +613,8 @@ def main():
         bands=args.bands,
         conditions=args.conditions,
         max_epochs=args.max_epochs,
-        seed=args.seed
+        seed=args.seed,
+        num_workers=args.num_workers
     )
 
 
