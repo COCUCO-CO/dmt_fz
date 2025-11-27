@@ -1,0 +1,28 @@
+======================================================================
+SUBJECTIVE EXPERIENCE QUESTIONNAIRE ANALYSIS - SUMMARY REPORT
+======================================================================
+
+Dataset: 29 subjects, 23 variables
+Categories: ASC (11), NDE (4), MEQ (5), Post (3)
+
+--------------------------------------------------
+KEY FINDINGS:
+--------------------------------------------------
+
+• Most variable response: ASC Disembodiment (SD = 27.94)
+• Least variable response: Post Setting (SD = 0.76)
+
+• Highest average: ASC Elementary imagery (mean = 75.55)
+• Lowest average: Post Setting (mean = 2.31)
+
+• Strongest correlation: ASC Unity ↔ MEQ Mystical (r = 0.88)
+
+--------------------------------------------------
+IMPLICATIONS FOR MACHINE LEARNING:
+--------------------------------------------------
+
+• Mean coefficient of variation: 54.1%
+• Highly correlated pairs (|r| > 0.8): 4
+• Normally distributed variables: 7/23
+
+======================================================================

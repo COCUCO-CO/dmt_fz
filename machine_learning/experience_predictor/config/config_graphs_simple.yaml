@@ -45,7 +45,7 @@ data:
     NDE: [11, 12, 13, 14]
     MEQ: [15, 16, 17, 18, 19]
     Post: [20, 21, 22]
-  cv_folds: 5
+  cv_folds: 3
   random_state: 42
 
 # Model config - SIMPLE GNN
