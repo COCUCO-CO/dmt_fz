@@ -691,5 +691,5 @@ Parcelas del atlas Schaefer2018 organizadas en 7 redes funcionales basadas en co
 
 <p align="center">
   <strong>🧠 DMT Phase Synchronization Analysis</strong><br>
-  <em>Explorando la consciencia a través de la sincronización cerebral</em>
+  <em>“Drogadictos, pero no boludos.” — Aldous Huxley</em>
 </p>
