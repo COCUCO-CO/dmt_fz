@@ -24,6 +24,9 @@ dmt_fz/
 │   ├── calculate_syncro.py       ⏱️ Análisis temporal con splits
 │   ├── clustering.py             🎯 Identificación de estados
 │   ├── pearson.py                📈 Correlaciones con cuestionarios
+│   ├── build_order_data.py       📦 Generar datos agregados
+│
+├── viz_scripts/                      🎨 Visualizaciones
 │   ├── plot_order.py             📊 Visualización y estadísticas
 │   ├── kuramoto.py               🧮 Funciones de Kuramoto
 │   ├── save_load_pickle.py       💾 Consolidación de datos
@@ -344,7 +347,24 @@ python pearson.py
 
 ---
 
+### **Paso 5b: build_order_data.py - Datos Agregados** 📦
+
+Genera archivos `.pkl` con datos agregados de Kuramoto.
+
+```bash
+# Generar todos los datos agregados
+python pipeline/build_order_data.py --build-all
+
+# Solo datos de épocas
+python pipeline/build_order_data.py --build-epochs-mean
+
+# Solo datos de pares de redes
+python pipeline/build_order_data.py --build-all-mean
+```
+
 ### **Paso 6: plot_order.py - Visualización** 📊
+
+**Nota:** Este script ahora está en `viz_scripts/`.
 
 Genera gráficos y análisis estadísticos.
 
@@ -358,13 +378,10 @@ Genera gráficos y análisis estadísticos.
 **Comandos:**
 ```bash
 # Generar todos los plots
-python plot_order.py --workers 20
-
-# Solo generar datos, sin plots
-python plot_order.py --no-plots
+python viz_scripts/plot_order.py --workers 20
 
 # Limitar sujetos (testing)
-python plot_order.py --max-subjects 5
+python viz_scripts/plot_order.py --max-subjects 5
 ```
 
 **Tiempo:** ~5-10 min (con plots), ~2-3 min (sin plots)
@@ -551,7 +568,8 @@ python multi2pool2.py
 python generate_order.py --workers 20 --conditions DMT EC EO
 
 # 3. Visualización (5-10 min)
-python plot_order.py --workers 20
+python pipeline/build_order_data.py --build-all
+python viz_scripts/plot_order.py --workers 20
 
 # 4. Correlaciones (3-5 min)
 python pearson.py

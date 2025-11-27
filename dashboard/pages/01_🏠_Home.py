@@ -112,7 +112,8 @@ with left_col:
         ("fwd.py", "Forward/Inverse + Métricas", "phases-*.pkl", "DMT"),
         ("multi2pool2.py", "Filtrado por redes", "order_all-*.pkl", "DMT"),
         ("generate_order.py", "Order Parameter", "order-*.pkl", "DMT"),
-        ("plot_order.py", "Visualización", "r_kuramoto_*.pkl", ""),
+        ("build_order_data.py", "Datos agregados", "r_kuramoto_*.pkl", ""),
+        ("plot_order.py", "Visualización", "", "plot_order_results/"),
         ("pearson.py", "Correlaciones", "", ""),  # Check pearson_results
         ("clustering.py", "Estados cerebrales", "clusters_*.pkl", ""),
     ]

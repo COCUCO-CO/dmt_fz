@@ -50,7 +50,7 @@
     ├──────────────────┬──────────────────┬──────────────────┐
     │                  │                  │                  │
 ┌───▼────┐      ┌──────▼──────┐   ┌─────▼────┐      ┌──────▼──────┐
-│pearson │      │ plot_order  │   │clustering│      │ Otros       │
+│pearson │      │ plot_order  │   │clustering│      │build_order  │
 │  .py   │      │    .py      │   │   .py    │      │ análisis    │
 │        │      │             │   │          │      │             │
 └───┬────┘      └──────┬──────┘   └─────┬────┘      └──────┬──────┘
@@ -400,19 +400,21 @@ for subject in subjects:
 #### 3.1 Generar Plots y Datos Agregados
 
 ```bash
-python plot_order.py --workers 20
+python viz_scripts/plot_order.py --workers 20
+```
+
+**Nota:** Este script ahora está en `viz_scripts/`. Para generar los datos agregados previamente:
+```bash
+python pipeline/build_order_data.py --build-all
 ```
 
 **Opciones:**
 ```bash
 # Limitar sujetos (para testing)
-python plot_order.py --max-subjects 5
-
-# Solo generar datos, sin plots
-python plot_order.py --no-plots
+python viz_scripts/plot_order.py --max-subjects 5
 
 # Especificar workers
-python plot_order.py --workers 10
+python viz_scripts/plot_order.py --workers 10
 ```
 
 **Input:**
@@ -733,7 +735,7 @@ python -c "import pickle; print(pickle.load(open('fwd-inv-stc/DMT/phases-S01-DMT
 
 **Causa:** Archivos `.pkl` guardados con pandas antiguo
 
-**Solución:** Ya implementado en `load_file()` de `plot_order.py` y `generate_order.py`
+**Solución:** Ya implementado en `load_file()` de `viz_scripts/plot_order.py` y `generate_order.py`
 
 ### Error: "ufunc 'add' did not contain a loop with signature matching types"
 
@@ -771,7 +773,9 @@ FASE 2: Análisis por Redes
     [ ] order-*.pkl generados (87 archivos total)
 
 FASE 3: Análisis Estadístico
-[ ] plot_order.py ejecutado
+[ ] build_order_data.py ejecutado
+    [ ] r_kuramoto_*.pkl generados
+[ ] viz_scripts/plot_order.py ejecutado
     [ ] Gráficos generados en plot_order_results/
     [ ] r_kuramoto_*.pkl generados
 [ ] pearson.py ejecutado
@@ -795,7 +799,8 @@ FASE 4: Machine Learning (opcional)
 1. python fwd.py --jobs 0 --workers 7          # ~3-4 horas
 2. python multi2pool2.py                        # ~2-5 min
 3. python generate_order.py --workers 20        # ~30 seg - 1 min ⭐ NUEVO
-4. python plot_order.py --workers 20            # ~5-10 min
+4. python pipeline/build_order_data.py --build-all  # ~2-5 min
+5. python viz_scripts/plot_order.py --workers 20    # ~5-10 min
 5. python pearson.py                            # ~3-5 min
 6. python clustering.py (opcional)              # ~2-4 horas
 
@@ -810,7 +815,8 @@ Total: ~4-5 horas (sin clustering)
 python fwd.py --max-subjects 3 --workers 3      # ~30-40 min
 python multi2pool2.py                           # ~1 min
 python generate_order.py --workers 10           # ~10 seg
-python plot_order.py --max-subjects 3           # ~1-2 min
+python pipeline/build_order_data.py --build-epochs-mean  # ~1 min
+python viz_scripts/plot_order.py --max-subjects 3        # ~1-2 min
 
 Total: ~35-45 min
 ```

@@ -122,10 +122,16 @@ main() {
         python generate_order.py --workers "$WORKERS" --conditions $CONDITIONS
     
     # =========================================================================
-    # PASO 3: Generar gráficos - Genera archivos agregados y plots
+    # PASO 2e: Generar datos agregados de Kuramoto
     # =========================================================================
-    run_timed "PASO 3: Generación de gráficos (plot_order.py)" \
-        python plot_order.py --workers "$WORKERS"
+    run_timed "PASO 2e: Datos agregados (build_order_data.py)" \
+        python build_order_data.py --build-all --workers "$WORKERS"
+    
+    # =========================================================================
+    # PASO 3: Generar gráficos - Visualización de Kuramoto
+    # =========================================================================
+    run_timed "PASO 3: Visualización (plot_order.py)" \
+        python ../viz_scripts/plot_order.py --workers "$WORKERS"
     
     # =========================================================================
     # PASO 4: Correlaciones con cuestionarios - Genera heatmaps e histogramas

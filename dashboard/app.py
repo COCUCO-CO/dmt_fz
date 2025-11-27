@@ -199,7 +199,8 @@ def main():
             ("fwd.py", "Forward/Inverse + Métricas", "completed", "✅"),
             ("multi2pool2.py", "Filtrado por redes", "completed", "✅"),
             ("generate_order.py", "Order Parameter", "completed", "✅"),
-            ("plot_order.py", "Visualización", "completed", "✅"),
+            ("build_order_data.py", "Datos agregados", "completed", "✅"),
+            ("plot_order.py", "Visualización (viz_scripts/)", "completed", "✅"),
             ("pearson.py", "Correlaciones", "pending", "⏳"),
             ("clustering.py", "Estados cerebrales", "pending", "⏳"),
         ]

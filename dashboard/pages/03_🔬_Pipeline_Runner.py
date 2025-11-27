@@ -32,6 +32,7 @@ st.markdown("Ejecuta los scripts del pipeline de procesamiento EEG")
 # Paths
 PROJECT_ROOT = Path(config['paths']['project_root'])
 PIPELINE_PATH = Path(config['paths']['pipeline'])
+VIZ_SCRIPTS_PATH = PROJECT_ROOT / "viz_scripts"
 CONDITIONS = config['data']['conditions']
 
 # Pipeline scripts configuration
@@ -67,10 +68,20 @@ PIPELINE_SCRIPTS = [
         "has_max_subjects": False
     },
     {
+        "name": "build_order_data.py",
+        "display_name": "4️⃣ Datos Agregados",
+        "description": "Genera archivos .pkl con datos agregados de Kuramoto",
+        "path": PIPELINE_PATH / "build_order_data.py",
+        "estimated_time": "2-5 minutos",
+        "args": ["--build-all", "--workers", "20"],
+        "has_conditions": False,
+        "has_max_subjects": False
+    },
+    {
         "name": "plot_order.py",
-        "display_name": "4️⃣ Visualización",
-        "description": "Genera gráficos y estadísticas",
-        "path": PIPELINE_PATH / "plot_order.py",
+        "display_name": "5️⃣ Visualización",
+        "description": "Genera histogramas y estadísticas de Kuramoto",
+        "path": VIZ_SCRIPTS_PATH / "plot_order.py",
         "estimated_time": "5-10 minutos",
         "args": ["--workers", "20"],
         "has_conditions": False,
@@ -78,7 +89,7 @@ PIPELINE_SCRIPTS = [
     },
     {
         "name": "pearson.py",
-        "display_name": "5️⃣ Correlaciones",
+        "display_name": "6️⃣ Correlaciones",
         "description": "Correlaciones con cuestionarios subjetivos",
         "path": PIPELINE_PATH / "pearson.py",
         "estimated_time": "3-5 minutos",
@@ -88,7 +99,7 @@ PIPELINE_SCRIPTS = [
     },
     {
         "name": "clustering.py",
-        "display_name": "6️⃣ Clustering",
+        "display_name": "7️⃣ Clustering",
         "description": "Identificación de estados cerebrales con K-Medoids",
         "path": PIPELINE_PATH / "clustering.py",
         "estimated_time": "2-4 horas",
@@ -306,5 +317,5 @@ st.markdown("""
 - **Testing rápido**: Usa `Máx. sujetos = 3` para probar con pocos datos
 - **Memoria**: Reduce `Workers` si hay errores de memoria
 - **fwd.py**: Es el más largo (~3-4h), ejecuta primero
-- **Orden recomendado**: fwd.py → multi2pool2.py → generate_order.py → plot_order.py
+- **Orden recomendado**: fwd.py → multi2pool2.py → generate_order.py → build_order_data.py → plot_order.py
 """)

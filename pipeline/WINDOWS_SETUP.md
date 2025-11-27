@@ -61,7 +61,13 @@ Si querés especificar una ruta diferente:
    python save_load_pickle.py --conditions DMT EC EO
    python multi2pool2.py
    python generate_order.py --workers 20 --conditions DMT EC EO
+   python build_order_data.py --build-all --workers 20
+   
+   REM Visualización (en viz_scripts)
+   cd ..\viz_scripts
    python plot_order.py --workers 20
+   cd ..\pipeline
+   
    python pearson.py
    python clustering.py
    ```

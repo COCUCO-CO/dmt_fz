@@ -8,14 +8,17 @@ Analiza **sincronización de fases en EEG** durante experiencias psicodélicas (
 ### 2. Archivos más importantes
 
 ```
-dmt/
-├── fwd.py              ⭐ PASO 1: Pipeline principal (genera phases-*.pkl)
-├── multi2pool2.py      ⭐ PASO 2a: Filtra por redes (genera order_all-*.pkl)
-├── generate_order.py   ⭐ PASO 2b: Calcula order parameter (genera order-*.pkl) [NUEVO]
-├── plot_order.py       📊 Visualización de resultados
-├── pearson.py          📈 Correlaciones con cuestionarios
-├── clustering.py       🎯 Identificación de estados
-└── calculate_syncro.py ⏱️ Análisis temporal (opcional)
+dmt_fz/
+├── pipeline/                    # Procesamiento de datos
+│   ├── fwd.py              ⭐ PASO 1: Pipeline principal (genera phases-*.pkl)
+│   ├── multi2pool2.py      ⭐ PASO 2a: Filtra por redes (genera order_all-*.pkl)
+│   ├── generate_order.py   ⭐ PASO 2b: Calcula order parameter (genera order-*.pkl)
+│   ├── build_order_data.py ⭐ PASO 2c: Genera datos agregados
+│   ├── pearson.py          📈 Correlaciones con cuestionarios
+│   └── clustering.py       🎯 Identificación de estados
+│
+└── viz_scripts/                 # Visualización
+    └── plot_order.py       📊 Histogramas y estadísticas de Kuramoto
 ```
 
 ### 3. Flujo básico
@@ -27,10 +30,12 @@ fwd.py → phases-*.pkl (fases + sincronización)
     ↓
 multi2pool2.py → order_all-*.pkl (DataFrames de fases por red)
     ↓
-generate_order.py → order-*.pkl (Order parameter por red) ⭐ NUEVO
+generate_order.py → order-*.pkl (Order parameter por red)
+    ↓
+build_order_data.py → r_kuramoto_*.pkl (Datos agregados)
     ↓
     ├→ pearson.py → Correlaciones con experiencias
-    └→ plot_order.py → Gráficos finales
+    └→ viz_scripts/plot_order.py → Gráficos finales
 ```
 
 ---
@@ -44,49 +49,59 @@ generate_order.py → order-*.pkl (Order parameter por red) ⭐ NUEVO
 conda activate dmt_fz
 
 # 2. Verificar rutas
-cd /media/storage_hdd/dmt_fz/dmt
-python -c "from paths import RESULTS_DIR, EEG_CLEAN_DIR; print(f'EEG: {EEG_CLEAN_DIR}\\nResults: {RESULTS_DIR}')"
+cd /media/storage_hdd/dmt_fz
+python -c "from pipeline.paths import RESULTS_DIR, EEG_CLEAN_DIR; print(f'EEG: {EEG_CLEAN_DIR}\\nResults: {RESULTS_DIR}')"
 ```
 
 ### Pipeline Completo (29 sujetos)
 
 ```bash
+cd /media/storage_hdd/dmt_fz
+
 # PASO 1: Procesar EEG (3-4 horas)
-python fwd.py --jobs 0 --workers 7 --conditions DMT EC EO
+python pipeline/fwd.py --jobs 0 --workers 7 --conditions DMT EC EO
 
 # PASO 2a: Filtrar por redes (2-5 min)
-python multi2pool2.py
+python pipeline/multi2pool2.py
 
-# PASO 2b: Calcular order parameter (30 seg - 1 min) ⭐ NUEVO
-python generate_order.py --workers 20 --conditions DMT EC EO
+# PASO 2b: Calcular order parameter (30 seg - 1 min)
+python pipeline/generate_order.py --workers 20 --conditions DMT EC EO
+
+# PASO 2c: Generar datos agregados (2-5 min)
+python pipeline/build_order_data.py --build-all
 
 # PASO 3: Generar gráficos (5-10 min)
-python plot_order.py --workers 20
+python viz_scripts/plot_order.py --workers 20
 
 # PASO 4: Correlaciones (3-5 min)
-python pearson.py
+python pipeline/pearson.py
 
 # OPCIONAL: Clustering (2-4 horas)
-python clustering.py
+python pipeline/clustering.py
 ```
 
 ### Pipeline Rápido (testing con 3 sujetos)
 
 ```bash
+cd /media/storage_hdd/dmt_fz
+
 # PASO 1: Procesar solo 3 sujetos (30-40 min)
-python fwd.py --max-subjects 3 --workers 3 --conditions DMT
+python pipeline/fwd.py --max-subjects 3 --workers 3 --conditions DMT
 
 # PASO 2a: Filtrar por redes (1 min)
-python multi2pool2.py
+python pipeline/multi2pool2.py
 
-# PASO 2b: Calcular order parameter (10 seg) ⭐ NUEVO
-python generate_order.py --workers 10 --conditions DMT
+# PASO 2b: Calcular order parameter (10 seg)
+python pipeline/generate_order.py --workers 10 --conditions DMT
+
+# PASO 2c: Datos agregados
+python pipeline/build_order_data.py --build-epochs-mean
 
 # PASO 3: Gráficos (1-2 min)
-python plot_order.py --max-subjects 3
+python viz_scripts/plot_order.py --max-subjects 3
 
 # PASO 4: Correlaciones
-python pearson.py
+python pipeline/pearson.py
 ```
 
 ---
@@ -141,8 +156,9 @@ EEG_CLEAN/
 fwd-inv-stc/
 ├── phases-S01-DMT.pkl            # Fases, amplitudes, syncros (100-500 MB)
 ├── order_all-S01-DMT.pkl         # DataFrames de fases por red (50-200 MB)
-├── order-S01-DMT.pkl             # Order parameter por red (50-200 MB) ⭐ NUEVO
-├── r_kuramoto_nets_epochs_mean.pkl  # Datos agregados (10-50 MB)
+├── order-S01-DMT.pkl             # Order parameter por red (50-200 MB)
+├── r_kuramoto_nets_epochs_mean.pkl  # Datos agregados
+├── r_kuramoto_nets_all_mean.pkl     # Datos agregados (pares de redes)
 └── extra.pkl                     # Metadata (1 MB)
 ```
 
@@ -174,8 +190,8 @@ pip install optuna tqdm pymatreader
 
 ### 2. Verificar paths.py
 ```python
-# dmt/paths.py debe contener:
-BASE_DIR = Path(__file__).resolve().parent
+# pipeline/paths.py debe contener:
+BASE_DIR = Path(__file__).resolve().parent.parent
 EEG_CLEAN_DIR = BASE_DIR / "EEG_CLEAN"
 RESULTS_DIR = BASE_DIR / "fwd-inv-stc"
 ```
@@ -183,7 +199,7 @@ RESULTS_DIR = BASE_DIR / "fwd-inv-stc"
 ### 3. Test rápido
 ```bash
 # Procesar 1 sujeto
-python fwd.py --max-subjects 1 --conditions DMT
+python pipeline/fwd.py --max-subjects 1 --conditions DMT
 
 # Verificar output
 ls -lh fwd-inv-stc/DMT/phases-*.pkl
@@ -195,33 +211,33 @@ ls -lh fwd-inv-stc/DMT/phases-*.pkl
 
 ### Ver evolución temporal del Kuramoto
 ```bash
-python plot_order.py
+python viz_scripts/plot_order.py
 # → Genera gráficos de r(t) por época
 ```
 
 ### Comparar solo DMT vs Eyes Closed
 ```bash
-# Modificar en plot_order.py:
+# Modificar en viz_scripts/plot_order.py:
 COND_LIST = ["DMT", "EC"]
 
-python plot_order.py
+python viz_scripts/plot_order.py
 ```
 
 ### Buscar correlaciones con experiencias
 ```bash
-python pearson.py
+python pipeline/pearson.py
 # → Matrices de correlación (7 redes × 5 bandas × 23 variables)
 ```
 
 ### Identificar estados cerebrales
 ```bash
-python clustering.py
+python pipeline/clustering.py
 # → Encuentra k-clusters óptimo con silueta
 ```
 
-### Generar solo datos, sin plots
+### Generar solo datos agregados, sin plots
 ```bash
-python plot_order.py --no-plots
+python pipeline/build_order_data.py --build-all
 # → Solo genera r_kuramoto_*.pkl
 ```
 
@@ -229,7 +245,7 @@ python plot_order.py --no-plots
 
 ## ⚠️ Notas Importantes
 
-### Diferencia entre order_all y order ⭐ NUEVO
+### Diferencia entre archivos generados
 
 **`order_all-*.pkl`** (generado por `multi2pool2.py`):
 - Contiene: **DataFrames de fases filtradas** por red
@@ -242,6 +258,11 @@ python plot_order.py --no-plots
 - Estructura: `pd.Series([r_values])` con valores 0-1
 - Tamaño: ~50-200 MB por archivo
 - Uso: Input para `pearson.py` y análisis estadísticos
+
+**`r_kuramoto_*.pkl`** (generado por `build_order_data.py`):
+- Contiene: **Datos agregados** de Kuramoto
+- Estructura: Diccionarios anidados por condición/banda/red
+- Uso: Input para `viz_scripts/plot_order.py` (algunos plots)
 
 ### Sujetos Rechazados
 ```python
@@ -276,10 +297,11 @@ fwd.py:              ~30 min por sujeto (serial)
 
 multi2pool2.py:      ~2-5 min (29 sujetos, 20 cores)
 
-generate_order.py:   ~30 seg - 1 min (29 sujetos, 20 cores) ⭐ NUEVO
+generate_order.py:   ~30 seg - 1 min (29 sujetos, 20 cores)
 
-plot_order.py:       ~5-10 min (con plots)
-                     ~2-3 min (sin plots)
+build_order_data.py: ~2-5 min
+
+plot_order.py:       ~5-10 min
 
 pearson.py:          ~3-5 min
 
@@ -306,23 +328,24 @@ clustering.py:       ~2-4 horas (con grid search)
 ```bash
 # Causa: Archivos order-*.pkl faltantes
 # Solución: Ejecutar generate_order.py
-python generate_order.py --workers 20 --conditions DMT EC EO
+python pipeline/generate_order.py --workers 20 --conditions DMT EC EO
 ```
 
 ### "FileNotFoundError: order-*.pkl"
 ```bash
 # Causa: Pipeline incompleto
 # Solución: Ejecutar en orden:
-python fwd.py                    # Genera phases-*.pkl
-python multi2pool2.py            # Genera order_all-*.pkl
-python generate_order.py         # Genera order-*.pkl ⭐
+python pipeline/fwd.py                    # Genera phases-*.pkl
+python pipeline/multi2pool2.py            # Genera order_all-*.pkl
+python pipeline/generate_order.py         # Genera order-*.pkl
+python pipeline/build_order_data.py       # Genera r_kuramoto_*.pkl
 ```
 
 ### "Memory Error"
 ```python
 # Causa: Demasiadas épocas en memoria
 # Solución: Reducir número de sujetos o usar menos workers
-python fwd.py --max-subjects 10 --workers 3
+python pipeline/fwd.py --max-subjects 10 --workers 3
 ```
 
 ---
@@ -372,7 +395,8 @@ Antes de empezar:
 Para análisis completo:
 - [ ] `fwd.py` ejecutado → phases-*.pkl generados
 - [ ] `multi2pool2.py` ejecutado → order_all-*.pkl generados
-- [ ] `generate_order.py` ejecutado → order-*.pkl generados ⭐ NUEVO
+- [ ] `generate_order.py` ejecutado → order-*.pkl generados
+- [ ] `build_order_data.py` ejecutado → r_kuramoto_*.pkl generados
 - [ ] `plot_order.py` ejecutado → gráficos en plot_order_results/
 - [ ] `pearson.py` ejecutado → correlaciones calculadas
 
@@ -383,13 +407,14 @@ Para análisis completo:
 Para ejecutar el pipeline completo de una vez:
 
 ```bash
-cd /media/storage_hdd/dmt_fz/dmt && \
+cd /media/storage_hdd/dmt_fz && \
 conda activate dmt_fz && \
-python fwd.py --jobs 0 --workers 7 --conditions DMT EC EO && \
-python multi2pool2.py && \
-python generate_order.py --workers 20 --conditions DMT EC EO && \
-python plot_order.py --workers 20 && \
-python pearson.py && \
+python pipeline/fwd.py --jobs 0 --workers 7 --conditions DMT EC EO && \
+python pipeline/multi2pool2.py && \
+python pipeline/generate_order.py --workers 20 --conditions DMT EC EO && \
+python pipeline/build_order_data.py --build-all && \
+python viz_scripts/plot_order.py --workers 20 && \
+python pipeline/pearson.py && \
 echo "✓ Pipeline completo ejecutado!"
 ```
 
@@ -403,4 +428,4 @@ Ejecuta el comando todo-en-uno o sigue los pasos individuales en **WORKFLOW.md**
 
 ---
 
-**Última actualización:** 2025-01-13
+**Última actualización:** 2025-11-27
