@@ -162,10 +162,10 @@ El corazón del proyecto. Realiza todo el procesamiento desde archivos `.set` ha
    ```
 
 <p align="center">
-  <img src="readme/hilbert_plotly_S01-DMT_Gamma_epoch11.png" alt="Hilbert Transform 3D" width="700"/>
+  <img src="readme/gifs/hilbert_animation.gif" alt="Hilbert Transform 3D Animation" width="700"/>
 </p>
 
-<p align="center"><em>Señal analítica 3D - Transformada de Hilbert mostrando la evolución temporal de fase y amplitud</em></p>
+<p align="center"><em>Señal analítica 3D - Transformada de Hilbert mostrando la evolución temporal de fase y amplitud (animación)</em></p>
 
 4. **Matriz de Sincronización**
    ```python
