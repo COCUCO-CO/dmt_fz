@@ -17,8 +17,10 @@ import argparse
 sys.path.insert(0, str(Path(__file__).parent.parent / "pipeline"))
 from paths import VISUALIZATIONS_DIR
 
-# Import config from plot.py
-from plot import subject, cond, band
+# Default config (can be overridden via args)
+subject = "S01"
+cond = "DMT" 
+band = "Alpha"
 
 
 def get_sorted_frames(frames_dir, pattern="*.png"):
@@ -206,11 +208,9 @@ Ejemplos:
   python create_video_from_frames.py --preset slow --crf 18       # Lento, alta calidad
   python create_video_from_frames.py --preset medium --crf 18     # Balance (default)
 
-Configuración actual (desde plot.py):
-  Sujeto:    {subject}
-  Condición: {cond}
-  Banda:     {band}
-        """.format(subject=subject, cond=cond, band=band)
+Nota: Este script es legacy. Usar preferiblemente:
+  python plot.py --mode frames_to_video --source advanced --fps 30
+        """
     )
     
     parser.add_argument("--frames-dir", type=str, default=None,
@@ -253,11 +253,6 @@ Configuración actual (desde plot.py):
     print("="*70)
     print(f"  📁 Frames:     {frames_dir}")
     print(f"  💾 Output:     {output_file}")
-    print()
-    print(f"  📊 Config:")
-    print(f"      Sujeto:    {subject}")
-    print(f"      Condición: {cond}")
-    print(f"      Banda:     {band}")
     print()
     print(f"  🎬 Video:")
     print(f"      FPS:       {args.fps}")

@@ -32,13 +32,17 @@ def _sanitize_filename_part(part):
     return re.sub(r'[^A-Za-z0-9._-]+', '_', str(part))
 
 
-def save_figure(fig, *parts, suffix="png", dpi=300):
+def save_figure(fig, *parts, suffix="png", dpi=300, also_svg=True):
     filename = "_".join(_sanitize_filename_part(part) for part in parts if part is not None and str(part) != "")
     if not filename:
         filename = "figure"
     output_path = PEARSON_RESULTS_DIR / f"{filename}.{suffix}"
     print(f"[SAVE] {output_path}")
     fig.savefig(output_path, dpi=dpi, bbox_inches="tight")
+    if also_svg:
+        svg_path = PEARSON_RESULTS_DIR / f"{filename}.svg"
+        print(f"[SAVE] {svg_path}")
+        fig.savefig(svg_path, format="svg", bbox_inches="tight")
     plt.close(fig)
 
 
@@ -476,6 +480,85 @@ for fdr in [True]:
                     band,
                     f"fdr_{'on' if fdr else 'off'}",
                 )
+
+# Generate consolidated heatmaps with all bands as columns
+def PlotCorrAllBands(axs, dictio, cond, fdr=True, alpha=0.05, pvalue=0.05):
+    """Plot correlation heatmap with all bands as columns.
+    
+    FDR correction is applied PER BAND to be consistent with individual heatmaps.
+    """
+    rpearson_all = np.zeros((n_sources, n_quest, len(band_list)))
+    pvalues_all = np.ones((n_sources, n_quest, len(band_list)))
+    p_corrected_all = np.zeros((n_sources, n_quest, len(band_list)), dtype=bool)
+    
+    # Calculate correlations for all bands
+    for band_idx, band in enumerate(band_list):
+        for roi, score in product(range(n_sources), range(n_quest)):
+            array1 = np.asarray(dictio[cond][band][net_list[roi]])
+            array2 = targets.iloc[:,score].to_numpy()
+            nas = np.logical_or(np.isnan(array1), np.isnan(array2))
+            if np.sum(~nas) > 2:
+                r, p = pearsonr(array1[~nas], array2[~nas])
+                rpearson_all[roi, score, band_idx] = r
+                pvalues_all[roi, score, band_idx] = p
+        
+        # Apply FDR correction PER BAND (consistent with individual heatmaps)
+        if fdr:
+            p_band = pvalues_all[:, :, band_idx].flatten()
+            p_corrected_band = fdrcorrection(p_band, alpha=alpha)[0].reshape(n_sources, n_quest)
+            p_corrected_all[:, :, band_idx] = p_corrected_band
+    
+    # Plot each band in its column
+    for band_idx, band in enumerate(band_list):
+        ax = axs[band_idx]
+        corr_matrix = np.zeros((4, n_sources, n_quest))
+        
+        for roi, score in product(range(n_sources), range(n_quest)):
+            r = rpearson_all[roi, score, band_idx]
+            if fdr:
+                is_sig = p_corrected_all[roi, score, band_idx]
+            else:
+                is_sig = pvalues_all[roi, score, band_idx] <= pvalue
+            
+            if is_sig:
+                corr_matrix[:, roi, score] = r_to_color(r)
+            else:
+                corr_matrix[:, roi, score] = to_gray(r)
+        
+        ax.imshow(np.transpose(corr_matrix))
+        ax.set_xticks(np.arange(n_sources), net_list, fontsize=12, rotation='vertical')
+        if band_idx == 0:
+            ax.set_yticks(np.arange(n_quest), labels, fontsize=10)
+        else:
+            ax.set_yticks([])
+        
+        for i in range(n_sources):
+            for j in range(n_quest):
+                ax.text(i, j, f"{rpearson_all[i, j, band_idx]:.2f}",
+                        ha="center", va="center", color="white", fontsize=7)
+        
+        cond_clean = cond.replace("\\", "")
+        ax.set_title(f"{band} - {cond_clean}", fontsize=14)
+
+print("[INFO] Generating consolidated heatmaps with all bands...")
+for fdr in [True]:
+    for dictio in [r_dict2, r_dict3]:
+        for cond in ["DMT\\", "EC\\"]:
+            cond_label = cond.replace("\\","")
+            dict_label = "Coherence" if dictio is r_dict2 else "Metastability"
+            print(f"[INFO] Generating consolidated {dict_label} heatmap for {cond_label}, FDR {'ON' if fdr else 'OFF'}")
+            
+            fig, axs = plt.subplots(1, len(band_list), figsize=(len(band_list) * 6, 14))
+            PlotCorrAllBands(axs, dictio, cond, fdr=fdr)
+            plt.suptitle(f"All Bands - {dict_label} - {cond_label} (FDR {'ON' if fdr else 'OFF'})", fontsize=18)
+            plt.tight_layout()
+            save_figure(
+                fig,
+                "heatmap_all_bands",
+                dict_label,
+                cond_label,
+                f"fdr_{'on' if fdr else 'off'}",
+            )
 
 
 #%%
