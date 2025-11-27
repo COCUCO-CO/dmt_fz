@@ -86,8 +86,8 @@ data:
     Post: [20, 21, 22]
   
   # Cross-validation
-  cv_folds: 5
-  random_state: 42
+  cv_folds: 3
+  random_state: 420
 
 # =========================
 # MODEL CONFIG

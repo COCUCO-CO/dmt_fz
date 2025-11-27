@@ -37,7 +37,7 @@ SEARCH_SPACE = {
     'spectral_model_type': ['mlp', 'xgboost', 'lightgbm'],
     
     # GNN conv type - GCN and SAGE are simpler, better for small N
-    'gnn_conv_type': ['gcn', 'sage', 'gatv2', 'cheby'],
+    'gnn_conv_type': ['gatv2', 'cheby'],
     
     # Architecture - SMALLER models for N=24-29
     'hidden_dims': [
