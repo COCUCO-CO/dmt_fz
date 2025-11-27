@@ -117,17 +117,22 @@ def get_subject_epochs(graphs: List, subject_id: str, class_names: List[str]) ->
     """
     Get all epochs for a specific subject, organized by condition.
     
+    Supports partial matching: 'S01' matches 'S01-DMT', 'S01-EC', etc.
+    
     Returns:
         Dict mapping condition name to list of (epoch_idx, graph) tuples, sorted by epoch_idx
     """
     subject_data = defaultdict(list)
     
     for g in graphs:
-        if hasattr(g, 'subject_id') and str(g.subject_id) == str(subject_id):
-            condition_idx = g.y.item()
-            condition_name = class_names[condition_idx] if condition_idx < len(class_names) else f"Class_{condition_idx}"
-            epoch_idx = g.epoch_idx if hasattr(g, 'epoch_idx') else 0
-            subject_data[condition_name].append((epoch_idx, g))
+        if hasattr(g, 'subject_id'):
+            g_subject = str(g.subject_id)
+            # Exact match or partial match (e.g., 'S01' matches 'S01-DMT')
+            if g_subject == subject_id or g_subject.startswith(subject_id + '-') or g_subject.startswith(subject_id + '_'):
+                condition_idx = g.y.item()
+                condition_name = class_names[condition_idx] if condition_idx < len(class_names) else f"Class_{condition_idx}"
+                epoch_idx = g.epoch_idx if hasattr(g, 'epoch_idx') else 0
+                subject_data[condition_name].append((epoch_idx, g))
     
     # Sort by epoch index
     for cond in subject_data:
@@ -366,9 +371,11 @@ def render_single_frame(args):
         threshold = np.percentile(list(edge_weights.values()), 100 - edge_percentile)
         edge_weights = {k: v for k, v in edge_weights.items() if v >= threshold}
     
-    fig = plt.figure(figsize=figsize)
-    # Main graph area (left portion, leave space for mini-map on right)
-    ax_graph = fig.add_axes([0.02, 0.12, 0.72, 0.78])
+    fig = plt.figure(figsize=(16, 9))  # Wider figure for two graphs
+    
+    # Two main graphs side by side
+    ax_hub_graph = fig.add_axes([0.01, 0.12, 0.38, 0.78])   # Hub graph (left)
+    ax_sink_graph = fig.add_axes([0.40, 0.12, 0.38, 0.78])  # Sink graph (right)
     pos = {name: coords[name] for name in ch_names if name in coords}
     
     # Calculate attention focus using TOP-K weighted center of mass
@@ -377,15 +384,38 @@ def render_single_frame(args):
     n_nodes = min(n, len(ch_names))
     
     # OUTGOING attention (node that attends TO others) = "Hub" / broadcaster
+    # This measures how much OTHER nodes attend to this node (sum over rows)
     outgoing_attention = np.zeros(n_nodes)
-    # INCOMING attention (node that receives attention FROM others) = "Sink" / aggregator
-    incoming_attention = np.zeros(n_nodes)
+    
+    # SELECTIVITY: entropy of incoming attention distribution
+    # Low entropy = node listens selectively to few sources (focused)
+    # High entropy = node distributes attention uniformly (diffuse)
+    selectivity = np.zeros(n_nodes)  # Will store INVERSE entropy (high = selective)
     
     for i in range(n_nodes):
         for j in range(n_nodes):
             if i != j and i < att_matrix.shape[0] and j < att_matrix.shape[1]:
                 outgoing_attention[i] += att_matrix[i, j]  # attention FROM node i TO j
-                incoming_attention[j] += att_matrix[i, j]  # attention TO node j FROM i
+    
+    # Calculate entropy for each node's incoming attention distribution
+    for j in range(n_nodes):
+        incoming = []
+        for i in range(n_nodes):
+            if i != j and i < att_matrix.shape[0] and j < att_matrix.shape[1]:
+                val = att_matrix[i, j]
+                if val > 1e-10:
+                    incoming.append(val)
+        
+        if incoming:
+            # Normalize to ensure it sums to 1
+            incoming = np.array(incoming)
+            incoming = incoming / (incoming.sum() + 1e-10)
+            # Calculate entropy
+            entropy = -np.sum(incoming * np.log(incoming + 1e-10))
+            # Max entropy for uniform distribution over n neighbors
+            max_entropy = np.log(len(incoming)) if len(incoming) > 1 else 1.0
+            # Selectivity = inverse normalized entropy (1 = very selective, 0 = uniform)
+            selectivity[j] = 1.0 - (entropy / max_entropy) if max_entropy > 0 else 0.0
     
     total_attention = outgoing_attention.sum()
     
@@ -409,25 +439,26 @@ def render_single_frame(args):
         center_x_out, center_y_out = 0.0, 0.0
         top_indices_out = [0]
     
-    # === INCOMING (Sink) calculation ===
-    if total_attention > 0:
-        top_indices_in = np.argsort(incoming_attention)[-top_k:][::-1]
-        top_attention_in = incoming_attention[top_indices_in]
-        top_total_in = top_attention_in.sum()
+    # === SELECTIVITY calculation (replaces Sink - based on entropy) ===
+    # High selectivity = node listens to few specific sources
+    if selectivity.sum() > 0:
+        top_indices_sel = np.argsort(selectivity)[-top_k:][::-1]
+        top_selectivity = selectivity[top_indices_sel]
+        top_total_sel = top_selectivity.sum()
         
-        if top_total_in > 0:
-            center_x_in, center_y_in = 0.0, 0.0
-            for idx, att in zip(top_indices_in, top_attention_in):
+        if top_total_sel > 0:
+            center_x_sel, center_y_sel = 0.0, 0.0
+            for idx, sel in zip(top_indices_sel, top_selectivity):
                 name = ch_names[idx] if idx < len(ch_names) else None
                 if name and name in coords:
-                    weight = att / top_total_in
-                    center_x_in += coords[name][0] * weight
-                    center_y_in += coords[name][1] * weight
+                    weight = sel / top_total_sel
+                    center_x_sel += coords[name][0] * weight
+                    center_y_sel += coords[name][1] * weight
         else:
-            center_x_in, center_y_in = 0.0, 0.0
+            center_x_sel, center_y_sel = 0.0, 0.0
     else:
-        center_x_in, center_y_in = 0.0, 0.0
-        top_indices_in = [0]
+        center_x_sel, center_y_sel = 0.0, 0.0
+        top_indices_sel = [0]
     
     weight_range = vmax - vmin if vmax > vmin else 1.0
     sorted_edges = sorted(edge_weights.items(), key=lambda x: x[1])
@@ -435,10 +466,8 @@ def render_single_frame(args):
     # Auto-filter for dense graphs: only show top edges if too many
     num_edges = len(sorted_edges)
     if num_edges > 100:
-        # Keep only top 30% of edges for readability
         keep_count = max(int(num_edges * 0.3), 50)
         sorted_edges = sorted_edges[-keep_count:]
-        # Recalculate vmin/vmax for visible edges only
         visible_weights = [w for _, w in sorted_edges]
         if visible_weights:
             vmin_vis = min(visible_weights)
@@ -446,40 +475,118 @@ def render_single_frame(args):
             weight_range = vmax_vis - vmin_vis if vmax_vis > vmin_vis else 1.0
             vmin = vmin_vis
     
+    node_list = [name for name in ch_names if name in pos]
+    top_k_set_out = set(top_indices_out)
+    top_k_set_sel = set(top_indices_sel)
+    
+    # === Draw HUB graph (left) - emphasizes edges FROM high-outgoing nodes ===
+    # Build lookup for source node outgoing attention
+    ch_name_to_idx = {name: i for i, name in enumerate(ch_names)}
+    max_out = outgoing_attention.max() if outgoing_attention.max() > 0 else 1.0
+    
     for (src, dst), weight in sorted_edges:
         if src in pos and dst in pos:
             normalized = (weight - vmin) / weight_range
             normalized = max(0, min(1, normalized))
-            # Refined visual parameters for cleaner look
-            alpha = 0.08 + normalized * 0.7  # More transparent base
-            width = 0.3 + normalized * 2.5   # Thinner lines
-            # Better color gradient: light orange to dark red
-            color = cm.YlOrRd(0.2 + normalized * 0.8)
+            
+            # Boost edges from high-outgoing (hub) nodes
+            src_idx = ch_name_to_idx.get(src, 0)
+            hub_factor = outgoing_attention[src_idx] / max_out if src_idx < len(outgoing_attention) else 0.5
+            
+            alpha = 0.03 + normalized * 0.5 * (0.3 + hub_factor * 0.7)
+            width = 0.15 + normalized * 2.0 * (0.4 + hub_factor * 0.6)
+            color = cm.YlOrRd(0.15 + normalized * 0.85)
             nx.draw_networkx_edges(G, pos, edgelist=[(src, dst)],
                                   width=width, edge_color=[color], alpha=alpha,
-                                  ax=ax_graph, arrows=not use_mst,
-                                  arrowsize=6 if not use_mst else 0,
-                                  connectionstyle="arc3,rad=0.05" if not use_mst else None)
+                                  ax=ax_hub_graph, arrows=not use_mst,
+                                  arrowsize=5 if not use_mst else 0,
+                                  connectionstyle="arc3,rad=0.03" if not use_mst else None)
     
-    node_list = [name for name in ch_names if name in pos]
+    # Hub nodes: highlight top outgoing
+    node_colors_hub = []
+    node_sizes_hub = []
+    for i, name in enumerate(ch_names):
+        if name in pos:
+            if i in top_k_set_out:
+                rank = list(top_indices_out).index(i)
+                node_colors_hub.append(['#ff4444', '#ff8888', '#ffbbbb'][min(rank, 2)])
+                node_sizes_hub.append([550, 450, 400][min(rank, 2)])
+            else:
+                node_colors_hub.append('white')
+                node_sizes_hub.append(350)
+    
     nx.draw_networkx_nodes(G, pos, nodelist=node_list,
-                          node_color='white', node_size=700,
-                          edgecolors='#333333', linewidths=1.5,
-                          alpha=0.98, ax=ax_graph)
+                          node_color=node_colors_hub, node_size=node_sizes_hub,
+                          edgecolors='#444444', linewidths=1.2,
+                          alpha=0.95, ax=ax_hub_graph)
     
     for node_name in node_list:
         if node_name in pos:
             x, y = pos[node_name]
-            ax_graph.text(x, y, node_name, fontsize=7, fontweight='bold',
-                         ha='center', va='center', color='#222222')
+            ax_hub_graph.text(x, y, node_name, fontsize=6, fontweight='bold',
+                             ha='center', va='center', color='#222222')
     
-    ax_graph.axis('equal')
-    ax_graph.set_xlim(-0.15, 0.15)
-    ax_graph.set_ylim(-0.16, 0.16)
-    ax_graph.axis('off')
+    ax_hub_graph.set_title(f'Hub (broadcaster)\nΣⱼ attention[i→j]', fontsize=9, fontweight='bold', 
+                          color='#cc0000', pad=3)
+    ax_hub_graph.axis('equal')
+    ax_hub_graph.set_xlim(-0.155, 0.155)
+    ax_hub_graph.set_ylim(-0.165, 0.165)
+    ax_hub_graph.axis('off')
     
-    # === Mini-map 1: HUB Tracking (outgoing attention) - top-right ===
-    ax_hub = fig.add_axes([0.73, 0.56, 0.24, 0.34])
+    # === Draw SELECTIVE graph (right) - emphasizes edges TO high-selectivity nodes ===
+    max_sel = selectivity.max() if selectivity.max() > 0 else 1.0
+    
+    for (src, dst), weight in sorted_edges:
+        if src in pos and dst in pos:
+            normalized = (weight - vmin) / weight_range
+            normalized = max(0, min(1, normalized))
+            
+            # Boost edges to high-selectivity (focused listener) nodes
+            dst_idx = ch_name_to_idx.get(dst, 0)
+            sel_factor = selectivity[dst_idx] / max_sel if dst_idx < len(selectivity) else 0.5
+            
+            alpha = 0.03 + normalized * 0.5 * (0.3 + sel_factor * 0.7)
+            width = 0.15 + normalized * 2.0 * (0.4 + sel_factor * 0.6)
+            color = cm.YlGn(0.15 + normalized * 0.85)  # Green for selectivity
+            nx.draw_networkx_edges(G, pos, edgelist=[(src, dst)],
+                                  width=width, edge_color=[color], alpha=alpha,
+                                  ax=ax_sink_graph, arrows=not use_mst,
+                                  arrowsize=5 if not use_mst else 0,
+                                  connectionstyle="arc3,rad=0.03" if not use_mst else None)
+    
+    # Selective nodes: highlight top selectivity (focused listeners)
+    node_colors_sel = []
+    node_sizes_sel = []
+    for i, name in enumerate(ch_names):
+        if name in pos:
+            if i in top_k_set_sel:
+                rank = list(top_indices_sel).index(i)
+                node_colors_sel.append(['#44bb44', '#88dd88', '#bbffbb'][min(rank, 2)])
+                node_sizes_sel.append([550, 450, 400][min(rank, 2)])
+            else:
+                node_colors_sel.append('white')
+                node_sizes_sel.append(350)
+    
+    nx.draw_networkx_nodes(G, pos, nodelist=node_list,
+                          node_color=node_colors_sel, node_size=node_sizes_sel,
+                          edgecolors='#444444', linewidths=1.2,
+                          alpha=0.95, ax=ax_sink_graph)
+    
+    for node_name in node_list:
+        if node_name in pos:
+            x, y = pos[node_name]
+            ax_sink_graph.text(x, y, node_name, fontsize=6, fontweight='bold',
+                              ha='center', va='center', color='#222222')
+    
+    ax_sink_graph.set_title(f'Selective (focused)\n1 - entropy(attention[·→j])', fontsize=9, fontweight='bold', 
+                           color='#228822', pad=3)
+    ax_sink_graph.axis('equal')
+    ax_sink_graph.set_xlim(-0.155, 0.155)
+    ax_sink_graph.set_ylim(-0.165, 0.165)
+    ax_sink_graph.axis('off')
+    
+    # === Mini-map 1: HUB Tracking (outgoing attention) - far right top ===
+    ax_hub = fig.add_axes([0.80, 0.54, 0.18, 0.36])
     ax_hub.set_xlim(-0.16, 0.16)
     ax_hub.set_ylim(-0.17, 0.17)
     
@@ -507,7 +614,7 @@ def render_single_frame(args):
                 ax_hub.scatter(x, y, s=15, c='#e8e8e8', edgecolors='#bbbbbb', 
                                linewidths=0.4, zorder=1, alpha=0.6)
     
-    # Draw hub trail
+    # Draw hub trail (red/orange)
     all_centers_out = params.get('all_centers_out', [])
     if all_centers_out and frame_idx > 0:
         trail_length = min(50, frame_idx)
@@ -515,16 +622,16 @@ def render_single_frame(args):
         if len(recent) > 1:
             for i, (cx, cy) in enumerate(recent):
                 prog = (i + 1) / len(recent)
-                ax_hub.scatter(cx, cy, s=5 + 12*prog, c='#4488ff', alpha=0.1 + 0.3*prog, 
+                ax_hub.scatter(cx, cy, s=5 + 12*prog, c='#ff6644', alpha=0.1 + 0.3*prog, 
                               zorder=2, edgecolors='none')
             for i in range(len(recent) - 1):
                 prog = (i + 1) / len(recent)
                 ax_hub.plot([recent[i][0], recent[i+1][0]], [recent[i][1], recent[i+1][1]], 
-                           color='#4488ff', alpha=0.05 + 0.2*prog, linewidth=1, zorder=1)
+                           color='#ff6644', alpha=0.05 + 0.2*prog, linewidth=1, zorder=1)
     
-    ax_hub.scatter(center_x_out, center_y_out, s=140, c='#2266dd', edgecolors='white',
+    ax_hub.scatter(center_x_out, center_y_out, s=140, c='#dd2222', edgecolors='white',
                   linewidths=2, zorder=20, marker='D')
-    ax_hub.set_title('Hub (broadcaster)', fontsize=8, fontweight='bold', pad=2, color='#cc0000')
+    ax_hub.set_title(f'Hub (top-{top_k} CoM)', fontsize=8, fontweight='bold', pad=2, color='#cc0000')
     ax_hub.axis('off')
     
     # Hub info text
@@ -537,8 +644,8 @@ def render_single_frame(args):
     ax_hub.text(0.5, -0.08, hub_text, transform=ax_hub.transAxes, ha='center', 
                fontsize=7, color='#666666', fontfamily='monospace')
     
-    # === Mini-map 2: SINK Tracking (incoming attention) - middle-right ===
-    ax_sink = fig.add_axes([0.73, 0.15, 0.24, 0.34])
+    # === Mini-map 2: SINK Tracking (incoming attention) - far right bottom ===
+    ax_sink = fig.add_axes([0.80, 0.12, 0.18, 0.36])
     ax_sink.set_xlim(-0.16, 0.16)
     ax_sink.set_ylim(-0.17, 0.17)
     
@@ -547,28 +654,28 @@ def render_single_frame(args):
                 color='#dddddd', linewidth=1.2, zorder=0)
     ax_sink.plot([0, 0], [head_r, head_r + 0.015], color='#dddddd', linewidth=1.2, zorder=0)
     
-    # Draw electrodes - highlight top-K sinks in green
-    top_k_set_in = set(top_indices_in)
-    colors_sink = ['#33aa33', '#77cc77', '#aaddaa']
+    # Draw electrodes - highlight top-K selective nodes in green
+    top_k_set_sel = set(top_indices_sel)
+    colors_sel = ['#33aa33', '#77cc77', '#aaddaa']
     
     for i, name in enumerate(ch_names):
         if name in coords:
             x, y = coords[name]
-            if i in top_k_set_in:
-                rank = list(top_indices_in).index(i)
-                if rank < len(colors_sink):
-                    ax_sink.scatter(x, y, s=[70, 45, 30][rank], c=colors_sink[rank], 
+            if i in top_k_set_sel:
+                rank = list(top_indices_sel).index(i)
+                if rank < len(colors_sel):
+                    ax_sink.scatter(x, y, s=[70, 45, 30][rank], c=colors_sel[rank], 
                                    edgecolors=['darkgreen', '#55aa55', '#77aa77'][rank],
                                    linewidths=1.2, zorder=10-rank, alpha=0.9)
             else:
                 ax_sink.scatter(x, y, s=15, c='#e8e8e8', edgecolors='#bbbbbb', 
                                linewidths=0.4, zorder=1, alpha=0.6)
     
-    # Draw sink trail
-    all_centers_in = params.get('all_centers_in', [])
-    if all_centers_in and frame_idx > 0:
+    # Draw selectivity trail
+    all_centers_sel = params.get('all_centers_sel', [])
+    if all_centers_sel and frame_idx > 0:
         trail_length = min(50, frame_idx)
-        recent = all_centers_in[max(0, frame_idx - trail_length):frame_idx]
+        recent = all_centers_sel[max(0, frame_idx - trail_length):frame_idx]
         if len(recent) > 1:
             for i, (cx, cy) in enumerate(recent):
                 prog = (i + 1) / len(recent)
@@ -579,35 +686,57 @@ def render_single_frame(args):
                 ax_sink.plot([recent[i][0], recent[i+1][0]], [recent[i][1], recent[i+1][1]], 
                             color='#44bb44', alpha=0.05 + 0.2*prog, linewidth=1, zorder=1)
     
-    ax_sink.scatter(center_x_in, center_y_in, s=140, c='#228822', edgecolors='white',
+    ax_sink.scatter(center_x_sel, center_y_sel, s=140, c='#228822', edgecolors='white',
                    linewidths=2, zorder=20, marker='D')
-    ax_sink.set_title('Sink (aggregator)', fontsize=8, fontweight='bold', pad=2, color='#228822')
+    ax_sink.set_title(f'Selective (top-{top_k} CoM)', fontsize=8, fontweight='bold', pad=2, color='#228822')
     ax_sink.axis('off')
     
-    # Sink info text
-    if total_attention > 0:
-        sink_names = [ch_names[i] if i < len(ch_names) else "?" for i in top_indices_in[:3]]
-        sink_pcts = [incoming_attention[i] / total_attention * 100 for i in top_indices_in[:3]]
-        sink_text = " | ".join([f"{n}:{p:.1f}%" for n, p in zip(sink_names, sink_pcts)])
+    # Selectivity info text (shows selectivity score, not percentage of attention)
+    if selectivity.sum() > 0:
+        sel_names = [ch_names[i] if i < len(ch_names) else "?" for i in top_indices_sel[:3]]
+        sel_scores = [selectivity[i] * 100 for i in top_indices_sel[:3]]  # As percentage
+        sel_text = " | ".join([f"{n}:{s:.0f}%" for n, s in zip(sel_names, sel_scores)])
     else:
-        sink_text = "—"
-    ax_sink.text(0.5, -0.08, sink_text, transform=ax_sink.transAxes, ha='center', 
+        sel_text = "—"
+    ax_sink.text(0.5, -0.08, sel_text, transform=ax_sink.transAxes, ha='center', 
                 fontsize=7, color='#666666', fontfamily='monospace')
     
-    # === Colorbar (moved up to avoid overlap) ===
-    cbar_ax = fig.add_axes([0.08, 0.08, 0.55, 0.015])
-    norm = Normalize(vmin=vmin, vmax=vmax)
-    sm = cm.ScalarMappable(norm=norm, cmap=cm.Reds)
-    cbar = plt.colorbar(sm, cax=cbar_ax, orientation='horizontal')
-    cbar.set_label(f'Attention Weight', fontsize=8, labelpad=2)
-    cbar.ax.tick_params(labelsize=7)
+    # === Colorbars (one for each graph with matching colors) ===
+    global_vmin = params.get('global_vmin', 0)
+    global_vmax = params.get('global_vmax', 1)
+    norm = Normalize(vmin=global_vmin, vmax=global_vmax)
+    tick_values = np.linspace(global_vmin, global_vmax, 4)
+    tick_labels = [f'{v:.2f}' for v in tick_values]
     
-    # Title
-    fig.text(0.38, 0.96, title, fontsize=12, fontweight='bold', ha='center', va='top')
+    # Hub colorbar (red/orange - below left graph)
+    cbar_hub_ax = fig.add_axes([0.05, 0.05, 0.32, 0.012])
+    sm_hub = cm.ScalarMappable(norm=norm, cmap=cm.YlOrRd)
+    cbar_hub = plt.colorbar(sm_hub, cax=cbar_hub_ax, orientation='horizontal')
+    cbar_hub.set_ticks(tick_values)
+    cbar_hub.set_ticklabels(tick_labels)
+    cbar_hub.ax.tick_params(labelsize=6)
+    cbar_hub_ax.set_title('Hub attention', fontsize=7, pad=1, color='#cc0000')
+    
+    # Selectivity colorbar (green - below right graph) - shows 0-100% selectivity
+    cbar_sel_ax = fig.add_axes([0.43, 0.05, 0.32, 0.012])
+    norm_sel = Normalize(vmin=0, vmax=1)
+    sm_sel = cm.ScalarMappable(norm=norm_sel, cmap=cm.YlGn)
+    cbar_sel = plt.colorbar(sm_sel, cax=cbar_sel_ax, orientation='horizontal')
+    cbar_sel.set_ticks([0, 0.25, 0.5, 0.75, 1.0])
+    cbar_sel.set_ticklabels(['0%', '25%', '50%', '75%', '100%'])
+    cbar_sel.ax.tick_params(labelsize=6)
+    cbar_sel_ax.set_title('Selectivity', fontsize=7, pad=1, color='#228822')
+    
+    # Main title (centered over both graphs)
+    fig.text(0.40, 0.97, f"{title} (K={top_k})", fontsize=13, fontweight='bold', ha='center', va='top')
+    
+    # Legend note about diamond = center of mass (positioned at bottom right corner)
+    fig.text(0.95, 0.01, '◆ = Center of Mass of top-K nodes', fontsize=6, ha='right', va='bottom',
+             color='#888888', style='italic')
     
     # === Progress bar (at the very bottom) ===
     progress = (frame_idx + 1) / total_frames
-    progress_ax = fig.add_axes([0.08, 0.025, 0.55, 0.018])
+    progress_ax = fig.add_axes([0.05, 0.015, 0.70, 0.015])
     progress_ax.set_xlim(0, 1)
     progress_ax.set_ylim(0, 1)
     progress_ax.axis('off')
@@ -633,7 +762,7 @@ def render_single_frame(args):
     # Progress text (to the right of the bar)
     epoch_display = epoch_idx if is_real else "~"
     progress_text = f"Epoch {epoch_display}/{total_epochs} • {progress*100:.0f}%"
-    fig.text(0.64, 0.034, progress_text, fontsize=8, ha='left', va='center',
+    fig.text(0.76, 0.022, progress_text, fontsize=8, ha='left', va='center',
              color='#555555', fontweight='medium')
     
     # Save frame
@@ -657,7 +786,8 @@ def generate_animation(model, subject_data: Dict[str, List],
                       dpi: int = 150,
                       edge_percentile: float = 100,
                       bitrate: int = 2000,
-                      figsize: Tuple[float, float] = (12, 10)):
+                      figsize: Tuple[float, float] = (12, 10),
+                      top_k: int = 3):
     """
     Generate animation for each condition.
     
@@ -736,21 +866,34 @@ def generate_animation(model, subject_data: Dict[str, List],
                 epoch_numbers[i] = real_epoch_count
             
             # Pre-calculate all attention focus positions (top-K weighted centers)
-            logger.info("Pre-calculating hub and sink positions...")
-            top_k = 3
+            logger.info(f"Pre-calculating hub and selectivity positions (top-{top_k})...")
             all_centers_out = []  # Hub (outgoing)
-            all_centers_in = []   # Sink (incoming)
+            all_centers_sel = []  # Selectivity (entropy-based)
             n_nodes = len(ch_names)
             
             for att_matrix, _, _ in frames_data:
                 outgoing_attention = np.zeros(n_nodes)
-                incoming_attention = np.zeros(n_nodes)
+                selectivity = np.zeros(n_nodes)
                 
                 for i in range(min(n_nodes, att_matrix.shape[0])):
                     for j in range(min(n_nodes, att_matrix.shape[1])):
                         if i != j:
                             outgoing_attention[i] += att_matrix[i, j]
-                            incoming_attention[j] += att_matrix[i, j]
+                
+                # Calculate selectivity (inverse entropy) for each node
+                for j in range(n_nodes):
+                    incoming = []
+                    for i in range(min(n_nodes, att_matrix.shape[0])):
+                        if i != j and j < att_matrix.shape[1]:
+                            val = att_matrix[i, j]
+                            if val > 1e-10:
+                                incoming.append(val)
+                    if incoming:
+                        incoming = np.array(incoming)
+                        incoming = incoming / (incoming.sum() + 1e-10)
+                        entropy = -np.sum(incoming * np.log(incoming + 1e-10))
+                        max_entropy = np.log(len(incoming)) if len(incoming) > 1 else 1.0
+                        selectivity[j] = 1.0 - (entropy / max_entropy) if max_entropy > 0 else 0.0
                 
                 total_att = outgoing_attention.sum()
                 
@@ -772,23 +915,23 @@ def generate_animation(model, subject_data: Dict[str, List],
                 else:
                     all_centers_out.append((0.0, 0.0))
                 
-                # Incoming (Sink) center
-                if total_att > 0:
-                    top_idx = np.argsort(incoming_attention)[-top_k:][::-1]
-                    top_att = incoming_attention[top_idx]
-                    top_total = top_att.sum()
+                # Selectivity center
+                if selectivity.sum() > 0:
+                    top_idx = np.argsort(selectivity)[-top_k:][::-1]
+                    top_sel = selectivity[top_idx]
+                    top_total = top_sel.sum()
                     if top_total > 0:
                         cx, cy = 0.0, 0.0
-                        for idx, att in zip(top_idx, top_att):
+                        for idx, sel in zip(top_idx, top_sel):
                             name = ch_names[idx] if idx < len(ch_names) else None
                             if name and name in coords:
-                                cx += coords[name][0] * (att / top_total)
-                                cy += coords[name][1] * (att / top_total)
-                        all_centers_in.append((cx, cy))
+                                cx += coords[name][0] * (sel / top_total)
+                                cy += coords[name][1] * (sel / top_total)
+                        all_centers_sel.append((cx, cy))
                     else:
-                        all_centers_in.append((0.0, 0.0))
+                        all_centers_sel.append((0.0, 0.0))
                 else:
-                    all_centers_in.append((0.0, 0.0))
+                    all_centers_sel.append((0.0, 0.0))
             
             # Prepare render parameters (shared across all frames)
             render_params = {
@@ -796,6 +939,8 @@ def generate_animation(model, subject_data: Dict[str, List],
                 'coords': coords,
                 'vmin': vmin,
                 'vmax': vmax,
+                'global_vmin': vmin,  # Fixed colorbar range
+                'global_vmax': vmax,  # Fixed colorbar range
                 'use_mst': use_mst,
                 'condition': condition,
                 'layer_idx': layer_idx,
@@ -807,7 +952,7 @@ def generate_animation(model, subject_data: Dict[str, List],
                 'total_epochs': len(attention_matrices),
                 'epoch_numbers': epoch_numbers,
                 'all_centers_out': all_centers_out,
-                'all_centers_in': all_centers_in,
+                'all_centers_sel': all_centers_sel,
                 'top_k_nodes': top_k,
             }
             
@@ -875,8 +1020,8 @@ Examples:
                        help='Path to model checkpoint (.pt file)')
     parser.add_argument('--config', type=str, default=None,
                        help='Path to config.yaml (auto-detected if not provided)')
-    parser.add_argument('--subject', type=str, required=True,
-                       help='Subject ID to process (e.g., sub-01)')
+    parser.add_argument('--subject', type=str, required=False, default=None,
+                       help='Subject ID to process (e.g., S01-DMT)')
     parser.add_argument('--layer', type=int, default=0,
                        help='GAT layer index to visualize (0-based, default: 0)')
     parser.add_argument('--fps', type=int, default=5,
@@ -901,6 +1046,8 @@ Examples:
                        help='Only show top N%% of edges (default: 100; auto-filters to 30%% if >100 edges)')
     parser.add_argument('--bitrate', type=int, default=2000,
                        help='Video bitrate in kbps (default: 2000)')
+    parser.add_argument('--top-k', type=int, default=3,
+                       help='Number of top nodes for center-of-mass calculation (default: 3)')
     
     args = parser.parse_args()
     
@@ -938,6 +1085,11 @@ Examples:
                     counts[cond] += 1
             count_str = ", ".join([f"{c}: {n}" for c, n in counts.items()])
             print(f"  {s}: {count_str}")
+        return
+    
+    # Check subject is provided
+    if args.subject is None:
+        logger.error("--subject is required (use --list-subjects to see available)")
         return
     
     # Get subject epochs
@@ -979,7 +1131,8 @@ Examples:
         n_workers=args.workers,
         dpi=args.dpi,
         edge_percentile=args.edge_percentile,
-        bitrate=args.bitrate
+        bitrate=args.bitrate,
+        top_k=args.top_k
     )
     
     logger.info(f"\nAnimations saved to: {output_dir}")

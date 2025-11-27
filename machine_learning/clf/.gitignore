@@ -25,9 +25,16 @@ data/cache/
 checkpoints/
 output/
 runs/
+
+# Model files (heavy, don't track globally)
 *.pt
 *.pth
 *.pkl
+
+# TensorBoard files (heavy)
+**/tensorboard/
+*.tfevents.*
+projector_config.pbtxt
 
 # Logs
 *.log

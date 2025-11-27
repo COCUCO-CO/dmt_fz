@@ -288,10 +288,12 @@ def build_graph_from_epoch(
         kuramoto_std = kuramoto_series.std()
         graph_features_list.extend([kuramoto_mean, kuramoto_std])
     
-    # Global synchronization statistics
+    # Global synchronization statistics (excluding diagonal which is 0)
     if graph_feat_config['use_global_sync']:
-        sync_mean = syncro_matrix.mean()
-        sync_std = syncro_matrix.std()
+        mask = ~np.eye(N, dtype=bool)
+        off_diag_values = syncro_matrix[mask]
+        sync_mean = off_diag_values.mean()
+        sync_std = off_diag_values.std()
         graph_features_list.extend([sync_mean, sync_std])
     
     # Topology features
@@ -497,8 +499,11 @@ def build_graph_dict(
         graph_features_list.extend([kuramoto_mean, kuramoto_std])
     
     if graph_feat_config['use_global_sync']:
-        sync_mean = syncro_matrix.mean()
-        sync_std = syncro_matrix.std()
+        # Exclude diagonal (which is 0) from sync statistics
+        mask = ~np.eye(N, dtype=bool)
+        off_diag_values = syncro_matrix[mask]
+        sync_mean = off_diag_values.mean()
+        sync_std = off_diag_values.std()
         graph_features_list.extend([sync_mean, sync_std])
     
     if graph_feat_config['use_topology']:

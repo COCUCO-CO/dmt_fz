@@ -106,3 +106,6 @@ Verifica las rutas en `config.yaml` y asegúrate de que apuntan a los directorio
 
 **Última actualización:** 2025-11-25
 
+
+
+

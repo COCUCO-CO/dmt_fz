@@ -235,3 +235,6 @@ with st.sidebar:
     if st.button("🔄 Recargar", use_container_width=True):
         st.rerun()
 
+
+
+

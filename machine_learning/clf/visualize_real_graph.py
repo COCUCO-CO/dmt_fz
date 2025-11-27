@@ -131,7 +131,12 @@ def visualize_real_graph(graph, save_path: Path, ch_names, eeg_coords_2d):
     
     for i, name in enumerate(feat_names):
         if i < node_features.shape[1]:
-            text += f"{name:12s}: {node_features[example_idx, i]:8.4f}\n"
+            val = node_features[example_idx, i]
+            # Use scientific notation for very small values
+            if 0 < abs(val) < 0.0001:
+                text += f"{name:12s}: {val:10.2e}\n"
+            else:
+                text += f"{name:12s}: {val:10.4f}\n"
     
     text += "-"*40 + f"\n{node_features.shape[1]} features × {num_nodes} electrodes"
     
