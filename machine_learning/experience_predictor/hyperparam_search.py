@@ -31,8 +31,10 @@ SEARCH_SPACE = {
     # Input type
     'input_type': ['spectral', 'graphs'],
     
-    # Model type - added 'linear' for baseline
-    'model_type': ['mlp', 'gnn'],
+    # Model type for spectral data (tabular)
+    # - MLP: Neural network
+    # - XGBoost, LightGBM: State-of-the-art for tabular, often best for small N
+    'spectral_model_type': ['mlp', 'xgboost', 'lightgbm'],
     
     # GNN conv type - GCN and SAGE are simpler, better for small N
     'gnn_conv_type': ['gcn', 'sage', 'gatv2', 'cheby'],
@@ -55,7 +57,7 @@ SEARCH_SPACE = {
     'dropout': [0.4, 0.5, 0.6, 0.7],  # Higher dropout
     'weight_decay': [1e-3, 1e-2, 0.05, 0.1, 0.2],  # Stronger regularization
     
-    # Training
+    # Training (for neural networks)
     'learning_rate': [5e-5, 1e-4, 5e-4, 1e-3],  # Added lower LR
     'batch_size': [4, 8, 12],  # Smaller batches for small N
     'loss': ['mse', 'huber', 'l1'],
@@ -65,32 +67,56 @@ SEARCH_SPACE = {
     'early_stopping_patience': [60, 100, 150],  # More patience
     
     # Activation
-    'activation': ['relu', 'elu', 'gelu'],  # Removed leaky_relu (rarely helps)
+    'activation': ['relu', 'elu', 'gelu'],
+    
+    # ==== Boosting hyperparameters (XGBoost, LightGBM) ====
+    'boosting_n_estimators': [50, 100, 200, 300],
+    'boosting_max_depth': [2, 3, 4, 5],  # Shallow trees for small N
+    'boosting_learning_rate': [0.01, 0.05, 0.1, 0.2],
+    'boosting_subsample': [0.6, 0.7, 0.8, 0.9],
+    'boosting_colsample': [0.6, 0.7, 0.8, 0.9],
+    'boosting_reg_alpha': [0, 0.1, 0.5, 1.0],  # L1 regularization
+    'boosting_reg_lambda': [0.5, 1.0, 2.0, 5.0],  # L2 regularization
 }
 
 
-def sample_hyperparams(search_space: Dict, input_type: str = None) -> Dict[str, Any]:
+def sample_hyperparams(search_space: Dict, input_type: str = None, model_type: str = None) -> Dict[str, Any]:
     """Sample random hyperparameters from search space."""
     params = {}
     
-    # Input type
-    if input_type:
-        params['input_type'] = input_type
+    # Model type first (affects input_type choice)
+    if model_type:
+        params['model_type'] = model_type
+        # Boosting models require spectral (tabular) data
+        if model_type in ['xgboost', 'lightgbm']:
+            params['input_type'] = 'spectral'
+        elif model_type == 'gnn':
+            params['input_type'] = 'graphs'
+        elif model_type == 'mlp':
+            params['input_type'] = input_type if input_type else 'spectral'
+        else:
+            params['input_type'] = input_type if input_type else random.choice(search_space['input_type'])
     else:
-        params['input_type'] = random.choice(search_space['input_type'])
+        # Input type
+        if input_type:
+            params['input_type'] = input_type
+        else:
+            params['input_type'] = random.choice(search_space['input_type'])
+        
+        # Model type - LOGICAL pairing:
+        # - Spectral data (tabular) → MLP, XGBoost, or LightGBM
+        # - Graph data (structured) → GNN
+        if params['input_type'] == 'spectral':
+            params['model_type'] = random.choice(search_space['spectral_model_type'])
+        else:
+            params['model_type'] = 'gnn'  # Graphs = structured → GNN
     
-    # Model type - if spectral, prefer MLP; if graphs, use GNN
-    if params['input_type'] == 'spectral':
-        params['model_type'] = random.choice(['mlp', 'mlp', 'gnn'])  # 2/3 MLP
-    else:
-        params['model_type'] = 'gnn'  # Always GNN for graphs
-    
-    # Architecture
+    # Architecture for MLP
     params['hidden_dims'] = random.choice(search_space['hidden_dims'])
     params['dropout'] = random.choice(search_space['dropout'])
     params['activation'] = random.choice(search_space['activation'])
     
-    # GNN specific
+    # GNN specific (only for graphs input)
     if params['model_type'] == 'gnn':
         params['gnn_conv_type'] = random.choice(search_space['gnn_conv_type'])
         params['gnn_hidden_dim'] = random.choice(search_space['gnn_hidden_dim'])
@@ -98,10 +124,20 @@ def sample_hyperparams(search_space: Dict, input_type: str = None) -> Dict[str, 
         params['gnn_num_heads'] = random.choice(search_space['gnn_num_heads'])
         params['gnn_pooling'] = random.choice(search_space['gnn_pooling'])
     
-    # Regularization
+    # Boosting specific (XGBoost, LightGBM)
+    if params['model_type'] in ['xgboost', 'lightgbm']:
+        params['boosting_n_estimators'] = random.choice(search_space['boosting_n_estimators'])
+        params['boosting_max_depth'] = random.choice(search_space['boosting_max_depth'])
+        params['boosting_learning_rate'] = random.choice(search_space['boosting_learning_rate'])
+        params['boosting_subsample'] = random.choice(search_space['boosting_subsample'])
+        params['boosting_colsample'] = random.choice(search_space['boosting_colsample'])
+        params['boosting_reg_alpha'] = random.choice(search_space['boosting_reg_alpha'])
+        params['boosting_reg_lambda'] = random.choice(search_space['boosting_reg_lambda'])
+    
+    # Regularization (for neural networks)
     params['weight_decay'] = random.choice(search_space['weight_decay'])
     
-    # Training
+    # Training (for neural networks)
     params['learning_rate'] = random.choice(search_space['learning_rate'])
     params['batch_size'] = random.choice(search_space['batch_size'])
     params['loss'] = random.choice(search_space['loss'])
@@ -115,7 +151,8 @@ def sample_hyperparams(search_space: Dict, input_type: str = None) -> Dict[str, 
 
 def create_config_from_params(base_config: Dict, params: Dict, output_dir: Path) -> Dict:
     """Create full config from sampled parameters."""
-    config = base_config.copy()
+    import copy
+    config = copy.deepcopy(base_config)
     
     # Input type
     config['input_type'] = params['input_type']
@@ -139,7 +176,20 @@ def create_config_from_params(base_config: Dict, params: Dict, output_dir: Path)
         config['model']['gnn']['pooling'] = params['gnn_pooling']
         config['model']['gnn']['dropout'] = params['dropout']
     
-    # Training
+    # Boosting config (XGBoost, LightGBM)
+    if params['model_type'] in ['xgboost', 'lightgbm']:
+        if 'boosting' not in config:
+            config['boosting'] = {}
+        config['boosting']['type'] = params['model_type']
+        config['boosting']['n_estimators'] = params['boosting_n_estimators']
+        config['boosting']['max_depth'] = params['boosting_max_depth']
+        config['boosting']['learning_rate'] = params['boosting_learning_rate']
+        config['boosting']['subsample'] = params['boosting_subsample']
+        config['boosting']['colsample_bytree'] = params['boosting_colsample']
+        config['boosting']['reg_alpha'] = params['boosting_reg_alpha']
+        config['boosting']['reg_lambda'] = params['boosting_reg_lambda']
+    
+    # Training (for neural networks)
     config['training']['learning_rate'] = params['learning_rate']
     config['training']['weight_decay'] = params['weight_decay']
     config['training']['batch_size'] = params['batch_size']
@@ -198,14 +248,25 @@ def main():
     parser.add_argument('--n-trials', type=int, default=30,
                        help='Number of random trials')
     parser.add_argument('--input-type', type=str, default=None,
-                       choices=['spectral', 'graphs', None],
+                       choices=['spectral', 'graphs'],
                        help='Fix input type (default: search both)')
+    parser.add_argument('--model-type', type=str, default=None,
+                       choices=['mlp', 'xgboost', 'lightgbm', 'gnn'],
+                       help='Fix model type (default: search all compatible)')
     parser.add_argument('--seed', type=int, default=42,
                        help='Random seed')
     parser.add_argument('--output-dir', type=str, default='hyperparam_search',
                        help='Output directory')
     
     args = parser.parse_args()
+    
+    # Validate combinations
+    if args.model_type in ['xgboost', 'lightgbm'] and args.input_type == 'graphs':
+        logger.error("ERROR: Boosting models (xgboost, lightgbm) require spectral (tabular) data!")
+        logger.error("       Use --input-type spectral or remove --input-type flag")
+        return
+    if args.model_type == 'gnn' and args.input_type == 'spectral':
+        logger.warning("WARNING: GNN with spectral data will build graphs from AAL regions")
     
     random.seed(args.seed)
     np.random.seed(args.seed)
@@ -229,7 +290,7 @@ def main():
     
     for trial_num in range(args.n_trials):
         # Sample hyperparameters
-        params = sample_hyperparams(SEARCH_SPACE, args.input_type)
+        params = sample_hyperparams(SEARCH_SPACE, args.input_type, args.model_type)
         
         # Create descriptive trial name
         input_short = 'spec' if params['input_type'] == 'spectral' else 'graph'

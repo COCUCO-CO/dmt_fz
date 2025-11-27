@@ -37,6 +37,7 @@ from sklearn.model_selection import KFold
 sys.path.append(str(Path(__file__).parent))
 
 from models import create_model_from_config
+from models.boosting import MultiOutputBoostingRegressor, create_boosting_model, get_available_boosting_models
 from utils.visualization import save_all_visualizations
 from utils.logging_utils import (
     setup_tensorboard, log_epoch_metrics, log_per_target_metrics,
@@ -447,7 +448,153 @@ def create_fold_loaders_graph(graphs_train, graphs_val, y_train, y_val, batch_si
 
 
 # =============================================================================
-# MAIN TRAINING LOOP
+# BOOSTING TRAINING (XGBoost, LightGBM)
+# =============================================================================
+
+def train_fold_boosting(fold_idx, train_idx, val_idx, data, config, target_names, 
+                        writer=None, output_dir=None):
+    """Train and evaluate one fold using boosting models (XGBoost, LightGBM)."""
+    
+    n_folds = config['data']['cv_folds']
+    model_type = config['model']['type']
+    
+    logger.info(f"\n{'='*60}")
+    logger.info(f"FOLD {fold_idx + 1}/{n_folds} - {model_type.upper()} BOOSTING")
+    logger.info(f"Train: {len(train_idx)} samples, Val: {len(val_idx)} samples")
+    logger.info(f"{'='*60}")
+    
+    # Get spectral data
+    X, y = data['X'], data['y']
+    X_train, X_val = X[train_idx], X[val_idx]
+    y_train, y_val = y[train_idx], y[val_idx]
+    
+    # Normalize features
+    scaler_X = StandardScaler()
+    X_train_norm = scaler_X.fit_transform(X_train)
+    X_val_norm = scaler_X.transform(X_val)
+    
+    # Optionally normalize targets
+    scaler_y = None
+    if config['data'].get('normalize_targets', True):
+        scaler_y = StandardScaler()
+        y_train_norm = scaler_y.fit_transform(y_train)
+        y_val_norm = scaler_y.transform(y_val)
+    else:
+        y_train_norm = y_train
+        y_val_norm = y_val
+    
+    # Boosting parameters from config
+    boosting_config = config.get('boosting', {})
+    boosting_params = {
+        'n_estimators': boosting_config.get('n_estimators', 100),
+        'max_depth': boosting_config.get('max_depth', 3),
+        'learning_rate': boosting_config.get('learning_rate', 0.1),
+        'subsample': boosting_config.get('subsample', 0.8),
+        'colsample_bytree': boosting_config.get('colsample_bytree', 0.8),
+        'reg_alpha': boosting_config.get('reg_alpha', 0.1),
+        'reg_lambda': boosting_config.get('reg_lambda', 1.0),
+        'random_state': config.get('seed', 42) + fold_idx,
+    }
+    
+    logger.info(f"  Boosting params: n_estimators={boosting_params['n_estimators']}, "
+                f"max_depth={boosting_params['max_depth']}, lr={boosting_params['learning_rate']}")
+    
+    # Create and train model
+    model = MultiOutputBoostingRegressor(
+        model_type=model_type,
+        n_targets=y_train.shape[1],
+        params=boosting_params
+    )
+    
+    logger.info(f"  Training {model_type} model...")
+    model.fit(X_train_norm, y_train_norm)
+    
+    # Predict
+    y_pred_norm = model.predict(X_val_norm)
+    
+    # Inverse transform predictions if normalized
+    if scaler_y is not None:
+        y_pred = scaler_y.inverse_transform(y_pred_norm)
+    else:
+        y_pred = y_pred_norm
+    
+    # Compute metrics
+    mse = mean_squared_error(y_val, y_pred)
+    mae = mean_absolute_error(y_val, y_pred)
+    r2 = r2_score(y_val, y_pred)
+    
+    # Per-target Pearson correlation
+    pearson_r_per_target = []
+    for i in range(y_val.shape[1]):
+        try:
+            r, _ = pearsonr(y_val[:, i], y_pred[:, i])
+            pearson_r_per_target.append(r if not np.isnan(r) else 0.0)
+        except:
+            pearson_r_per_target.append(0.0)
+    
+    mean_pearson = np.mean(pearson_r_per_target)
+    
+    logger.info(f"\n  Fold {fold_idx + 1} Results:")
+    logger.info(f"    MSE:  {mse:.4f}")
+    logger.info(f"    MAE:  {mae:.4f}")
+    logger.info(f"    R²:   {r2:.4f}")
+    logger.info(f"    Mean Pearson r: {mean_pearson:.4f}")
+    
+    # Feature importance
+    importance = model.get_feature_importance()
+    if importance:
+        logger.info(f"\n  Top 10 features by importance:")
+        for i, (feat, imp) in enumerate(importance.get('top_features', [])[:10]):
+            logger.info(f"    {i+1}. Feature {feat}: {imp:.4f}")
+    
+    # Log to TensorBoard
+    if writer:
+        writer.add_scalar(f'fold_{fold_idx+1}/mse', mse, 0)
+        writer.add_scalar(f'fold_{fold_idx+1}/mae', mae, 0)
+        writer.add_scalar(f'fold_{fold_idx+1}/r2', r2, 0)
+        writer.add_scalar(f'fold_{fold_idx+1}/mean_pearson', mean_pearson, 0)
+        
+        # Per-target metrics
+        for i, r in enumerate(pearson_r_per_target):
+            writer.add_scalar(f'fold_{fold_idx+1}/pearson/{target_names[i]}', r, 0)
+    
+    # Build per_target metrics (same format as neural network)
+    per_target = {}
+    for i, name in enumerate(target_names):
+        try:
+            r, p = pearsonr(y_val[:, i], y_pred[:, i])
+            r = r if not np.isnan(r) else 0.0
+        except:
+            r, p = 0.0, 1.0
+        per_target[name] = {
+            'mse': float(mean_squared_error(y_val[:, i], y_pred[:, i])),
+            'mae': float(mean_absolute_error(y_val[:, i], y_pred[:, i])),
+            'pearson_r': float(r)
+        }
+    
+    metrics = {
+        'mse': mse,
+        'mae': mae,
+        'r2': r2,
+        'mean_pearson': mean_pearson,
+        'pearson_per_target': pearson_r_per_target,
+        'per_target': per_target,
+    }
+    
+    return {
+        'model': model,
+        'metrics': metrics,
+        'predictions': y_pred,
+        'labels': y_val,
+        'scalers': {'X': scaler_X, 'y': scaler_y},
+        'feature_importance': importance,
+        'val_indices': val_idx,
+        'history': None  # No training history for boosting
+    }
+
+
+# =============================================================================
+# NEURAL NETWORK TRAINING LOOP
 # =============================================================================
 
 def train_fold(fold_idx, train_idx, val_idx, data, config, device, target_names, 
@@ -691,16 +838,25 @@ def main(config_path: str):
     
     input_type = config['input_type']
     
+    model_type_display = config['model']['type'].upper()
+    is_boosting_model = config['model']['type'] in ['xgboost', 'lightgbm']
+    
     logger.info("\n" + "="*60)
     logger.info(f"EXPERIENCE PREDICTOR - {input_type.upper()} INPUT")
     logger.info("="*60)
     logger.info(f"  Device:     {device}")
-    logger.info(f"  Model:      {config['model']['type'].upper()}")
+    logger.info(f"  Model:      {model_type_display}")
     if config['model']['type'] == 'gnn':
         logger.info(f"  GNN Type:   {config['model']['gnn']['conv_type']}")
-    logger.info(f"  Epochs:     {config['training']['num_epochs']}")
-    logger.info(f"  Batch Size: {config['training']['batch_size']}")
-    logger.info(f"  LR:         {config['training']['learning_rate']}")
+    if is_boosting_model:
+        boosting_cfg = config.get('boosting', {})
+        logger.info(f"  Estimators: {boosting_cfg.get('n_estimators', 100)}")
+        logger.info(f"  Max Depth:  {boosting_cfg.get('max_depth', 3)}")
+        logger.info(f"  LR:         {boosting_cfg.get('learning_rate', 0.1)}")
+    else:
+        logger.info(f"  Epochs:     {config['training']['num_epochs']}")
+        logger.info(f"  Batch Size: {config['training']['batch_size']}")
+        logger.info(f"  LR:         {config['training']['learning_rate']}")
     logger.info(f"  CV Folds:   {config['data']['cv_folds']}")
     logger.info(f"  Seed:       {config['seed']}")
     logger.info(f"  Output:     {output_dir}")
@@ -744,11 +900,27 @@ def main(config_path: str):
     all_labels = []
     indices = np.arange(n_samples)
     
+    # Check if using boosting model
+    model_type = config['model']['type']
+    is_boosting = model_type in ['xgboost', 'lightgbm']
+    
+    if is_boosting:
+        available = get_available_boosting_models()
+        if model_type not in available:
+            raise ImportError(f"{model_type} not installed. Available: {available}")
+        logger.info(f"Using BOOSTING model: {model_type.upper()}")
+    
     for fold_idx, (train_idx, val_idx) in enumerate(kf.split(indices)):
-        result = train_fold(
-            fold_idx, train_idx, val_idx, data, config, device, target_names,
-            writer=writer, output_dir=output_dir
-        )
+        if is_boosting:
+            result = train_fold_boosting(
+                fold_idx, train_idx, val_idx, data, config, target_names,
+                writer=writer, output_dir=output_dir
+            )
+        else:
+            result = train_fold(
+                fold_idx, train_idx, val_idx, data, config, device, target_names,
+                writer=writer, output_dir=output_dir
+            )
         all_results.append(result)
         
         if result['predictions'] is not None:
