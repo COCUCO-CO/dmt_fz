@@ -63,3 +63,19 @@ results_plots/*.html
 .DS_Store
 Thumbs.db
 
+
+# TensorBoard logs and events (very heavy)
+**/tensorboard/
+**/events.out.tfevents.*
+*.tfevents.*
+
+# Hyperparam search outputs (logs, models, tensorboard)
+machine_learning/clf/hyperparam_search/*/exp*/output/
+machine_learning/clf/hyperparam_search/*/exp*/tensorboard/
+machine_learning/clf/hyperparam_search/*/exp*/checkpoints/
+
+# Generated visualization frames (can be regenerated)
+visualizations/plot/*/*.png
+visualizations/plot/*/*.svg
+visualizations/plot/*/*/*.png
+visualizations/plot/*/*/*.svg
