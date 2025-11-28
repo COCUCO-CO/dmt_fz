@@ -295,13 +295,15 @@ python pipeline/pearson.py
 
 <p align="center"><em>Matriz de correlaciones de Metastabilidad (DMT) - 5 bandas × 7 redes × 19 escalas de cuestionarios. Valores significativos tras corrección FDR resaltados. Cada celda muestra el coeficiente r de Pearson entre la metastabilidad de una red en una banda específica y una escala del cuestionario.</em></p>
 
-#### Ejemplo de Correlación Significativa
+#### Ejemplos de Correlaciones Significativas
 
 <p align="center">
-  <img src="readme/pearson_results/scatter_metastability_DMT_Delta_VN_score_0_ASC_Unity.png" alt="Scatter Correlation" width="500"/>
+  <img src="readme/pearson_results/scatter_metastability_DMT_Delta_VN_score_0_ASC_Unity.png" alt="Scatter ASC Unity" width="300"/>
+  <img src="readme/pearson_results/scatter_metastability_DMT_Delta_VN_score_15_MEQ_Mystical.png" alt="Scatter MEQ Mystical" width="300"/>
+  <img src="readme/pearson_results/scatter_metastability_DMT_Delta_VN_score_18_MEQ_Inefability.png" alt="Scatter MEQ Ineffability" width="300"/>
 </p>
 
-<p align="center"><em>Correlación entre Metastabilidad de la Red Visual (banda Delta) y la escala ASC Unity durante DMT. r = 0.606, indicando que mayor variabilidad en la sincronización visual se asocia con experiencias más intensas de unidad mística.</em></p>
+<p align="center"><em>Correlaciones significativas entre Metastabilidad de la Red Visual (Delta) y escalas subjetivas durante DMT. De izquierda a derecha: ASC Unity (r=0.606), MEQ Mystical, MEQ Ineffability. Mayor variabilidad en sincronización visual se asocia con experiencias místicas más intensas.</em></p>
 
 #### Distribución del Parámetro de Kuramoto por Red y Banda
 
