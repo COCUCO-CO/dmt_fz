@@ -320,13 +320,58 @@ python pipeline/pearson.py
 
 ### 🎯 PASO 4: `clustering.py` - Estados Cerebrales
 
-Identificación de estados cerebrales discretos mediante clustering.
+Identificación de estados cerebrales discretos mediante clustering sobre eigenvalores de matrices de sincronización.
 
 ```bash
-python pipeline/clustering.py
+# Búsqueda rápida de configuración óptima (8 configs)
+python pipeline/clustering.py --quick-search --bands Alpha --conditions DMT
+
+# Análisis por condición separada
+python pipeline/clustering.py --quick-search --bands Alpha --conditions EC
 ```
 
-**Tiempo:** ~2-4 horas
+#### Pipeline de Clustering
+
+1. **Extracción de features**: Eigenvalores de matrices de sincronización 102×102
+2. **Escalado**: StandardScaler o RobustScaler
+3. **Reducción**: PCA a 2 componentes
+4. **Clustering**: KMeans o GMM (k=2 óptimo)
+5. **Evaluación**: Silhouette Score con distancia coseno/euclidiana
+
+#### Resultados - Banda Alpha (8-13 Hz)
+
+<p align="center">
+  <img src="readme/clustering_results/clustering_comparison_dmt_vs_ec.png" alt="Clustering DMT vs EC" width="900"/>
+</p>
+
+<p align="center"><em>Comparación de estados cerebrales: DMT muestra dinámica biestable (44/56%) mientras EC muestra dinámica monoestable (5/95%)</em></p>
+
+| Condición | Mejor Configuración | Silhouette | División | Interpretación |
+|-----------|---------------------|------------|----------|----------------|
+| **DMT** | StandardScaler + PCA + KMeans + Cosine | **0.86** | 44% / 56% | **Biestable** - 2 estados alternantes |
+| **EC** | RobustScaler + PCA + GMM + Euclidean | **0.67** | 5% / 95% | **Monoestable** - 1 estado dominante |
+
+#### Silhouette Heatmaps
+
+<p align="center">
+  <img src="readme/clustering_results/silhouette_heatmap_Alpha_DMT.png" alt="Silhouette DMT" width="450"/>
+  <img src="readme/clustering_results/silhouette_heatmap_Alpha_EC.png" alt="Silhouette EC" width="450"/>
+</p>
+
+<p align="center"><em>Izquierda: DMT alcanza Silhouette=0.86 con k=2, PCA=2. Derecha: EC alcanza Silhouette=0.67 con k=2, PCA=2.</em></p>
+
+#### Interpretación Científica
+
+Los resultados apoyan la teoría del **"Entropic Brain"** (Carhart-Harris):
+
+- **DMT induce biestabilidad**: El cerebro oscila entre 2 estados de sincronización diferentes, sugiriendo mayor variabilidad/entropía neural
+- **EC es monoestable**: El estado baseline tiene un patrón dominante y consistente, indicando menor entropía
+
+**Outputs en `results/clustering/`:**
+- `clustering_result.pkl` - Labels y parámetros
+- `silhouette_heatmap_*.png` - Búsqueda de hiperparámetros
+- `pca_scatter_*.png` - Visualización de clusters
+- `cluster_composition_*.png` - Distribución por condición
 
 ---
 
@@ -343,7 +388,7 @@ El módulo `viz_scripts/` genera visualizaciones dinámicas de la sincronizació
 ### Vista Estática
 
 <p align="center">
-  <img src="readme/S01_DMT_Alpha_adv_1000000.png" alt="Static Frame" width="800"/>
+  <img src="readme/S01_DMT_Alpha_adv_1067400.png" alt="Static Frame" width="800"/>
 </p>
 
 <p align="center"><em>Frame completo mostrando: Timeline Kuramoto, Matriz de conectividad, Grafo de red, Círculo de fases</em></p>

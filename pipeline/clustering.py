@@ -931,7 +931,7 @@ def plot_silhouette_heatmap(result: dict, output_dir: Path = None, show: bool = 
         log(f"Guardado: {filepath}")
     
     if show:
-        plt.show()
+plt.show()
     else:
         plt.close(fig)
 
@@ -988,8 +988,8 @@ def plot_cluster_centers(result: dict, output_dir: Path = None, show: bool = Tru
     if n_clusters_show == 1:
         axes = [axes]
     
-    scaler = MinMaxScaler()
-    
+scaler = MinMaxScaler()
+
     for i, ax in enumerate(axes):
         if i >= len(centers_original):
             break
@@ -1016,7 +1016,7 @@ def plot_cluster_centers(result: dict, output_dir: Path = None, show: bool = Tru
         log(f"Guardado: {filepath}")
     
     if show:
-        plt.show()
+    plt.show()
     else:
         plt.close(fig)
 
@@ -1116,7 +1116,7 @@ def plot_pca_scatter(result: dict, output_dir: Path = None, show: bool = True):
         log(f"Guardado: {filepath}")
     
     if show:
-        plt.show()
+plt.show()
     else:
         plt.close(fig)
 
@@ -1262,7 +1262,7 @@ def analyze_cluster_composition(labels: np.ndarray, condition_labels: np.ndarray
         log(f"Guardado: {output_dir}/cluster_composition_{band}.csv")
     
     if show:
-        plt.show()
+  plt.show()
     else:
         plt.close(fig)
     
@@ -1320,8 +1320,8 @@ def build_markov_model(sequence: list, threshold_percentile: float = None) -> di
     Returns:
         Diccionario con modelo, estadísticas y matriz de adyacencia
     """
-    from collections import Counter
-    
+from collections import Counter
+
     model = {}
     seq = list(sequence)
     
@@ -1336,7 +1336,7 @@ def build_markov_model(sequence: list, threshold_percentile: float = None) -> di
     model_probs = {}
     for state in model.keys():
         counts = Counter(model[state])
-        total = sum(counts.values())
+      total = sum(counts.values())
         model_probs[state] = {k: v / total for k, v in counts.items()}
     
     # Construir matriz de adyacencia
