@@ -809,57 +809,98 @@ else:
 #%%
 from scipy import stats
 
-score = 0
-pvalue=0.05
-alpha=0.05
-fdr=True
+# Generate scatter plots for ALL significant correlations (FDR-corrected PER BAND, same as heatmaps)
+print("[INFO] Generating scatter plots for all significant correlations...")
 
-cond = "DMT\\"
-band = "Delta"
-roi = "VN "
+alpha = 0.05
+labels_scatter = list(pd.read_csv(folder / "target_labels.txt", header=None)[0])[:-3]
 
-array1 = np.asarray(r_dict3[cond][band][roi])
-array2 = targets.iloc[:,score].to_numpy()
-x_range = np.linspace(array1.min(),array1.max(),2)
-nas = np.logical_or(np.isnan(array1), np.isnan(array2))
-#r, p = pearsonr(array1[~nas], array2[~nas])
-m, b, r, p, std_err = stats.linregress(array1[~nas], array2[~nas])
+# Network name mapping for axis labels
+net_names = {
+    "FPN": "Frontoparietal Network",
+    "DMN": "Default Mode Network", 
+    "DAN": "Dorsal Attention Network",
+    "LN ": "Limbic Network",
+    "SVA": "Salience/Ventral Attention",
+    "SMN": "Somatomotor Network",
+    "VN ": "Visual Network"
+}
 
-fig, ax = plt.subplots(figsize=(6,6))
-ax.scatter(array1, array2, s=150, edgecolor="black")
-
-#line = m*x_range+b
-#ax.plot(x_range, line)
-ax.axline((array1.mean(),array2.mean()),
-          slope=m, color="black", linestyle=(0, (5, 5)),
-          label="r Pearson = "+str(r)[:5]) #"--")
-
-ax.set_title("Delta - DMT")
-
-ax.set_xlabel("Visual Network - Metastability")
-ax.set_ylabel("ASC Unity")
-
-ax.set_xticks(np.linspace(0.004,0.009,6))
-ax.set_yticks(np.linspace(0,100,6))
-
-ax.spines['top'].set_color('none')
-#ax.spines['bottom'].set_position('zero')
-ax.spines['right'].set_color('none')
-#ax.spines['left'].set_position('zero')
-
-ax.legend()
-cond_clean = cond.replace("\\", "")
-print(f"[INFO] Generating scatter plot for {cond_clean} {band} {roi.strip()} vs target {labels[score]}")
-save_figure(
-    fig,
-    "scatter",
-    "metastability",
-    cond_clean,
-    band,
-    roi.strip(),
-    f"score_{score}",
-    labels[score],
-)
+for dictio, metric_name in [(r_dict2, "Coherence"), (r_dict3, "Metastability")]:
+    for cond in ["DMT\\", "EC\\"]:
+        cond_clean = cond.replace("\\", "")
+        total_significant = 0
+        
+        # Apply FDR correction PER BAND (consistent with heatmaps)
+        for band in band_list:
+            # Collect p-values for this band only
+            band_pvalues = []
+            band_combinations = []
+            
+            for roi in net_list:
+                for score_idx in range(len(labels_scatter)):
+                    array1 = np.asarray(dictio[cond][band][roi])
+                    array2 = targets.iloc[:,score_idx].to_numpy()
+                    nas = np.logical_or(np.isnan(array1), np.isnan(array2))
+                    
+                    if np.sum(~nas) > 2:
+                        r, p = pearsonr(array1[~nas], array2[~nas])
+                        band_pvalues.append(p)
+                        band_combinations.append((roi, score_idx, r, p))
+                    else:
+                        band_pvalues.append(1.0)
+                        band_combinations.append((roi, score_idx, np.nan, 1.0))
+            
+            # Apply FDR correction for this band
+            rejected, pvalues_corrected = fdrcorrection(band_pvalues, alpha=alpha)
+            
+            n_significant = np.sum(rejected)
+            total_significant += n_significant
+            if n_significant > 0:
+                print(f"[INFO] {metric_name} - {cond_clean} - {band}: {n_significant} significant correlations")
+            
+            # Generate scatter plots for significant correlations in this band
+            for idx, (roi, score_idx, r_val, p_orig) in enumerate(band_combinations):
+                if not rejected[idx]:
+                    continue
+                
+                array1 = np.asarray(dictio[cond][band][roi])
+                array2 = targets.iloc[:,score_idx].to_numpy()
+                nas = np.logical_or(np.isnan(array1), np.isnan(array2))
+                
+                m, b, r, p, std_err = stats.linregress(array1[~nas], array2[~nas])
+                
+                fig, ax = plt.subplots(figsize=(8, 6))
+                ax.scatter(array1[~nas], array2[~nas], s=150, edgecolor="black", alpha=0.7)
+                
+                ax.axline((array1[~nas].mean(), array2[~nas].mean()),
+                          slope=m, color="black", linestyle=(0, (5, 5)),
+                          label=f"r = {r:.2f}, p(FDR) = {pvalues_corrected[idx]:.4f}")
+                
+                ax.set_title(f"{band} - {cond_clean}", fontsize=14)
+                
+                roi_name = net_names.get(roi, roi.strip())
+                ax.set_xlabel(f"{roi_name} - {metric_name}", fontsize=12)
+                ax.set_ylabel(labels_scatter[score_idx], fontsize=12)
+                
+                ax.spines['top'].set_color('none')
+                ax.spines['right'].set_color('none')
+                
+                ax.legend(fontsize=10)
+                
+                print(f"  [SCATTER] {metric_name} | {cond_clean} | {band} | {roi.strip()} | {labels_scatter[score_idx]} | r={r:.2f}")
+                save_figure(
+                    fig,
+                    "scatter",
+                    metric_name.lower(),
+                    cond_clean,
+                    band,
+                    roi.strip(),
+                    f"score_{score_idx}",
+                    labels_scatter[score_idx],
+                )
+        
+        print(f"[INFO] {metric_name} - {cond_clean}: Total {total_significant} significant correlations across all bands")
 
 #%%
 from scipy import stats 

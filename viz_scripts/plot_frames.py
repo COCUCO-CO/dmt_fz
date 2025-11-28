@@ -243,7 +243,7 @@ def draw_glow_nodes(ax, pos, colors, sizes, sync_values):
                 ax.scatter(pos[i, 0], pos[i, 1], s=sizes[i] * (1 + glow_layer * 0.3), 
                           c=[colors[i][:3]], alpha=0.1 / glow_layer, edgecolors='none', zorder=2)
     ax.scatter(pos[:n_nodes, 0], pos[:n_nodes, 1], s=sizes[:n_nodes], c=colors[:n_nodes], 
-              edgecolors='white', linewidths=1.5, zorder=3)
+              edgecolors='black', linewidths=1.0, zorder=3)
 
 
 def draw_phase_ring(ax, phases, colors, kuramoto_val, show_legend=True):
@@ -252,7 +252,7 @@ def draw_phase_ring(ax, phases, colors, kuramoto_val, show_legend=True):
     theta_bg = np.linspace(0, 2 * np.pi, 100)
     ax.fill_between(theta_bg, 0.85, 1.15, alpha=0.1, color='gray')
     
-    circle = plt.Circle((0, 0), 1.0, fill=False, color='#555555', 
+    circle = plt.Circle((0, 0), 1.0, fill=False, color='#888888', 
                         linewidth=1.5, linestyle='--', transform=ax.transData._b)
     ax.add_patch(circle)
     
@@ -260,7 +260,7 @@ def draw_phase_ring(ax, phases, colors, kuramoto_val, show_legend=True):
     r_order = np.abs(np.exp(1j * phases).mean())
     
     ax.annotate('', xy=(mean_phase, r_order), xytext=(0, 0),
-               arrowprops=dict(arrowstyle='->', color='#FFD700', lw=4), zorder=10)
+               arrowprops=dict(arrowstyle='->', color='#CC9900', lw=4), zorder=10)
     
     phase_diff = np.abs(np.angle(np.exp(1j * (phases - mean_phase))))
     coherence = 1 - phase_diff / np.pi
@@ -270,9 +270,9 @@ def draw_phase_ring(ax, phases, colors, kuramoto_val, show_legend=True):
     for i in range(n_osc):
         color = colors[i] if i < len(colors) else 'blue'
         ax.scatter(phases[i], radii[i], s=sizes[i], c=[color], 
-                  alpha=0.6 + 0.4 * coherence[i], edgecolors='white', linewidths=0.5, zorder=5)
+                  alpha=0.6 + 0.4 * coherence[i], edgecolors='black', linewidths=0.5, zorder=5)
     
-    ax.set_title(f"Phase Coherence: r = {r_order:.3f}", fontsize=13, fontweight='bold', color='#00FF00', pad=10)
+    ax.set_title(f"Phase Coherence: r = {r_order:.2f}", fontsize=13, fontweight='bold', color='#006600', pad=10)
     ax.set_ylim(0, 1.4)
     ax.set_yticks([])
     ax.set_xticks([])
@@ -280,13 +280,19 @@ def draw_phase_ring(ax, phases, colors, kuramoto_val, show_legend=True):
     
     if show_legend:
         ax.text(0.5, -0.08, '● = Oscillators  |  → = Mean phase (length = r)', 
-               transform=ax.transAxes, ha='center', va='top', fontsize=9, color='#aaaaaa', style='italic')
+               transform=ax.transAxes, ha='center', va='top', fontsize=9, color='#666666', style='italic')
 
 
-def plot_advanced(epoch, fmt="png", quality="high", samples=[0, 200, 400, 600, 799]):
-    """Generate high-quality frames with modern visualization techniques."""
+def plot_advanced(epoch, fmt="png", quality="high", only_points=False, samples=[0, 200, 400, 600, 799]):
+    """Generate high-quality frames with modern visualization techniques.
+    
+    Parameters:
+    -----------
+    only_points : bool
+        If True, show only scatter points in timeline (no connecting lines)
+    """
     save_kwargs, scale = get_savefig_kwargs(fmt, quality)
-    save_kwargs['facecolor'] = '#0a0a0a'
+    save_kwargs['facecolor'] = 'white'
     save_kwargs['edgecolor'] = 'none'
     # Advanced uses higher base DPI
     if quality == "high":
@@ -300,13 +306,13 @@ def plot_advanced(epoch, fmt="png", quality="high", samples=[0, 200, 400, 600, 7
     stc_syncro_mat = plot_utils.subject_syncro["syncros_stc"][plot_utils.band][0][epoch].copy()
     
     for sample in samples:
-        fig = plt.figure(figsize=(24*scale, 22*scale), facecolor='#0a0a0a')
-        fig.patch.set_facecolor('#0a0a0a')
+        fig = plt.figure(figsize=(24*scale, 22*scale), facecolor='white')
+        fig.patch.set_facecolor('white')
         grid_size = (10, 3)
         
         # EEG Timeline
         ax_eeg_timeline = plt.subplot2grid(grid_size, (0, 0), colspan=3)
-        ax_eeg_timeline.set_facecolor('#1a1a1a')
+        ax_eeg_timeline.set_facecolor('white')
         
         full_epochs_count = len(plot_utils.rej) + len(plot_utils.eeg_kuramoto_mat)
         x_timeline = np.arange(full_epochs_count) + 0.5
@@ -314,34 +320,35 @@ def plot_advanced(epoch, fmt="png", quality="high", samples=[0, 200, 400, 600, 7
         y_eeg = np.array([avr_eeg.pop(0) if i not in plot_utils.rej else np.nan for i in range(full_epochs_count)])
         valid_mask = ~np.isnan(y_eeg)
         
-        ax_eeg_timeline.fill_between(x_timeline[valid_mask], 0, y_eeg[valid_mask], alpha=0.3, color='#ff6b6b')
-        ax_eeg_timeline.plot(x_timeline, y_eeg, color='#ff6b6b', linewidth=2)
-        ax_eeg_timeline.scatter(x_timeline[valid_mask], y_eeg[valid_mask], s=15, color='#ff6b6b', zorder=5)
+        # Line and/or scatter (no fill)
+        if not only_points:
+            ax_eeg_timeline.plot(x_timeline, y_eeg, color='#cc0000', linewidth=1.5)
+        ax_eeg_timeline.scatter(x_timeline[valid_mask], y_eeg[valid_mask], s=20, color='#cc0000', zorder=5)
         
         right_epochs = np.argwhere(valid_mask).flatten()
         if epoch < len(right_epochs):
-            ax_eeg_timeline.axvline(x=right_epochs[epoch] + 0.5, color='white', linewidth=2, linestyle='--')
+            ax_eeg_timeline.axvline(x=right_epochs[epoch] + 0.5, color='black', linewidth=2, linestyle='--')
         for i in plot_utils.rej:
-            ax_eeg_timeline.axvline(x=i+0.5, color='gray', alpha=0.5, linewidth=1)
+            ax_eeg_timeline.axvline(x=i+0.5, color='gray', alpha=0.3, linewidth=1)
         
         ax_eeg_timeline.set_xlim(0, full_epochs_count)
         ax_eeg_timeline.set_ylim(0, None)
-        ax_eeg_timeline.set_ylabel('Kuramoto Order', color='white', fontsize=10)
-        ax_eeg_timeline.tick_params(colors='white', labelsize=8)
-        ax_eeg_timeline.set_title('EEG Synchronization', color='white', fontsize=12, fontweight='bold')
+        ax_eeg_timeline.set_ylabel('Kuramoto Order', color='black', fontsize=10)
+        ax_eeg_timeline.tick_params(colors='black', labelsize=8)
+        ax_eeg_timeline.set_title('EEG Synchronization', color='black', fontsize=12, fontweight='bold')
         for spine in ax_eeg_timeline.spines.values():
-            spine.set_color('#333333')
+            spine.set_color('#cccccc')
         
         # EEG Matrix
         ax_eeg_mat = plt.subplot2grid(grid_size, (1, 0), rowspan=4)
-        ax_eeg_mat.set_facecolor('#1a1a1a')
+        ax_eeg_mat.set_facecolor('white')
         plot_mat(eeg_syncro_mat, ax_eeg_mat, ch_order=ch_order, corte=eeg_corte, cmap="Reds",
-                 threshold=plot_utils.eeg_threshold, signal_names=ch_names, fontsize=8, colors=["#ffffff"]*len(ch_names))
-        ax_eeg_mat.set_title('EEG Connectivity Matrix', color='white', fontsize=11, fontweight='bold')
+                 threshold=plot_utils.eeg_threshold, signal_names=ch_names, fontsize=8, colors=["black"]*len(ch_names))
+        ax_eeg_mat.set_title('EEG Connectivity Matrix', color='black', fontsize=11, fontweight='bold')
         
         # EEG Graph
         ax_eeg_graph = plt.subplot2grid(grid_size, (1, 1), rowspan=4)
-        ax_eeg_graph.set_facecolor('#1a1a1a')
+        ax_eeg_graph.set_facecolor('white')
         eeg_pos_array = np.array(list(eeg_coords_2d.values())) if isinstance(eeg_coords_2d, dict) else np.asarray(eeg_coords_2d)
         n_eeg = min(len(ch_names), len(eeg_pos_array), eeg_syncro_mat.shape[0])
         eeg_syncro_limited = eeg_syncro_mat[:n_eeg, :n_eeg]
@@ -352,50 +359,51 @@ def plot_advanced(epoch, fmt="png", quality="high", samples=[0, 200, 400, 600, 7
         draw_gradient_edges(ax_eeg_graph, eeg_pos_array[:n_eeg], eeg_syncro_limited, threshold_pct=plot_utils.eeg_threshold)
         draw_glow_nodes(ax_eeg_graph, eeg_pos_array[:n_eeg], eeg_node_colors, eeg_sizes, eeg_sync_values)
         for i in range(n_eeg):
-            ax_eeg_graph.annotate(ch_names[i], eeg_pos_array[i], ha='center', va='center', fontsize=7, color='white', fontweight='bold', zorder=10)
+            ax_eeg_graph.annotate(ch_names[i], eeg_pos_array[i], ha='center', va='center', fontsize=7, color='black', fontweight='bold', zorder=10)
         ax_eeg_graph.set_xlim(eeg_pos_array[:n_eeg, 0].min() - 0.02, eeg_pos_array[:n_eeg, 0].max() + 0.02)
         ax_eeg_graph.set_ylim(eeg_pos_array[:n_eeg, 1].min() - 0.02, eeg_pos_array[:n_eeg, 1].max() + 0.02)
         ax_eeg_graph.set_aspect('equal')
         ax_eeg_graph.axis('off')
-        ax_eeg_graph.set_title('EEG Network', color='white', fontsize=11, fontweight='bold')
+        ax_eeg_graph.set_title('EEG Network', color='black', fontsize=11, fontweight='bold')
         
         # EEG Phase Ring
         ax_eeg_phase = plt.subplot2grid(grid_size, (1, 2), rowspan=4, projection='polar')
-        ax_eeg_phase.set_facecolor('#1a1a1a')
+        ax_eeg_phase.set_facecolor('white')
         eeg_phases_current = plot_utils.eeg_phase_mat[:n_eeg, sample]
         draw_phase_ring(ax_eeg_phase, eeg_phases_current, eeg_node_colors, 
                        plot_utils.eeg_kuramoto_mat[epoch][sample] if sample < len(plot_utils.eeg_kuramoto_mat[epoch]) else 0)
         
         # STC Timeline
         ax_stc_timeline = plt.subplot2grid(grid_size, (5, 0), colspan=3)
-        ax_stc_timeline.set_facecolor('#1a1a1a')
+        ax_stc_timeline.set_facecolor('white')
         avr_stc = np.asarray(plot_utils.stc_kuramoto_mat).mean(axis=1).tolist()
         y_stc = np.array([avr_stc.pop(0) if i not in plot_utils.rej else np.nan for i in range(full_epochs_count)])
-        ax_stc_timeline.fill_between(x_timeline[valid_mask], 0, y_stc[valid_mask], alpha=0.3, color='#4ecdc4')
-        ax_stc_timeline.plot(x_timeline, y_stc, color='#4ecdc4', linewidth=2)
-        ax_stc_timeline.scatter(x_timeline[valid_mask], y_stc[valid_mask], s=15, color='#4ecdc4', zorder=5)
+        # Line and/or scatter (no fill)
+        if not only_points:
+            ax_stc_timeline.plot(x_timeline, y_stc, color='#009688', linewidth=1.5)
+        ax_stc_timeline.scatter(x_timeline[valid_mask], y_stc[valid_mask], s=20, color='#009688', zorder=5)
         if epoch < len(right_epochs):
-            ax_stc_timeline.axvline(x=right_epochs[epoch] + 0.5, color='white', linewidth=2, linestyle='--')
+            ax_stc_timeline.axvline(x=right_epochs[epoch] + 0.5, color='black', linewidth=2, linestyle='--')
         for i in plot_utils.rej:
-            ax_stc_timeline.axvline(x=i+0.5, color='gray', alpha=0.5, linewidth=1)
+            ax_stc_timeline.axvline(x=i+0.5, color='gray', alpha=0.3, linewidth=1)
         ax_stc_timeline.set_xlim(0, full_epochs_count)
         ax_stc_timeline.set_ylim(0, None)
-        ax_stc_timeline.set_ylabel('Kuramoto Order', color='white', fontsize=10)
-        ax_stc_timeline.tick_params(colors='white', labelsize=8)
-        ax_stc_timeline.set_title('Source Space Synchronization', color='white', fontsize=12, fontweight='bold')
+        ax_stc_timeline.set_ylabel('Kuramoto Order', color='black', fontsize=10)
+        ax_stc_timeline.tick_params(colors='black', labelsize=8)
+        ax_stc_timeline.set_title('Source Space Synchronization', color='black', fontsize=12, fontweight='bold')
         for spine in ax_stc_timeline.spines.values():
-            spine.set_color('#333333')
+            spine.set_color('#cccccc')
         
         # STC Matrix
         ax_stc_mat = plt.subplot2grid(grid_size, (6, 0), rowspan=4)
-        ax_stc_mat.set_facecolor('#1a1a1a')
+        ax_stc_mat.set_facecolor('white')
         plot_mat(stc_syncro_mat, ax_stc_mat, corte=stc_corte, xticks=False, colors=node_colors,
                  cmap="Dynamic", threshold=plot_utils.stc_threshold, signal_names=label_names, fontsize=5)
-        ax_stc_mat.set_title('Source Connectivity Matrix', color='white', fontsize=11, fontweight='bold')
+        ax_stc_mat.set_title('Source Connectivity Matrix', color='black', fontsize=11, fontweight='bold')
         
         # STC Graph
         ax_stc_graph = plt.subplot2grid(grid_size, (6, 1), rowspan=4)
-        ax_stc_graph.set_facecolor('#1a1a1a')
+        ax_stc_graph.set_facecolor('white')
         n_stc = min(len(node_colors), len(stc_coords_2d), stc_syncro_mat.shape[0])
         stc_syncro_limited = stc_syncro_mat[:n_stc, :n_stc]
         stc_sync_values = stc_syncro_limited.mean(axis=1)
@@ -407,29 +415,29 @@ def plot_advanced(epoch, fmt="png", quality="high", samples=[0, 200, 400, 600, 7
         ax_stc_graph.set_ylim(stc_coords_2d[:n_stc, 1].min() - 0.01, stc_coords_2d[:n_stc, 1].max() + 0.01)
         ax_stc_graph.set_aspect('equal')
         ax_stc_graph.axis('off')
-        ax_stc_graph.set_title(f'Source Network ({n_stc} parcels)', color='white', fontsize=11, fontweight='bold')
+        ax_stc_graph.set_title(f'Source Network ({n_stc} parcels)', color='black', fontsize=11, fontweight='bold')
         
         # STC Phase Ring
         ax_stc_phase = plt.subplot2grid(grid_size, (6, 2), rowspan=4, projection='polar')
-        ax_stc_phase.set_facecolor('#1a1a1a')
+        ax_stc_phase.set_facecolor('white')
         stc_phases_current = plot_utils.stc_phase_mat[:n_stc, sample]
         draw_phase_ring(ax_stc_phase, stc_phases_current, stc_node_colors_dynamic,
                        plot_utils.stc_kuramoto_mat[epoch][sample] if sample < len(plot_utils.stc_kuramoto_mat[epoch]) else 0)
         
         # Colorbar for edge strength (plasma colormap)
         cbar_ax = fig.add_axes([0.35, 0.01, 0.30, 0.012])  # [left, bottom, width, height]
-        cbar_ax.set_facecolor('#0a0a0a')
+        cbar_ax.set_facecolor('white')
         gradient = np.linspace(0, 1, 256).reshape(1, -1)
         cbar_ax.imshow(gradient, aspect='auto', cmap='plasma', extent=[0, 1, 0, 1])
         cbar_ax.set_yticks([])
         cbar_ax.set_xticks([0, 0.25, 0.5, 0.75, 1])
-        cbar_ax.set_xticklabels(['0.0', '0.25', '0.5', '0.75', '1.0'], fontsize=9, color='white')
-        cbar_ax.set_xlabel('Connection Strength (PLV)', fontsize=10, color='white', labelpad=2)
+        cbar_ax.set_xticklabels(['0.0', '0.25', '0.5', '0.75', '1.0'], fontsize=9, color='black')
+        cbar_ax.set_xlabel('Connection Strength (PLV)', fontsize=10, color='black', labelpad=2)
         for spine in cbar_ax.spines.values():
-            spine.set_color('#333333')
+            spine.set_color('#cccccc')
         
         fig.suptitle(f"🧠 {plot_utils.subject} | {plot_utils.cond} | {plot_utils.band} Band | Epoch {epoch+1:03d}/{plot_utils.num_epochs:03d}",
-                     fontsize=18, fontweight='bold', color='white', y=0.99)
+                     fontsize=18, fontweight='bold', color='black', y=0.99)
         plt.subplots_adjust(left=0.05, right=0.95, top=0.96, bottom=0.04, hspace=0.35, wspace=0.25)
         
         filename = f"{plot_utils.subject}_{plot_utils.cond}_{plot_utils.band}_adv_{(1000+epoch)*1000+sample}"

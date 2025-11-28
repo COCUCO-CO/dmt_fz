@@ -199,3 +199,7 @@ def build_adjacency_from_distance(distance_matrix: np.ndarray,
     logger.info(f"Built adjacency matrix: {int(adj.sum())} edges")
     return adj
 
+
+
+
+

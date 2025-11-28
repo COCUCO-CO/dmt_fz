@@ -207,3 +207,7 @@ def normalize_data(X_train: np.ndarray,
     
     return X_train, X_val, y_train, y_val, scalers
 
+
+
+
+

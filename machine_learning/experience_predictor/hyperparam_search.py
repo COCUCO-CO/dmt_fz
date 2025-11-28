@@ -34,7 +34,7 @@ SEARCH_SPACE = {
     # Model type for spectral data (tabular)
     # - MLP: Neural network
     # - XGBoost, LightGBM: State-of-the-art for tabular, often best for small N
-    'spectral_model_type': ['mlp', 'xgboost', 'lightgbm'],
+    'spectral_model_type': ['mlp', 'xgboost'],
     
     # GNN conv type - GCN and SAGE are simpler, better for small N
     'gnn_conv_type': ['gatv2', 'cheby'],

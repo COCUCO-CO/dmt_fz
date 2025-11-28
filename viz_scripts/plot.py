@@ -131,6 +131,10 @@ Examples:
                         choices=["high", "medium", "low"],
                         help="Image quality: high (~1MB), medium (~500KB), low (~250KB)")
     
+    # Timeline style
+    parser.add_argument("--only-points", action="store_true",
+                        help="Show only points in Kuramoto timeline (no connecting lines)")
+    
     return parser.parse_args()
 
 
@@ -262,8 +266,10 @@ def main():
     
     elif args.mode == "advanced":
         print(f"[PLOT] Using ADVANCED visualization with modern effects")
+        if args.only_points:
+            print(f"[PLOT] Timeline style: only points (no lines)")
         with Pool(args.workers) as p:
-            p.starmap(plot_advanced, [(e, fmt, quality) for e in epoch_range])
+            p.starmap(plot_advanced, [(e, fmt, quality, args.only_points) for e in epoch_range])
             
     elif args.mode == "video_smooth":
         output = args.output or f"smooth_{args.subject}_{args.condition}_{args.band}.mp4"
