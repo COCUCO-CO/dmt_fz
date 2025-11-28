@@ -1,0 +1,170 @@
+# ============================================================================
+# Variational Autoencoder (VAE) with GAT for EEG Synchronization Graphs
+# OPTIMIZED CONFIG based on dataset analysis
+# ============================================================================
+
+# Paths
+paths:
+  phases_dir: "/media/storage_hdd/dmt_fz/fwd-inv-stc"
+  output_dir: "/media/storage_hdd/dmt_fz/machine_learning/autoencoder/output"
+  dataset_cache: "/media/storage_hdd/dmt_fz/machine_learning/clf/data/cache"
+  checkpoints: "/media/storage_hdd/dmt_fz/machine_learning/autoencoder/checkpoints"
+  tensorboard: "/media/storage_hdd/dmt_fz/machine_learning/autoencoder/runs"
+  activations_dir: "/media/storage_hdd/dmt_fz/machine_learning/autoencoder/activations"
+
+# Data configuration
+data:
+  conditions: ["DMT", "EC", "EO"]
+  bands: ["Delta", "Theta", "Alpha", "Beta", "Gamma"]
+  use_stc: false  # 24 channels (electrodes)
+  
+  graph:
+    fully_connected: true
+    edge_threshold: 0.3
+    edge_threshold_percentile: null
+    max_edges_per_node: null
+    self_loops: false
+    directed: false
+  
+  node_features:
+    use_phase_stats: true
+    use_amplitude_stats: true
+    use_temporal_complexity: true
+    use_network_label: true
+  
+  graph_features:
+    use_kuramoto: true
+    use_global_sync: true
+    use_topology: true
+  
+  split:
+    train_ratio: 0.7
+    val_ratio: 0.15
+    test_ratio: 0.15
+    stratify: true
+    random_state: 42
+    group_by_subject: true
+
+# ============================================================================
+# VAE MODEL - OPTIMIZED
+# ============================================================================
+model:
+  name: "BrainStateVAE"
+  
+  encoder:
+    conv_type: "gatv2"
+    hidden_dim: 64           # Reduced for stability
+    num_gat_layers: 3        # 3 layers for depth
+    num_attention_heads: 4   # 4 heads (output: 64*4=256)
+    cheby_k: 3
+    dropout: 0.2             # Lower dropout - don't lose info
+    attention_dropout: 0.1
+    use_edge_attr: true      # IMPORTANT: edges have the discriminative info
+    concat_heads: true
+    negative_slope: 0.2
+    use_skip_connections: true
+  
+  latent:
+    dim: 64                  # Larger latent for richer representation
+  
+  decoder:
+    hidden_dims: [256, 128]
+    reconstruct_edges: true  # ENABLED: edges are more informative than nodes
+    activation: "leaky_relu" # Better gradients
+    dropout: 0.1
+  
+  pooling:
+    method: "mean"           # Simple and stable
+
+# ============================================================================
+# LOSS - OPTIMIZED for structure learning
+# ============================================================================
+loss:
+  reconstruction:
+    node_weight: 0.3         # REDUCED: nodes are similar across classes
+    edge_weight: 1.0         # INCREASED: edges contain sync info
+    type: "mse"
+  
+  kl:
+    weight: 0.01             # Start very low
+    annealing:
+      enabled: true
+      start: 0.0
+      end: 0.05              # Keep low - focus on reconstruction first
+      epochs: 50             # Slow warmup
+      type: "linear"
+  
+  free_bits: 0.1             # Prevent posterior collapse
+
+# ============================================================================
+# TRAINING - OPTIMIZED
+# ============================================================================
+training:
+  num_epochs: 150
+  batch_size: 256            # Large batch for stable gradients
+  learning_rate: 0.001       # Higher LR with normalized data
+  weight_decay: 1e-5         # Light regularization
+  optimizer: "adamw"
+  
+  scheduler:
+    type: "cosine"           # Smooth decay
+    patience: 10
+    factor: 0.5
+    min_lr: 1e-6
+  
+  early_stopping:
+    patience: 25
+    min_delta: 0.0001
+    monitor: "val_loss"
+  
+  gradient_clipping:
+    enabled: true
+    max_norm: 0.5            # Tighter clipping
+
+# ============================================================================
+# LOGGING
+# ============================================================================
+logging:
+  level: "INFO"
+  tensorboard: true
+  save_frequency: 10
+  log_frequency: 1
+  
+  tensorboard_extras:
+    latent_space: true
+    reconstructions: true
+    attention_weights: true
+    kl_per_dim: true
+    gradient_norms: true
+
+visualization:
+  plot_training_curves: true
+  plot_latent_space: true
+  plot_reconstructions: true
+  num_examples_to_visualize: 10
+  latent_method: "tsne"
+
+# ============================================================================
+# ACTIVATION EXTRACTION
+# ============================================================================
+extraction:
+  layers_to_extract:
+    - "encoder.conv_0"
+    - "encoder.conv_1"
+    - "encoder.conv_2"
+    - "latent"
+    - "pooled"
+  output_format: "pkl"
+  save_attention_weights: true
+  save_per_subject: true
+  clustering_compatible: true
+
+# ============================================================================
+# HARDWARE
+# ============================================================================
+seed: 42
+deterministic: true
+device: "cuda"
+num_workers: 8
+dataset_workers: 8
+pin_memory: true

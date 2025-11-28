@@ -1,0 +1,9 @@
+{
+  "test_loss": 32.38815553983053,
+  "test_recon_loss": 2.179853469133377,
+  "test_kl_loss": 30.20830202102661,
+  "best_val_loss": 2.0342702052809973,
+  "best_epoch": 1,
+  "latent_dim": 64,
+  "num_gat_layers": 3
+}

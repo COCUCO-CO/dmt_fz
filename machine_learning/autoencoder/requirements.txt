@@ -1,0 +1,37 @@
+# VAE with GAT for EEG Brain State Analysis
+# Core dependencies
+
+# PyTorch (install with CUDA support as needed)
+torch>=2.0.0
+torchvision>=0.15.0
+
+# PyTorch Geometric
+torch-geometric>=2.3.0
+torch-scatter
+torch-sparse
+torch-cluster
+torch-spline-conv
+
+# Scientific computing
+numpy>=1.24.0
+scipy>=1.10.0
+pandas>=2.0.0
+scikit-learn>=1.2.0
+
+# Visualization
+matplotlib>=3.7.0
+seaborn>=0.12.0
+
+# Dimensionality reduction
+umap-learn>=0.5.0  # Optional, for UMAP visualization
+
+# Logging and progress
+tensorboard>=2.13.0
+tqdm>=4.65.0
+
+# Configuration
+pyyaml>=6.0
+
+# Utilities
+pickle5>=0.0.11; python_version < '3.8'
+

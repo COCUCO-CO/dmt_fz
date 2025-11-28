@@ -1,0 +1,148 @@
+data:
+  bands:
+  - Delta
+  - Theta
+  - Alpha
+  - Beta
+  - Gamma
+  conditions:
+  - DMT
+  - EC
+  - EO
+  graph:
+    directed: false
+    edge_threshold: 0.3
+    edge_threshold_percentile: null
+    fully_connected: true
+    max_edges_per_node: null
+    self_loops: false
+  graph_features:
+    use_global_sync: true
+    use_kuramoto: true
+    use_topology: true
+  node_features:
+    use_amplitude_stats: true
+    use_network_label: true
+    use_phase_stats: true
+    use_temporal_complexity: true
+  split:
+    group_by_subject: true
+    random_state: 42
+    stratify: true
+    test_ratio: 0.15
+    train_ratio: 0.7
+    val_ratio: 0.15
+  use_stc: false
+dataset_workers: 8
+decoder:
+  hidden_dims:
+  - 256
+  - 128
+  reconstruct_edges: true
+deterministic: true
+device: cuda
+encoder:
+  attention_dropout: 0.1
+  dropout: 0.3
+  hidden_dim: 128
+  num_attention_heads: 2
+  num_gat_layers: 2
+extraction:
+  clustering_compatible: true
+  layers_to_extract:
+  - encoder.conv_0
+  - encoder.conv_1
+  - encoder.conv_2
+  - latent
+  - pooled
+  output_format: pkl
+  save_attention_weights: true
+  save_per_subject: true
+latent:
+  dim: 32
+logging:
+  level: INFO
+  log_frequency: 1
+  save_frequency: 10
+  tensorboard: true
+  tensorboard_extras:
+    attention_weights: true
+    gradient_norms: true
+    kl_per_dim: true
+    latent_space: true
+    reconstructions: true
+loss:
+  free_bits: 0.5
+  kl:
+    annealing:
+      enabled: true
+      end: 0.05
+      epochs: 100
+      start: 0.0
+      type: cyclical
+    weight: 0.001
+  reconstruction:
+    edge_weight: 2.0
+    node_weight: 0.3
+    type: mse
+model:
+  decoder:
+    activation: leaky_relu
+    dropout: 0.1
+    hidden_dims:
+    - 256
+    - 128
+    reconstruct_edges: true
+  encoder:
+    attention_dropout: 0.1
+    cheby_k: 3
+    concat_heads: true
+    conv_type: gatv2
+    dropout: 0.2
+    hidden_dim: 64
+    negative_slope: 0.2
+    num_attention_heads: 4
+    num_gat_layers: 3
+    use_edge_attr: true
+    use_skip_connections: true
+  latent:
+    dim: 64
+  name: BrainStateVAE
+  pooling:
+    method: mean
+num_workers: 8
+paths:
+  activations_dir: /media/storage_hdd/dmt_fz/machine_learning/autoencoder/activations
+  checkpoints: hyperparam_search/search_20251128_192243/exp_000/checkpoints
+  dataset_cache: /media/storage_hdd/dmt_fz/machine_learning/clf/data/cache
+  output_dir: hyperparam_search/search_20251128_192243/exp_000/output
+  phases_dir: /media/storage_hdd/dmt_fz/fwd-inv-stc
+  tensorboard: hyperparam_search/search_20251128_192243/exp_000/runs
+pin_memory: true
+pooling:
+  method: max
+seed: 42
+training:
+  batch_size: 128
+  early_stopping:
+    min_delta: 0.0001
+    monitor: val_loss
+    patience: 30
+  gradient_clipping:
+    enabled: true
+    max_norm: 0.5
+  learning_rate: 0.001
+  num_epochs: 80
+  optimizer: adamw
+  scheduler:
+    factor: 0.5
+    min_lr: 1e-6
+    patience: 10
+    type: cosine
+  weight_decay: 1e-5
+visualization:
+  latent_method: umap
+  num_examples_to_visualize: 10
+  plot_latent_space: true
+  plot_reconstructions: true
+  plot_training_curves: true
