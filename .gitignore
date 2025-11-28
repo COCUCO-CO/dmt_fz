@@ -42,6 +42,12 @@ frames/
 # Pickle files with results
 *.pickle
 
+# Allow clustering results
+!results/clustering/**
+!results/clustering/**/*.pkl
+!results/clustering/**/*.csv
+!results/clustering/**/*.png
+
 # Machine learning models
 *.h5
 EEGNet/models/
