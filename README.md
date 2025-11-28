@@ -297,13 +297,11 @@ python pipeline/pearson.py
 
 #### Ejemplos de Correlaciones Significativas
 
-<p align="center">
-  <img src="readme/pearson_results/scatter_metastability_DMT_Delta_VN_score_0_ASC_Unity.png" alt="Scatter ASC Unity" width="300"/>
-  <img src="readme/pearson_results/scatter_metastability_DMT_Delta_VN_score_15_MEQ_Mystical.png" alt="Scatter MEQ Mystical" width="300"/>
-  <img src="readme/pearson_results/scatter_metastability_DMT_Delta_VN_score_18_MEQ_Inefability.png" alt="Scatter MEQ Ineffability" width="300"/>
-</p>
+| ASC Unity (r=0.61) | MEQ Mystical (r=0.60) | MEQ Ineffability (r=0.59) |
+|:------------------:|:---------------------:|:-------------------------:|
+| ![ASC Unity](readme/pearson_results/scatter_metastability_DMT_Delta_VN_score_0_ASC_Unity.png) | ![MEQ Mystical](readme/pearson_results/scatter_metastability_DMT_Delta_VN_score_15_MEQ_Mystical.png) | ![MEQ Ineffability](readme/pearson_results/scatter_metastability_DMT_Delta_VN_score_18_MEQ_Inefability.png) |
 
-<p align="center"><em>Correlaciones significativas entre Metastabilidad de la Red Visual (Delta) y escalas subjetivas durante DMT. De izquierda a derecha: ASC Unity (r=0.606), MEQ Mystical, MEQ Ineffability. Mayor variabilidad en sincronización visual se asocia con experiencias místicas más intensas.</em></p>
+<p align="center"><em>Correlaciones significativas entre Metastabilidad de la Red Visual (Delta) y escalas subjetivas durante DMT. Mayor variabilidad en sincronización visual se asocia con experiencias místicas más intensas.</em></p>
 
 #### Distribución del Parámetro de Kuramoto por Red y Banda
 
