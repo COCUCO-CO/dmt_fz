@@ -13,7 +13,11 @@ from scipy.fft import fft, fftfreq
 import pandas as pd
 from datetime import datetime
 
-from config import EEG_RAW_DIR, EEG_CLEAN_DIR, THEME_PRIMARY, THEME_SECONDARY, THEME_ACCENT, THEME_TEXT, FREQ_BANDS
+from config import (
+    EEG_RAW_DIR, EEG_CLEAN_DIR, FREQ_BANDS,
+    THEME_BG, THEME_CARD, THEME_BORDER, THEME_PRIMARY, THEME_SECONDARY,
+    THEME_WARN, THEME_TEXT, THEME_TEXT_DIM, SIGNAL_COLORS
+)
 from eeg_loader import load_eeg_file, get_channel_data, scan_eeg_directory, EEGData
 
 # Electrode positions (10-20 system)
@@ -88,67 +92,221 @@ def process_data(data, sfreq):
         out = apply_bandpass(out, sfreq, S.bandpass_low, S.bandpass_high)
     return out
 
-# Styles
+# Styles - Konsole/Terminal aesthetic
 STYLE = f"""
-body {{ background: linear-gradient(135deg, {THEME_PRIMARY} 0%, {THEME_SECONDARY} 100%); font-family: 'JetBrains Mono', monospace; }}
-.dark-card {{ background: rgba(22, 33, 62, 0.9) !important; border: 1px solid rgba(233, 69, 96, 0.3); border-radius: 12px; }}
-.accent-text {{ color: {THEME_ACCENT} !important; }}
-.file-item {{ transition: all 0.2s; cursor: pointer; padding: 8px 12px; border-radius: 8px; margin: 4px 0; }}
-.file-item:hover {{ background: rgba(233, 69, 96, 0.4) !important; }}
-.ch-btn {{ font-size: 0.8rem !important; padding: 4px 10px !important; min-width: 45px !important; margin: 2px !important; }}
-.ch-sel {{ background: {THEME_ACCENT} !important; color: white !important; }}
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+:root {{
+    --bg: {THEME_BG};
+    --card: {THEME_CARD};
+    --border: {THEME_BORDER};
+    --primary: {THEME_PRIMARY};
+    --secondary: {THEME_SECONDARY};
+    --text: {THEME_TEXT};
+    --text-dim: {THEME_TEXT_DIM};
+}}
+
+* {{ scrollbar-width: thin; scrollbar-color: var(--primary) var(--bg); }}
+*::-webkit-scrollbar {{ width: 6px; height: 6px; }}
+*::-webkit-scrollbar-track {{ background: var(--bg); }}
+*::-webkit-scrollbar-thumb {{ background: var(--primary); border-radius: 3px; }}
+
+body {{
+    background: var(--bg) !important;
+    font-family: 'JetBrains Mono', 'IBM Plex Mono', 'SF Mono', monospace !important;
+    color: var(--text) !important;
+}}
+
+.nicegui-content {{ background: transparent !important; }}
+
+.dark-card {{
+    background: var(--card) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 4px !important;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4) !important;
+}}
+
+.accent-text {{ color: var(--primary) !important; text-shadow: 0 0 10px rgba(0, 255, 136, 0.3); }}
+.secondary-text {{ color: var(--secondary) !important; }}
+
+.file-item {{
+    transition: all 0.15s ease;
+    cursor: pointer;
+    padding: 6px 10px;
+    border-radius: 2px;
+    margin: 2px 0;
+    border-left: 2px solid transparent;
+}}
+.file-item:hover {{
+    background: rgba(0, 255, 136, 0.1) !important;
+    border-left-color: var(--primary);
+}}
+
+.ch-btn {{
+    font-size: 0.75rem !important;
+    font-family: 'JetBrains Mono', monospace !important;
+    padding: 3px 8px !important;
+    min-width: 42px !important;
+    margin: 2px !important;
+    background: transparent !important;
+    border: 1px solid var(--border) !important;
+    color: var(--text-dim) !important;
+    border-radius: 2px !important;
+    transition: all 0.15s ease !important;
+}}
+.ch-btn:hover {{
+    border-color: var(--primary) !important;
+    color: var(--primary) !important;
+}}
+.ch-sel {{
+    background: rgba(0, 255, 136, 0.15) !important;
+    border-color: var(--primary) !important;
+    color: var(--primary) !important;
+    box-shadow: 0 0 8px rgba(0, 255, 136, 0.2) !important;
+}}
+
+.q-btn {{
+    font-family: 'JetBrains Mono', monospace !important;
+    text-transform: none !important;
+    letter-spacing: 0 !important;
+}}
+
+.q-field__control {{ background: rgba(0, 0, 0, 0.3) !important; border-radius: 2px !important; }}
+.q-field--dark .q-field__control {{ border: 1px solid var(--border) !important; }}
+
+.terminal-header {{
+    font-size: 0.7rem;
+    color: var(--text-dim);
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    padding-bottom: 4px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 8px;
+}}
+
+.terminal-label {{
+    font-size: 0.85rem;
+    color: var(--text);
+}}
+
+.glow-text {{ text-shadow: 0 0 15px rgba(0, 255, 136, 0.5); }}
 """
 
-# Plot creation with FIXED axes
+# Plot creation with FIXED axes - Terminal style
+PLOT_BG = 'rgba(8,8,8,1)'
+PLOT_GRID = 'rgba(0,255,136,0.08)'
+PLOT_GRID_MINOR = 'rgba(0,255,136,0.03)'
+
 def make_eeg_fig():
     fig = go.Figure()
     fig.update_layout(
-        template='plotly_dark', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(26,26,46,0.8)',
-        margin=dict(l=70, r=10, t=10, b=50), height=280,
-        xaxis=dict(title='Time (s)', gridcolor='rgba(233,69,96,0.1)', fixedrange=False),
-        yaxis=dict(gridcolor='rgba(233,69,96,0.05)', tickfont=dict(size=10), fixedrange=True),
-        showlegend=False, hovermode='x unified'
+        template='plotly_dark',
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor=PLOT_BG,
+        margin=dict(l=70, r=10, t=10, b=50),
+        height=280,
+        font=dict(family='JetBrains Mono, monospace', size=10, color=THEME_TEXT),
+        xaxis=dict(
+            title=dict(text='TIME [s]', font=dict(size=9, color=THEME_PRIMARY)),
+            gridcolor=PLOT_GRID,
+            zerolinecolor=PLOT_GRID,
+            tickfont=dict(size=9, color=THEME_TEXT_DIM),
+            fixedrange=False
+        ),
+        yaxis=dict(
+            gridcolor=PLOT_GRID_MINOR,
+            tickfont=dict(size=9, color=THEME_PRIMARY),
+            fixedrange=True
+        ),
+        showlegend=False,
+        hovermode='x unified',
+        hoverlabel=dict(bgcolor=THEME_CARD, font=dict(family='JetBrains Mono', size=10))
     )
     return fig
 
 def make_fft_fig():
     fig = go.Figure()
-    for band, (lo, hi) in FREQ_BANDS.items():
-        fig.add_vrect(x0=lo, x1=hi, fillcolor='rgba(255,255,255,0.05)', line_width=0)
-        fig.add_annotation(x=(lo+hi)/2, y=1, yref='paper', text=band, showarrow=False, font=dict(size=9, color='rgba(255,255,255,0.5)'))
+    band_colors = ['rgba(0,212,255,0.08)', 'rgba(0,255,136,0.08)', 'rgba(255,204,0,0.08)', 'rgba(255,107,157,0.08)', 'rgba(167,139,250,0.08)']
+    for i, (band, (lo, hi)) in enumerate(FREQ_BANDS.items()):
+        fig.add_vrect(x0=lo, x1=hi, fillcolor=band_colors[i % len(band_colors)], line_width=0)
+        fig.add_annotation(x=(lo+hi)/2, y=1.02, yref='paper', text=band, showarrow=False,
+                          font=dict(size=11, color=THEME_TEXT_DIM, family='JetBrains Mono'))
     fig.update_layout(
-        template='plotly_dark', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(26,26,46,0.8)',
-        margin=dict(l=60, r=10, t=30, b=50), height=220,
-        xaxis=dict(title='Frequency (Hz)', gridcolor='rgba(233,69,96,0.1)', range=[0, 60], fixedrange=True),
-        yaxis=dict(title='Power (µV)', gridcolor='rgba(233,69,96,0.1)', fixedrange=True),
-        showlegend=True, legend=dict(orientation='h', y=1.12, font=dict(size=8)), hovermode='x unified'
+        template='plotly_dark',
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor=PLOT_BG,
+        margin=dict(l=60, r=10, t=30, b=50),
+        height=220,
+        font=dict(family='JetBrains Mono, monospace', size=10, color=THEME_TEXT),
+        xaxis=dict(
+            title=dict(text='FREQ [Hz]', font=dict(size=9, color=THEME_SECONDARY)),
+            gridcolor=PLOT_GRID,
+            range=[0, 60],
+            fixedrange=True,
+            tickfont=dict(size=9, color=THEME_TEXT_DIM)
+        ),
+        yaxis=dict(
+            title=dict(text='PWR [µV]', font=dict(size=9, color=THEME_SECONDARY)),
+            gridcolor=PLOT_GRID,
+            fixedrange=True,
+            tickfont=dict(size=9, color=THEME_TEXT_DIM)
+        ),
+        showlegend=True,
+        legend=dict(orientation='h', y=1.15, font=dict(size=8, color=THEME_TEXT_DIM)),
+        hovermode='x unified',
+        hoverlabel=dict(bgcolor=THEME_CARD, font=dict(family='JetBrains Mono', size=10))
     )
     return fig
 
 def make_hilbert_fig():
-    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, subplot_titles=('Amplitude Envelope', 'Instantaneous Phase'), vertical_spacing=0.18)
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True,
+                        subplot_titles=('<b>ENVELOPE</b>', '<b>PHASE</b>'),
+                        vertical_spacing=0.22)
     fig.update_layout(
-        template='plotly_dark', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(26,26,46,0.8)',
-        margin=dict(l=60, r=10, t=35, b=50), height=220,
-        showlegend=True, legend=dict(orientation='h', y=1.12, font=dict(size=8)), hovermode='x unified'
+        template='plotly_dark',
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor=PLOT_BG,
+        margin=dict(l=60, r=10, t=35, b=50),
+        height=220,
+        font=dict(family='JetBrains Mono, monospace', size=10, color=THEME_TEXT),
+        showlegend=True,
+        legend=dict(orientation='h', y=1.15, font=dict(size=8, color=THEME_TEXT_DIM)),
+        hovermode='x unified',
+        hoverlabel=dict(bgcolor=THEME_CARD, font=dict(family='JetBrains Mono', size=10))
     )
-    fig.update_xaxes(gridcolor='rgba(233,69,96,0.1)', fixedrange=True)
-    fig.update_yaxes(gridcolor='rgba(233,69,96,0.1)', fixedrange=True)
+    fig.update_annotations(font=dict(size=9, color=THEME_WARN, family='JetBrains Mono'))
+    fig.update_xaxes(gridcolor=PLOT_GRID, tickfont=dict(size=9, color=THEME_TEXT_DIM), fixedrange=True)
+    fig.update_yaxes(gridcolor=PLOT_GRID, tickfont=dict(size=9, color=THEME_TEXT_DIM), fixedrange=True)
     return fig
 
 def make_brain_fig():
     fig = go.Figure()
     theta = np.linspace(0, 2*np.pi, 100)
-    fig.add_trace(go.Scatter(x=np.cos(theta), y=np.sin(theta), mode='lines', line=dict(color='rgba(233,69,96,0.6)', width=3), showlegend=False, hoverinfo='skip'))
-    fig.add_trace(go.Scatter(x=[-0.08, 0, 0.08], y=[0.98, 1.12, 0.98], mode='lines', line=dict(color='rgba(233,69,96,0.6)', width=3), showlegend=False, hoverinfo='skip'))
-    fig.add_trace(go.Scatter(x=[-1.02, -1.08, -1.02], y=[0.15, 0, -0.15], mode='lines', line=dict(color='rgba(233,69,96,0.6)', width=2), showlegend=False, hoverinfo='skip'))
-    fig.add_trace(go.Scatter(x=[1.02, 1.08, 1.02], y=[0.15, 0, -0.15], mode='lines', line=dict(color='rgba(233,69,96,0.6)', width=2), showlegend=False, hoverinfo='skip'))
+    # Head outline - terminal green with glow effect
+    head_color = 'rgba(0,255,136,0.5)'
+    fig.add_trace(go.Scatter(x=np.cos(theta), y=np.sin(theta), mode='lines',
+                            line=dict(color=head_color, width=2), showlegend=False, hoverinfo='skip'))
+    # Nose
+    fig.add_trace(go.Scatter(x=[-0.08, 0, 0.08], y=[0.98, 1.12, 0.98], mode='lines',
+                            line=dict(color=head_color, width=2), showlegend=False, hoverinfo='skip'))
+    # Ears
+    fig.add_trace(go.Scatter(x=[-1.02, -1.08, -1.02], y=[0.15, 0, -0.15], mode='lines',
+                            line=dict(color=head_color, width=1.5), showlegend=False, hoverinfo='skip'))
+    fig.add_trace(go.Scatter(x=[1.02, 1.08, 1.02], y=[0.15, 0, -0.15], mode='lines',
+                            line=dict(color=head_color, width=1.5), showlegend=False, hoverinfo='skip'))
     fig.update_layout(
-        template='plotly_dark', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-        margin=dict(l=5, r=5, t=5, b=5), height=280,
+        template='plotly_dark',
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='#0a0a0a',
+        margin=dict(l=5, r=5, t=5, b=5),
+        height=280,
+        font=dict(family='JetBrains Mono, monospace', color=THEME_TEXT),
         xaxis=dict(range=[-1.25, 1.25], showgrid=False, zeroline=False, showticklabels=False, scaleanchor='y', fixedrange=True),
         yaxis=dict(range=[-0.9, 1.2], showgrid=False, zeroline=False, showticklabels=False, fixedrange=True),
-        showlegend=False, hovermode='closest'
+        showlegend=False,
+        hovermode='closest',
+        hoverlabel=dict(bgcolor=THEME_CARD, font=dict(family='JetBrains Mono', size=10, color=THEME_PRIMARY))
     )
     return fig
 
@@ -169,7 +327,7 @@ def update_eeg():
             norm[i] = data[i] / (std * 3) if std > 0 else data[i]
         
         spacing = 2.0 * S.scale_factor
-        colors = ['#e94560', '#00d4ff', '#00ff88', '#ffd700', '#ff6b9d', '#00ffcc', '#ff9500', '#a855f7', '#22d3ee', '#f472b6', '#84cc16', '#fb923c']
+        colors = SIGNAL_COLORS
         
         # Fixed Y-axis range based on number of channels
         y_min = -spacing
@@ -211,8 +369,8 @@ def update_fft():
         mask = freqs <= 60
         freqs, fft_v = freqs[mask], fft_v[:, mask]
         
-        colors = ['#e94560', '#00d4ff', '#00ff88', '#ffd700', '#ff6b9d']
-        fills = ['rgba(233,69,96,0.2)', 'rgba(0,212,255,0.2)', 'rgba(0,255,136,0.2)', 'rgba(255,215,0,0.2)', 'rgba(255,107,157,0.2)']
+        colors = SIGNAL_COLORS[:5]
+        fills = ['rgba(0,255,136,0.15)', 'rgba(0,212,255,0.15)', 'rgba(255,204,0,0.15)', 'rgba(255,107,157,0.15)', 'rgba(167,139,250,0.15)']
         
         with S.fft_plot:
             S.fft_plot.figure.data = []
@@ -235,10 +393,10 @@ def update_hilbert():
         
         with S.hilbert_plot:
             S.hilbert_plot.figure.data = []
-            S.hilbert_plot.figure.add_trace(go.Scatter(x=times, y=data, name='Signal', line=dict(color='#00d4ff', width=1)), row=1, col=1)
-            S.hilbert_plot.figure.add_trace(go.Scatter(x=times, y=amp, name='Envelope', line=dict(color='#e94560', width=2)), row=1, col=1)
-            S.hilbert_plot.figure.add_trace(go.Scatter(x=times, y=-amp, showlegend=False, line=dict(color='#e94560', width=2)), row=1, col=1)
-            S.hilbert_plot.figure.add_trace(go.Scatter(x=times, y=phase, name='Phase', line=dict(color='#00ff88', width=1)), row=2, col=1)
+            S.hilbert_plot.figure.add_trace(go.Scatter(x=times, y=data, name='Signal', line=dict(color=THEME_SECONDARY, width=1)), row=1, col=1)
+            S.hilbert_plot.figure.add_trace(go.Scatter(x=times, y=amp, name='Envelope', line=dict(color=THEME_PRIMARY, width=2)), row=1, col=1)
+            S.hilbert_plot.figure.add_trace(go.Scatter(x=times, y=-amp, showlegend=False, line=dict(color=THEME_PRIMARY, width=2)), row=1, col=1)
+            S.hilbert_plot.figure.add_trace(go.Scatter(x=times, y=phase, name='Phase', line=dict(color=THEME_WARN, width=1)), row=2, col=1)
             S.hilbert_plot.update()
     except Exception as e:
         print(f"Hilbert error: {e}")
@@ -271,15 +429,18 @@ def update_brain():
             S.brain_plot.figure.data = S.brain_plot.figure.data[:4]
             if uns_x:
                 S.brain_plot.figure.add_trace(go.Scatter(x=uns_x, y=uns_y, mode='markers+text',
-                    marker=dict(size=12, color='rgba(80,80,80,0.4)', line=dict(width=1, color='rgba(100,100,100,0.5)')),
-                    text=uns_l, textposition='top center', textfont=dict(size=7, color='rgba(150,150,150,0.5)'),
+                    marker=dict(size=12, color='rgba(30,30,30,0.6)', line=dict(width=1, color='rgba(60,60,60,0.5)')),
+                    text=uns_l, textposition='top center', textfont=dict(size=7, color='rgba(100,100,100,0.6)', family='JetBrains Mono'),
                     hoverinfo='text', hovertext=uns_l, showlegend=False))
             if sel_x:
+                # Custom colorscale: dark blue -> cyan -> green -> yellow
+                terminal_scale = [[0, '#0d47a1'], [0.25, '#00bcd4'], [0.5, '#00ff88'], [0.75, '#ffcc00'], [1, '#ff5722']]
                 S.brain_plot.figure.add_trace(go.Scatter(x=sel_x, y=sel_y, mode='markers+text',
-                    marker=dict(size=18, color=sel_c, colorscale='RdYlBu_r', cmin=0, cmax=1,
-                               line=dict(width=2, color='white'), showscale=True,
-                               colorbar=dict(title='µV', len=0.5, thickness=10, x=1.02)),
-                    text=sel_l, textposition='top center', textfont=dict(size=8, color='white'),
+                    marker=dict(size=18, color=sel_c, colorscale=terminal_scale, cmin=0, cmax=1,
+                               line=dict(width=2, color=THEME_PRIMARY), showscale=True,
+                               colorbar=dict(title=dict(text='µV', font=dict(size=9, color=THEME_TEXT_DIM)),
+                                           len=0.5, thickness=8, x=1.02, tickfont=dict(size=8, color=THEME_TEXT_DIM))),
+                    text=sel_l, textposition='top center', textfont=dict(size=8, color=THEME_PRIMARY, family='JetBrains Mono'),
                     hoverinfo='text', hovertext=sel_t, showlegend=False))
             S.brain_plot.update()
     except Exception as e:
@@ -298,7 +459,7 @@ def refresh_channels():
     S.channel_container.clear()
     with S.channel_container:
         if not S.eeg_data:
-            ui.label('Load a file first').classes('opacity-50')
+            ui.label('-- load file first --').style(f'color:{THEME_TEXT_DIM}; font-family: JetBrains Mono; font-size: 0.8rem;')
             return
         
         eeg_chs = [ch for ch, t in S.eeg_data.channel_types.items() if t == 'eeg']
@@ -345,12 +506,12 @@ def refresh_hilbert_select():
     S.hilbert_select_container.clear()
     with S.hilbert_select_container:
         if S.selected_channels:
-            ui.label('Ch:').classes('text-xs opacity-50')
+            ui.label('ch:').style(f'color:{THEME_TEXT_DIM}; font-family: JetBrains Mono; font-size: 0.7rem;')
             def on_sel(e):
                 S.hilbert_channel = e.value
                 update_hilbert()
             val = S.hilbert_channel if S.hilbert_channel in S.selected_channels else S.selected_channels[0]
-            ui.select(options=S.selected_channels, value=val, on_change=on_sel).props('dense').classes('w-24')
+            ui.select(options=S.selected_channels, value=val, on_change=on_sel).props('dense dark').classes('w-24')
 
 def refresh_info():
     if not S.info_container:
@@ -358,12 +519,18 @@ def refresh_info():
     S.info_container.clear()
     with S.info_container:
         if S.eeg_data:
-            ui.label(f'📄 {S.eeg_data.filename}').classes('accent-text font-medium')
-            ui.label(f'Sample Rate: {S.eeg_data.sfreq:.0f} Hz')
-            ui.label(f'Channels: {S.eeg_data.n_channels}')
-            ui.label(f'Duration: {S.eeg_data.duration_sec:.1f}s ({S.eeg_data.duration_sec/60:.1f} min)')
+            ui.label(S.eeg_data.filename).style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.85rem;')
+            with ui.row().classes('gap-1 items-center'):
+                ui.label('sfreq:').style(f'color:{THEME_TEXT_DIM}; font-family: JetBrains Mono; font-size: 0.75rem;')
+                ui.label(f'{S.eeg_data.sfreq:.0f} Hz').style(f'color:{THEME_SECONDARY}; font-family: JetBrains Mono; font-size: 0.75rem;')
+            with ui.row().classes('gap-1 items-center'):
+                ui.label('channels:').style(f'color:{THEME_TEXT_DIM}; font-family: JetBrains Mono; font-size: 0.75rem;')
+                ui.label(str(S.eeg_data.n_channels)).style(f'color:{THEME_SECONDARY}; font-family: JetBrains Mono; font-size: 0.75rem;')
+            with ui.row().classes('gap-1 items-center'):
+                ui.label('duration:').style(f'color:{THEME_TEXT_DIM}; font-family: JetBrains Mono; font-size: 0.75rem;')
+                ui.label(f'{S.eeg_data.duration_sec:.1f}s').style(f'color:{THEME_SECONDARY}; font-family: JetBrains Mono; font-size: 0.75rem;')
         else:
-            ui.label('No file loaded').classes('opacity-50')
+            ui.label('-- no file loaded --').style(f'color:{THEME_TEXT_DIM}; font-family: JetBrains Mono; font-size: 0.8rem;')
 
 # Navigation
 def nav_start():
@@ -429,12 +596,12 @@ def save_epochs():
 # Main page
 @ui.page('/')
 def main():
-    ui.add_css(STYLE)
-    ui.add_head_html('<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">')
+    ui.add_head_html(f'<style>{STYLE}</style>')
     
-    with ui.header().classes('items-center px-4 py-2').style(f'background: {THEME_PRIMARY}; border-bottom: 2px solid {THEME_ACCENT};'):
-        ui.icon('psychology', size='lg').classes('accent-text')
-        ui.label('EEG VIEWER').classes('text-xl font-bold ml-2').style(f'color: {THEME_TEXT};')
+    with ui.header().classes('items-center px-4 py-1').style(f'background: {THEME_BG}; border-bottom: 1px solid {THEME_BORDER};'):
+        ui.label('▶').style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.75rem; letter-spacing: 2px;')
+        ui.label('EEG_VIEWER').classes('text-base font-medium ml-2').style(f'color: {THEME_PRIMARY}; font-family: JetBrains Mono; letter-spacing: 1px;')
+        ui.label('v1.0').classes('text-xs ml-2').style(f'color: {THEME_TEXT_DIM}; font-family: JetBrains Mono;')
     
     with ui.row().classes('w-full p-4 gap-4').style('min-height: calc(100vh - 50px);'):
         
@@ -443,7 +610,7 @@ def main():
             
             # FILE BROWSER
             with ui.card().classes('dark-card p-4 w-full'):
-                ui.label('📂 File Browser').classes('font-bold accent-text text-lg mb-3')
+                ui.label('// FILE_BROWSER').classes('terminal-header')
                 
                 async def load_file(fp):
                     try:
@@ -463,9 +630,9 @@ def main():
                         ui.notify(f'Error: {e}', type='negative')
                 
                 with ui.scroll_area().classes('w-full').style('height: 300px;'):
-                    for lbl, files in [('🔴 Raw EEG', scan_eeg_directory(EEG_RAW_DIR)), ('🟢 Clean EEG', scan_eeg_directory(EEG_CLEAN_DIR))]:
+                    for lbl, files in [('raw/', scan_eeg_directory(EEG_RAW_DIR)), ('clean/', scan_eeg_directory(EEG_CLEAN_DIR))]:
                         if files:
-                            ui.label(lbl).classes('text-sm font-bold accent-text mt-3 mb-2')
+                            ui.label(f'├─ {lbl}').style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mt-3 mb-2')
                             conds = {}
                             for f in files:
                                 conds.setdefault(f['condition'], []).append(f)
@@ -481,13 +648,13 @@ def main():
             
             # FILE INFO
             with ui.card().classes('dark-card p-4 w-full'):
-                ui.label('📊 File Info').classes('font-bold accent-text text-lg mb-2')
+                ui.label('// FILE_INFO').classes('terminal-header')
                 S.info_container = ui.column().classes('w-full gap-1')
                 refresh_info()
             
             # CHANNEL SELECTION
             with ui.card().classes('dark-card p-4 w-full'):
-                ui.label('📍 Channel Selection').classes('font-bold accent-text text-lg mb-2')
+                ui.label('// CHANNELS').classes('terminal-header')
                 with ui.row().classes('gap-2 mb-3'):
                     ui.button('ALL', on_click=select_all_ch).props('dense')
                     ui.button('10', on_click=select_10_ch).props('dense')
@@ -501,7 +668,7 @@ def main():
             # FILTERS
             with ui.card().classes('dark-card p-3'):
                 with ui.row().classes('items-center gap-4 flex-wrap'):
-                    ui.label('🔧 Filters').classes('font-bold accent-text')
+                    ui.label('FILTERS:').style(f'color:{THEME_SECONDARY}; font-family: JetBrains Mono; font-size: 0.75rem; letter-spacing: 1px;')
                     notch_sw = ui.switch('Notch', value=S.notch_enabled).props('dense')
                     notch_hz = ui.number(value=S.notch_freq, min=45, max=65).props('dense').classes('w-16')
                     ui.label('Hz').classes('text-xs opacity-50')
@@ -520,7 +687,7 @@ def main():
             with ui.row().classes('gap-4 w-full'):
                 with ui.card().classes('dark-card p-3').style('flex: 2;'):
                     with ui.row().classes('items-center justify-between mb-1'):
-                        ui.label('📈 EEG Signal').classes('font-bold accent-text')
+                        ui.label('▌EEG_SIGNAL').style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.8rem; letter-spacing: 1px;')
                         with ui.row().classes('gap-1'):
                             ui.button('-', on_click=lambda: (setattr(S, 'scale_factor', max(0.2, S.scale_factor*0.7)), update_eeg())).props('dense flat size=xs')
                             ui.button('1x', on_click=lambda: (setattr(S, 'scale_factor', 1.0), update_eeg())).props('dense flat size=xs')
@@ -543,18 +710,18 @@ def main():
                         S.time_label = ui.label('0:00.0 / 0:00.0').classes('text-sm font-mono opacity-70')
                 
                 with ui.card().classes('dark-card p-3').style('flex: 1; min-width: 320px;'):
-                    ui.label('🧠 Brain Topography').classes('font-bold accent-text mb-1')
+                    ui.label('▌TOPOGRAPHY').style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.8rem; letter-spacing: 1px;').classes('mb-1')
                     S.brain_plot = ui.plotly(make_brain_fig()).classes('w-full')
             
             # BOTTOM ROW: FFT + HILBERT
             with ui.row().classes('gap-4 w-full'):
                 with ui.card().classes('dark-card p-3 flex-1'):
-                    ui.label('📊 FFT (Power Spectrum)').classes('font-bold accent-text mb-1')
+                    ui.label('▌FFT_SPECTRUM').style(f'color:{THEME_SECONDARY}; font-family: JetBrains Mono; font-size: 0.8rem; letter-spacing: 1px;').classes('mb-1')
                     S.fft_plot = ui.plotly(make_fft_fig()).classes('w-full')
                 
                 with ui.card().classes('dark-card p-3 flex-1'):
                     with ui.row().classes('items-center gap-2 mb-1'):
-                        ui.label('🌊 Hilbert Transform').classes('font-bold accent-text')
+                        ui.label('▌HILBERT').style(f'color:{THEME_WARN}; font-family: JetBrains Mono; font-size: 0.8rem; letter-spacing: 1px;')
                         S.hilbert_select_container = ui.row().classes('items-center gap-1')
                         refresh_hilbert_select()
                     S.hilbert_plot = ui.plotly(make_hilbert_fig()).classes('w-full')
@@ -562,7 +729,7 @@ def main():
             # EPOCHS
             with ui.card().classes('dark-card p-3'):
                 with ui.row().classes('items-center gap-4'):
-                    ui.label('📦 Dataset Generation').classes('font-bold accent-text')
+                    ui.label('DATASET:').style(f'color:{THEME_SECONDARY}; font-family: JetBrains Mono; font-size: 0.75rem; letter-spacing: 1px;')
                     ui.label('Epoch:').classes('text-xs opacity-50')
                     ep_dur = ui.number(value=S.epoch_duration, min=0.5, max=30, step=0.5).props('dense').classes('w-20')
                     ep_dur.on('update:model-value', lambda e: setattr(S, 'epoch_duration', e.args or 2))
