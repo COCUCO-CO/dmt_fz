@@ -16,8 +16,9 @@ except ImportError:
 
 # Si no hay configuración personalizada, usar detección automática
 if CUSTOM_BASE_DIR is None:
-    # BASE_DIR apunta al directorio padre (dmt/) desde pipeline/
-    BASE_DIR = Path(__file__).resolve().parent.parent
+    # BASE_DIR apunta al proyecto raíz (dmt_fz/) desde dashboard/pipeline_backend/
+    # Subir 3 niveles: paths.py -> pipeline_backend -> dashboard -> dmt_fz
+    BASE_DIR = Path(__file__).resolve().parent.parent.parent
     
     # Información del sistema operativo
     system = platform.system()

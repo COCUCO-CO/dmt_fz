@@ -398,17 +398,20 @@ from matplotlib.colors import to_rgb, to_rgba #,rgb2hex
 from scipy.stats import pearsonr
 from statsmodels.stats.multitest import fdrcorrection
 
-from skimage import color
-
 import numpy as np
 #from sklearn.preprocessing import MinMaxScaler
 from itertools import product
+
+# Simple rgb2gray without skimage dependency
+def rgb2gray(rgb):
+    """Convert RGB to grayscale using standard luminance formula."""
+    return 0.2989 * rgb[0] + 0.5870 * rgb[1] + 0.1140 * rgb[2]
 
 # cmap = plt.get_cmap('plasma')
 def to_gray(x):
   rgba = cm.twilight_shifted(abs(x))
   rgb = to_rgb(rgba) # RGBA to RGB
-  gray = color.rgb2gray(np.asarray(rgb)) # RGB to Gray
+  gray = rgb2gray(rgb) # RGB to Gray (no skimage needed)
   return cm.gray(gray)
 
 def r_to_color(r):
