@@ -593,16 +593,539 @@ def save_epochs():
     pd.DataFrame([{'file': S.eeg_data.filename, 'sfreq': S.eeg_data.sfreq, 'n': len(S.epochs), 'dur': S.epoch_duration}]).to_csv(out / f'{nm}_meta_{ts}.csv', index=False)
     ui.notify(f'Saved to {out}', type='positive')
 
-# Main page
+# =============================================================================
+# PIPELINE PAGE
+# =============================================================================
+
+# Pipeline state
+class PipelineState:
+    def __init__(self):
+        self.running = False
+        self.current_step = ""
+        self.log_container = None
+        self.progress = 0
+        self.refresh_files = None  # Function to refresh file browser
+        # Pipeline parameters
+        self.max_subjects = 0  # 0 = all
+        self.conditions = ["DMT", "EC", "EO"]
+        self.jobs = 0  # 0 = auto
+        self.workers = 7
+        self.bands = ["Delta", "Theta", "Alpha", "Beta", "Gamma"]
+        self.min_k = 2
+        self.max_k = 15
+        self.min_comps = 2
+        self.max_comps = 10
+
+PS = PipelineState()
+
+PIPELINE_DIR = Path(__file__).parent.parent / "dashboard" / "pipeline_backend"
+PIPELINE_OUTPUTS = Path(__file__).parent.parent / "pipeline_outputs"
+RESULTS_BASE = Path(__file__).parent.parent / "fwd-inv-stc"
+DEFAULT_INPUT_DIR = Path(__file__).parent.parent / "EEG_CLEAN"
+
+def get_run_dirs():
+    """List existing pipeline runs"""
+    if not PIPELINE_OUTPUTS.exists():
+        return []
+    return sorted([d.name for d in PIPELINE_OUTPUTS.iterdir() if d.is_dir() and d.name.startswith('run_')], reverse=True)
+
+def create_new_run():
+    """Create a new run directory with timestamp"""
+    ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+    run_dir = PIPELINE_OUTPUTS / f"run_{ts}"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    for cond in ["DMT", "EC", "EO"]:
+        (run_dir / cond).mkdir(exist_ok=True)
+    return run_dir
+
+def pipeline_log(msg):
+    """Add message to pipeline log"""
+    if PS.log_container:
+        with PS.log_container:
+            ui.label(msg).style(f'color:{THEME_TEXT}; font-family: JetBrains Mono; font-size: 0.75rem;')
+
+async def run_pipeline_step(script_name, args_list, step_name, output_dir=None, input_dir=None):
+    """Run a pipeline script with arguments"""
+    import subprocess
+    import os as _os
+    
+    if PS.running:
+        ui.notify('Pipeline already running', type='warning')
+        return
+    
+    PS.running = True
+    PS.current_step = step_name
+    
+    script_path = PIPELINE_DIR / script_name
+    if not script_path.exists():
+        ui.notify(f'Script not found: {script_path}', type='negative')
+        PS.running = False
+        return
+    
+    # Use -u for unbuffered output so we see logs in real-time
+    cmd = ["python", "-u", str(script_path)] + args_list
+    pipeline_log(f"[{step_name}] Starting: {' '.join(cmd)}")
+    
+    # Set environment variables for input/output directories
+    env = _os.environ.copy()
+    env['PYTHONUNBUFFERED'] = '1'  # Force unbuffered output
+    if input_dir:
+        env['PIPELINE_INPUT_DIR'] = str(input_dir)
+        pipeline_log(f"[{step_name}] Input dir: {input_dir}")
+    if output_dir:
+        env['PIPELINE_OUTPUT_DIR'] = str(output_dir)
+        pipeline_log(f"[{step_name}] Output dir: {output_dir}")
+    
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=str(PIPELINE_DIR.parent.parent),
+            env=env
+        )
+        
+        # Read both stdout and stderr
+        async def read_stream(stream, prefix=""):
+            while True:
+                line = await stream.readline()
+                if not line:
+                    break
+                text = line.decode().strip()
+                if text:
+                    pipeline_log(f"{prefix}{text}")
+        
+        # Read both streams concurrently
+        await asyncio.gather(
+            read_stream(process.stdout),
+            read_stream(process.stderr, "[ERR] ")
+        )
+        
+        await process.wait()
+        
+        if process.returncode == 0:
+            pipeline_log(f"[{step_name}] ✓ Completed successfully")
+            ui.notify(f'{step_name} completed!', type='positive')
+        else:
+            pipeline_log(f"[{step_name}] ✗ Failed with code {process.returncode}")
+            ui.notify(f'{step_name} failed', type='negative')
+            
+    except Exception as e:
+        import traceback
+        pipeline_log(f"[{step_name}] ERROR: {str(e)}")
+        pipeline_log(traceback.format_exc())
+        ui.notify(f'Error: {e}', type='negative')
+    finally:
+        PS.running = False
+        PS.current_step = ""
+
+
+@ui.page('/pipeline')
+def pipeline_page():
+    ui.add_head_html(f'<style>{STYLE}</style>')
+    
+    # Header with navigation
+    with ui.header().classes('items-center px-4 py-1').style(f'background: {THEME_BG}; border-bottom: 1px solid {THEME_BORDER};'):
+        ui.label('▶').style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.75rem;')
+        ui.label('EEG_PIPELINE').classes('text-base font-medium ml-2').style(f'color: {THEME_PRIMARY}; font-family: JetBrains Mono;')
+        ui.label('v1.0').classes('text-xs ml-2').style(f'color: {THEME_TEXT_DIM}; font-family: JetBrains Mono;')
+        with ui.row().classes('ml-auto gap-2'):
+            ui.button('VIEWER', on_click=lambda: ui.navigate.to('/')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
+            ui.button('PIPELINE', on_click=lambda: ui.navigate.to('/pipeline')).props('flat dense').style(f'color:{THEME_PRIMARY};')
+    
+    with ui.row().classes('w-full p-4 gap-4').style('min-height: calc(100vh - 50px);'):
+        
+        # LEFT: Pipeline Controls
+        with ui.column().classes('gap-4').style('width: 450px;'):
+            
+            # INPUT/OUTPUT CONFIGURATION
+            with ui.card().classes('dark-card p-4 w-full').style(f'border: 1px solid {THEME_PRIMARY};'):
+                ui.label('// INPUT_OUTPUT_DIRS').classes('terminal-header')
+                
+                # INPUT DIRECTORY
+                with ui.row().classes('items-center gap-2 mt-2 w-full'):
+                    ui.label('INPUT:').style(f'color:{THEME_SECONDARY}; font-family: JetBrains Mono; font-size: 0.75rem; min-width: 60px;')
+                    input_dir_field = ui.input(value=str(DEFAULT_INPUT_DIR)).props('dense').classes('flex-1')
+                    
+                    def scan_input_dir():
+                        p = Path(input_dir_field.value)
+                        if p.exists():
+                            conds = [d.name for d in p.iterdir() if d.is_dir() and d.name in ['DMT', 'EC', 'EO']]
+                            files = sum(len(list((p / c).glob('*.set'))) for c in conds if (p / c).exists())
+                            ui.notify(f'Found: {conds}, {files} files', type='info')
+                            pipeline_log(f"[INPUT] Scanned {p}: {conds}, {files} .set files")
+                        else:
+                            ui.notify('Directory not found', type='warning')
+                    
+                    ui.button(icon='search', on_click=scan_input_dir).props('flat dense size=sm')
+                
+                ui.label('Directorio con subcarpetas DMT/, EC/, EO/ y archivos .set').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem; margin-left: 68px;')
+                
+                # Mutable container for input dir
+                current_input_dir = [DEFAULT_INPUT_DIR]
+                def get_input_dir():
+                    return Path(input_dir_field.value) if input_dir_field.value else DEFAULT_INPUT_DIR
+                
+                ui.separator().classes('my-2')
+                
+                # OUTPUT DIRECTORY
+                with ui.row().classes('items-center gap-2 w-full'):
+                    ui.label('OUTPUT:').style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.75rem; min-width: 60px;')
+                    
+                    run_label = ui.label('(crear NEW RUN)').style(f'color:{THEME_TEXT_DIM}; font-family: JetBrains Mono; font-size: 0.8rem;')
+                    current_run_dir = [None]
+                    
+                    def refresh_run_label():
+                        if current_run_dir[0]:
+                            run_label.text = str(current_run_dir[0].name)
+                            run_label.style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.8rem;')
+                        else:
+                            run_label.text = '(crear NEW RUN)'
+                            run_label.style(f'color:{THEME_TEXT_DIM}; font-family: JetBrains Mono; font-size: 0.8rem;')
+                    
+                    async def new_run():
+                        run_dir = await asyncio.get_event_loop().run_in_executor(None, create_new_run)
+                        current_run_dir[0] = run_dir
+                        refresh_run_label()
+                        if PS.refresh_files: PS.refresh_files()
+                        ui.notify(f'Nuevo run: {run_dir.name}', type='positive')
+                        pipeline_log(f"[RUN] Created: {run_dir}")
+                    
+                    ui.button('NEW RUN', on_click=new_run, icon='add').props('dense').style(f'background:{THEME_PRIMARY}; color:black;')
+                    
+                    existing_runs = get_run_dirs()
+                    if existing_runs:
+                        run_select = ui.select(existing_runs, label='continuar:').props('dense').classes('w-36')
+                        def use_existing():
+                            if run_select.value:
+                                current_run_dir[0] = PIPELINE_OUTPUTS / run_select.value
+                                refresh_run_label()
+                                if PS.refresh_files: PS.refresh_files()
+                                pipeline_log(f"[RUN] Using existing: {current_run_dir[0]}")
+                        run_select.on('update:model-value', lambda e: use_existing())
+                
+                ui.label(f'📁 {PIPELINE_OUTPUTS}/run_* (no pisa fwd-inv-stc/)').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem; margin-left: 68px;')
+            
+            # GLOBAL PARAMETERS - Clean grid layout
+            with ui.card().classes('dark-card p-4 w-full'):
+                ui.label('// GLOBAL_PARAMS').classes('terminal-header')
+                
+                # Use CSS grid for aligned parameters
+                with ui.element('div').classes('w-full').style('display: grid; grid-template-columns: 100px 1fr; gap: 8px 12px; align-items: center;'):
+                    # Conditions row
+                    ui.label('Conditions').style(f'color:{THEME_TEXT_DIM}; font-family: JetBrains Mono; font-size: 0.75rem;')
+                    with ui.row().classes('gap-3 items-center'):
+                        cond_dmt = ui.checkbox('DMT', value=True).props('dense')
+                        cond_ec = ui.checkbox('EC', value=True).props('dense')
+                        cond_eo = ui.checkbox('EO', value=True).props('dense')
+                    
+                    # Max subjects row
+                    ui.label('Max subjects').style(f'color:{THEME_TEXT_DIM}; font-family: JetBrains Mono; font-size: 0.75rem;')
+                    with ui.row().classes('gap-2 items-center'):
+                        max_subj = ui.number(value=0, min=0, max=100).props('dense').classes('w-20')
+                        ui.label('0 = all').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
+                    
+                    # Max epochs row
+                    ui.label('Max epochs').style(f'color:{THEME_TEXT_DIM}; font-family: JetBrains Mono; font-size: 0.75rem;')
+                    with ui.row().classes('gap-2 items-center'):
+                        max_epochs = ui.number(value=0, min=0, max=500).props('dense').classes('w-20')
+                        ui.label('0 = all').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
+                    
+                    # Workers row
+                    ui.label('Workers').style(f'color:{THEME_TEXT_DIM}; font-family: JetBrains Mono; font-size: 0.75rem;')
+                    with ui.row().classes('gap-2 items-center'):
+                        workers_num = ui.number(value=7, min=1, max=32).props('dense').classes('w-20')
+                    
+                    # Jobs row
+                    ui.label('Jobs').style(f'color:{THEME_TEXT_DIM}; font-family: JetBrains Mono; font-size: 0.75rem;')
+                    with ui.row().classes('gap-2 items-center'):
+                        jobs_num = ui.number(value=0, min=0, max=64).props('dense').classes('w-20')
+                        ui.label('0 = auto').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
+                
+                def get_conditions():
+                    conds = []
+                    if cond_dmt.value: conds.append('DMT')
+                    if cond_ec.value: conds.append('EC')
+                    if cond_eo.value: conds.append('EO')
+                    return conds
+            
+            # STEP 1: FWD.PY
+            with ui.card().classes('dark-card p-4 w-full'):
+                ui.label('// STEP_1: SOURCE_LOCALIZATION').classes('terminal-header')
+                ui.label('fwd.py - Forward/Inverse Solution + Metrics').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                ui.label('→ run_*/phases-{subj}.pkl').style(f'color:{THEME_PRIMARY}; font-size: 0.65rem;')
+                
+                with ui.row().classes('gap-2 mt-3'):
+                    async def run_fwd():
+                        if not current_run_dir[0]:
+                            ui.notify('Primero creá un NEW RUN', type='warning')
+                            return
+                        args = [
+                            '--max-subjects', str(int(max_subj.value or 0)),
+                            '--conditions'] + get_conditions() + [
+                            '--jobs', str(int(jobs_num.value or 0)),
+                            '--workers', str(int(workers_num.value or 7)),
+                            '--max-epochs', str(int(max_epochs.value or 0))
+                        ]
+                        await run_pipeline_step('fwd.py', args, 'Source Localization', current_run_dir[0], get_input_dir())
+                    
+                    ui.button('RUN fwd.py', on_click=run_fwd, icon='play_arrow').props('dense').style(f'background:{THEME_PRIMARY}; color:black;')
+                    ui.label('~3-4h (o menos con max_epochs)').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
+            
+            # STEP 2: MULTI2POOL2.PY
+            with ui.card().classes('dark-card p-4 w-full'):
+                ui.label('// STEP_2: NETWORK_FILTERING').classes('terminal-header')
+                ui.label('multi2pool2.py - Filter by brain networks (DMN, FPN, etc)').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                ui.label('→ run_*/order_all-{subj}.pkl').style(f'color:{THEME_PRIMARY}; font-size: 0.65rem;')
+                
+                with ui.row().classes('gap-2 mt-3'):
+                    async def run_multi():
+                        if not current_run_dir[0]:
+                            ui.notify('Primero creá un NEW RUN', type='warning')
+                            return
+                        await run_pipeline_step('multi2pool2.py', [], 'Network Filtering', current_run_dir[0])
+                    
+                    ui.button('RUN multi2pool2.py', on_click=run_multi, icon='play_arrow').props('dense').style(f'background:{THEME_SECONDARY}; color:black;')
+                    ui.label('~2-5 min').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
+            
+            # STEP 3: GENERATE_ORDER.PY
+            with ui.card().classes('dark-card p-4 w-full'):
+                ui.label('// STEP_3: KURAMOTO_ORDER').classes('terminal-header')
+                ui.label('generate_order.py - Calculate Kuramoto order parameter').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                ui.label('→ run_*/order-{subj}.pkl').style(f'color:{THEME_PRIMARY}; font-size: 0.65rem;')
+                
+                with ui.row().classes('gap-2 mt-3'):
+                    async def run_order():
+                        if not current_run_dir[0]:
+                            ui.notify('Primero creá un NEW RUN', type='warning')
+                            return
+                        args = ['--workers', str(int(workers_num.value or 7)), '--conditions'] + get_conditions()
+                        await run_pipeline_step('generate_order.py', args, 'Kuramoto Order', current_run_dir[0])
+                    
+                    ui.button('RUN generate_order.py', on_click=run_order, icon='play_arrow').props('dense').style(f'background:{THEME_WARN}; color:black;')
+                    ui.label('~1 min').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
+            
+            # STEP 4: CLUSTERING.PY
+            with ui.card().classes('dark-card p-4 w-full'):
+                ui.label('// STEP_4: CLUSTERING').classes('terminal-header')
+                ui.label('clustering.py - Brain state identification').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                ui.label('→ run_*/clustering_results/').style(f'color:{THEME_PRIMARY}; font-size: 0.65rem;')
+                
+                with ui.row().classes('gap-4 items-center mt-2'):
+                    ui.label('Bands:').style(f'color:{THEME_TEXT_DIM}; font-family: JetBrains Mono; font-size: 0.7rem;')
+                    band_delta = ui.checkbox('δ', value=True).props('dense')
+                    band_theta = ui.checkbox('θ', value=True).props('dense')
+                    band_alpha = ui.checkbox('α', value=True).props('dense')
+                    band_beta = ui.checkbox('β', value=True).props('dense')
+                    band_gamma = ui.checkbox('γ', value=True).props('dense')
+                
+                with ui.row().classes('gap-3 items-center mt-2'):
+                    ui.label('Clusters:').style(f'color:{THEME_TEXT_DIM}; font-family: JetBrains Mono; font-size: 0.7rem;')
+                    min_k = ui.number(value=2, min=2, max=20).props('dense').classes('w-16')
+                    ui.label('-').style(f'color:{THEME_TEXT_DIM};')
+                    max_k = ui.number(value=15, min=2, max=30).props('dense').classes('w-16')
+                    
+                    ui.label('PCA:').style(f'color:{THEME_TEXT_DIM}; font-family: JetBrains Mono; font-size: 0.7rem;')
+                    min_pca = ui.number(value=2, min=2, max=20).props('dense').classes('w-16')
+                    ui.label('-').style(f'color:{THEME_TEXT_DIM};')
+                    max_pca = ui.number(value=10, min=2, max=30).props('dense').classes('w-16')
+                
+                search_mode = ui.toggle(['Quick', 'Full'], value='Quick').props('dense')
+                
+                with ui.row().classes('gap-2 mt-3'):
+                    async def run_clustering():
+                        if not current_run_dir[0]:
+                            ui.notify('Primero creá un NEW RUN', type='warning')
+                            return
+                        bands = []
+                        if band_delta.value: bands.append('Delta')
+                        if band_theta.value: bands.append('Theta')
+                        if band_alpha.value: bands.append('Alpha')
+                        if band_beta.value: bands.append('Beta')
+                        if band_gamma.value: bands.append('Gamma')
+                        
+                        mode_arg = '--quick-search' if search_mode.value == 'Quick' else '--full-search'
+                        cluster_out = str(current_run_dir[0] / "clustering_results")
+                        args = [
+                            mode_arg,
+                            '--conditions'] + get_conditions() + [
+                            '--bands'] + bands + [
+                            '--min-k', str(int(min_k.value)),
+                            '--max-k', str(int(max_k.value)),
+                            '--min-comps', str(int(min_pca.value)),
+                            '--max-comps', str(int(max_pca.value)),
+                            '--workers', str(int(workers_num.value or 4)),
+                            '--output-dir', cluster_out
+                        ]
+                        await run_pipeline_step('clustering.py', args, 'Clustering', current_run_dir[0])
+                    
+                    ui.button('RUN clustering.py', on_click=run_clustering, icon='play_arrow').props('dense').style(f'background:#ff6b9d; color:black;')
+                    ui.label('Quick: ~30min, Full: ~4h').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
+            
+            # STEP 5: PEARSON.PY
+            with ui.card().classes('dark-card p-4 w-full'):
+                ui.label('// STEP_5: CORRELATIONS').classes('terminal-header')
+                ui.label('pearson.py - Correlate with questionnaires').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                
+                with ui.row().classes('gap-2 mt-3'):
+                    async def run_pearson():
+                        if not current_run_dir[0]:
+                            ui.notify('Primero creá un NEW RUN', type='warning')
+                            return
+                        await run_pipeline_step('pearson.py', [], 'Correlations', current_run_dir[0])
+                    
+                    ui.button('RUN pearson.py', on_click=run_pearson, icon='play_arrow').props('dense').style(f'background:#a78bfa; color:black;')
+                    ui.label('~3-5 min').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
+        
+        # RIGHT: Log Output + File Browser
+        with ui.column().classes('flex-1 gap-4'):
+            # LOG OUTPUT
+            with ui.card().classes('dark-card p-4 w-full'):
+                with ui.row().classes('items-center gap-3 mb-2'):
+                    ui.label('// OUTPUT_LOG').classes('terminal-header')
+                    
+                    def clear_log():
+                        if PS.log_container:
+                            PS.log_container.clear()
+                    ui.button('CLEAR', on_click=clear_log, icon='delete').props('flat dense size=sm')
+                
+                with ui.scroll_area().classes('w-full').style('height: 45vh; background: #050505; border-radius: 4px;'):
+                    PS.log_container = ui.column().classes('w-full p-3 gap-0')
+                    with PS.log_container:
+                        ui.label('Pipeline ready. Select a step and click RUN.').style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.75rem;')
+                        ui.label(f'Pipeline directory: {PIPELINE_DIR}').style(f'color:{THEME_TEXT_DIM}; font-family: JetBrains Mono; font-size: 0.7rem;')
+            
+            # SYSTEM MONITOR
+            with ui.card().classes('dark-card p-3 w-full'):
+                with ui.row().classes('items-center gap-3 mb-2'):
+                    ui.label('// SYSTEM').classes('terminal-header')
+                    
+                    system_container = ui.row().classes('flex-1 gap-4 items-center')
+                    
+                    def update_system_stats():
+                        import psutil
+                        system_container.clear()
+                        with system_container:
+                            # CPU
+                            cpu_percent = psutil.cpu_percent(interval=0.1)
+                            cpu_count = psutil.cpu_count()
+                            cpu_color = THEME_PRIMARY if cpu_percent < 50 else (THEME_WARN if cpu_percent < 80 else '#ff4444')
+                            
+                            with ui.column().classes('gap-0'):
+                                ui.label(f'CPU {cpu_percent:.0f}%').style(f'color:{cpu_color}; font-family: JetBrains Mono; font-size: 0.8rem; font-weight: bold;')
+                                ui.label(f'{cpu_count} cores').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
+                            
+                            # Per-core usage (compact)
+                            per_cpu = psutil.cpu_percent(percpu=True)
+                            with ui.row().classes('gap-1 flex-wrap'):
+                                for i, pct in enumerate(per_cpu[:16]):  # Show max 16 cores
+                                    color = THEME_PRIMARY if pct < 50 else (THEME_WARN if pct < 80 else '#ff4444')
+                                    ui.label(f'{pct:.0f}').style(f'color:{color}; font-family: JetBrains Mono; font-size: 0.6rem; min-width: 20px; text-align: center;')
+                            
+                            # Memory
+                            mem = psutil.virtual_memory()
+                            mem_used_gb = mem.used / (1024**3)
+                            mem_total_gb = mem.total / (1024**3)
+                            mem_color = THEME_PRIMARY if mem.percent < 60 else (THEME_WARN if mem.percent < 85 else '#ff4444')
+                            
+                            with ui.column().classes('gap-0'):
+                                ui.label(f'RAM {mem.percent:.0f}%').style(f'color:{mem_color}; font-family: JetBrains Mono; font-size: 0.8rem; font-weight: bold;')
+                                ui.label(f'{mem_used_gb:.1f}/{mem_total_gb:.0f}GB').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
+                            
+                            # GPU (if available)
+                            try:
+                                import GPUtil
+                                gpus = GPUtil.getGPUs()
+                                if gpus:
+                                    gpu = gpus[0]
+                                    gpu_color = THEME_PRIMARY if gpu.load*100 < 50 else (THEME_WARN if gpu.load*100 < 80 else '#ff4444')
+                                    with ui.column().classes('gap-0'):
+                                        ui.label(f'GPU {gpu.load*100:.0f}%').style(f'color:{gpu_color}; font-family: JetBrains Mono; font-size: 0.8rem; font-weight: bold;')
+                                        ui.label(f'{gpu.memoryUsed:.0f}/{gpu.memoryTotal:.0f}MB').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
+                            except:
+                                pass
+                    
+                    ui.button(icon='refresh', on_click=update_system_stats).props('flat dense size=sm')
+                    
+                    # Auto-refresh timer
+                    ui.timer(2.0, update_system_stats)
+                    update_system_stats()
+            
+            # FILE BROWSER for current run
+            with ui.card().classes('dark-card p-4 w-full'):
+                with ui.row().classes('items-center gap-3 mb-2'):
+                    ui.label('// RUN_FILES').classes('terminal-header')
+                    
+                    file_browser_container = ui.column().classes('w-full')
+                    
+                    def refresh_files():
+                        file_browser_container.clear()
+                        if not current_run_dir[0] or not current_run_dir[0].exists():
+                            with file_browser_container:
+                                ui.label('No run selected').style(f'color:{THEME_TEXT_DIM}; font-size: 0.75rem;')
+                            return
+                        
+                        run_path = current_run_dir[0]
+                        with file_browser_container:
+                            # Count files by type
+                            def count_files(pattern):
+                                return len(list(run_path.rglob(pattern)))
+                            
+                            stats = {
+                                'phases': count_files('phases-*.pkl'),
+                                'order_all': count_files('order_all-*.pkl'),
+                                'order': count_files('order-*.pkl'),
+                                'clustering': count_files('clustering_results/**/*.pkl') + count_files('clustering_results/**/*.csv'),
+                                'pearson': count_files('pearson_results/**/*'),
+                                'extra': 1 if (run_path / 'extra.pkl').exists() else 0,
+                            }
+                            
+                            ui.label(f'📁 {run_path.name}').style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.8rem;')
+                            
+                            with ui.row().classes('gap-4 mt-2 flex-wrap'):
+                                for name, count in stats.items():
+                                    color = THEME_PRIMARY if count > 0 else THEME_TEXT_DIM
+                                    ui.label(f'{name}: {count}').style(f'color:{color}; font-family: JetBrains Mono; font-size: 0.7rem;')
+                            
+                            ui.separator().classes('my-2')
+                            
+                            # List directories and files
+                            with ui.scroll_area().classes('w-full').style('height: 20vh;'):
+                                for item in sorted(run_path.iterdir()):
+                                    if item.is_dir():
+                                        file_count = len(list(item.rglob('*')))
+                                        ui.label(f'📁 {item.name}/ ({file_count} files)').style(f'color:{THEME_SECONDARY}; font-family: JetBrains Mono; font-size: 0.7rem;')
+                                    else:
+                                        size_kb = item.stat().st_size / 1024
+                                        size_str = f'{size_kb:.1f}KB' if size_kb < 1024 else f'{size_kb/1024:.1f}MB'
+                                        ui.label(f'📄 {item.name} ({size_str})').style(f'color:{THEME_TEXT_DIM}; font-family: JetBrains Mono; font-size: 0.7rem;')
+                    
+                    ui.button('REFRESH', on_click=refresh_files, icon='refresh').props('flat dense size=sm')
+                
+                # Store refresh function and do initial refresh
+                PS.refresh_files = refresh_files
+                refresh_files()
+
+
+# Update main page header to include navigation
 @ui.page('/')
-def main():
+def main_with_nav():
     ui.add_head_html(f'<style>{STYLE}</style>')
     
     with ui.header().classes('items-center px-4 py-1').style(f'background: {THEME_BG}; border-bottom: 1px solid {THEME_BORDER};'):
         ui.label('▶').style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.75rem; letter-spacing: 2px;')
         ui.label('EEG_VIEWER').classes('text-base font-medium ml-2').style(f'color: {THEME_PRIMARY}; font-family: JetBrains Mono; letter-spacing: 1px;')
         ui.label('v1.0').classes('text-xs ml-2').style(f'color: {THEME_TEXT_DIM}; font-family: JetBrains Mono;')
+        with ui.row().classes('ml-auto gap-2'):
+            ui.button('VIEWER', on_click=lambda: ui.navigate.to('/')).props('flat dense').style(f'color:{THEME_PRIMARY};')
+            ui.button('PIPELINE', on_click=lambda: ui.navigate.to('/pipeline')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
     
+    # Rest of the main page content (call original main function logic)
+    main_content()
+
+
+def main_content():
+    """Main page content - separated for reuse"""
     with ui.row().classes('w-full p-4 gap-4').style('min-height: calc(100vh - 50px);'):
         
         # LEFT SIDEBAR - FULL WIDTH TO CONTENT
@@ -738,6 +1261,9 @@ def main():
                     ui.button('Generate', on_click=lambda: ep_lbl.set_text(f'Epochs: {gen_epochs()}'), icon='auto_awesome').props('dense')
                     ui.button('Save Dataset', on_click=save_epochs, icon='save').props('dense color=green')
 
+
 if __name__ in {"__main__", "__mp_main__"}:
     print("EEG VIEWER - http://localhost:8080")
+    print("  - Viewer:  http://localhost:8080/")
+    print("  - Pipeline: http://localhost:8080/pipeline")
     ui.run(title='EEG Viewer', port=8080, reload=False, show=False, dark=True)
