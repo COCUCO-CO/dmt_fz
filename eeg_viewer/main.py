@@ -1161,8 +1161,10 @@ def pipeline_page():
                     
                     # VISUALIZE TAB - Unified Visualization Dashboard
                     with ui.tab_panel(tab_viz).classes('p-0').style('height: 100%; overflow: hidden;'):
-                        # State for visualization
-                        viz_state = {'data': None, 'file': None}
+                        # State for visualization - use nonlocal dict to persist across tab switches
+                        if not hasattr(PS, 'viz_state'):
+                            PS.viz_state = {'data': None, 'file': None, 'loaded': False}
+                        viz_state = PS.viz_state
                         
                         with ui.column().classes('w-full h-full').style('display: flex; flex-direction: column; overflow: hidden;'):
                             # FIXED HEADER - Data Selection with custom path support (outside scroll area)
@@ -1352,10 +1354,13 @@ def pipeline_page():
                                         
                                         def update_network_plot():
                                             network_plot_container.clear()
+                                            data = viz_state.get('data')
+                                            if not data:
+                                                with network_plot_container:
+                                                    ui.label('Load data first').style(f'color:{THEME_TEXT_DIM}; font-size: 0.75rem;')
+                                                return
                                             try:
                                                 from viz_scripts import brain_3d
-                                                data = viz_state.get('data')
-                                                
                                                 with network_plot_container:
                                                     fig = brain_3d.create_network_comparison_figure(data, viz_band.value)
                                                     ui.plotly(fig).classes('w-full').style('height: 350px;')
@@ -1363,7 +1368,9 @@ def pipeline_page():
                                                 with network_plot_container:
                                                     ui.label(f'Error: {e}').style(f'color:{THEME_TEXT_DIM};')
                                         
-                                        update_network_plot()
+                                        # Don't auto-load without data
+                                        if viz_state.get('data'):
+                                            update_network_plot()
                                 
                                 # SECOND ROW - Kuramoto Analysis
                                 with ui.row().classes('w-full gap-3'):
@@ -1375,10 +1382,13 @@ def pipeline_page():
                                         
                                         def update_kuramoto_timeline():
                                             kura_timeline_container.clear()
+                                            data = viz_state.get('data')
+                                            if not data:
+                                                with kura_timeline_container:
+                                                    ui.label('Load data first').style(f'color:{THEME_TEXT_DIM}; font-size: 0.75rem;')
+                                                return
                                             try:
                                                 from viz_scripts import kuramoto_viz
-                                                data = viz_state.get('data')
-                                                
                                                 with kura_timeline_container:
                                                     fig = kuramoto_viz.create_timeline_figure(data, viz_band.value)
                                                     ui.plotly(fig).classes('w-full').style('height: 280px;')
@@ -1399,7 +1409,8 @@ def pipeline_page():
                                                     ui.label(f'Error: {e}').style(f'color:{THEME_TEXT_DIM};')
                                         
                                         ui.button('All Bands', on_click=show_all_bands).props('dense flat size=sm').classes('mb-1')
-                                        update_kuramoto_timeline()
+                                        if viz_state.get('data'):
+                                            update_kuramoto_timeline()
                                     
                                     # Band Comparison
                                     with ui.card().classes('dark-card p-3 flex-1'):
@@ -1409,10 +1420,13 @@ def pipeline_page():
                                         
                                         def update_band_comparison():
                                             band_comp_container.clear()
+                                            data = viz_state.get('data')
+                                            if not data:
+                                                with band_comp_container:
+                                                    ui.label('Load data first').style(f'color:{THEME_TEXT_DIM}; font-size: 0.75rem;')
+                                                return
                                             try:
                                                 from viz_scripts import kuramoto_viz
-                                                data = viz_state.get('data')
-                                                
                                                 with band_comp_container:
                                                     fig = kuramoto_viz.create_band_comparison_figure(data)
                                                     ui.plotly(fig).classes('w-full').style('height: 280px;')
@@ -1420,7 +1434,8 @@ def pipeline_page():
                                                 with band_comp_container:
                                                     ui.label(f'Error: {e}').style(f'color:{THEME_TEXT_DIM};')
                                         
-                                        update_band_comparison()
+                                        if viz_state.get('data'):
+                                            update_band_comparison()
                                 
                                 # THIRD ROW - More Analysis
                                 with ui.row().classes('w-full gap-3'):
@@ -1432,10 +1447,13 @@ def pipeline_page():
                                         
                                         def update_phase_plot():
                                             phase_container.clear()
+                                            data = viz_state.get('data')
+                                            if not data:
+                                                with phase_container:
+                                                    ui.label('Load data first').style(f'color:{THEME_TEXT_DIM}; font-size: 0.75rem;')
+                                                return
                                             try:
                                                 from viz_scripts import kuramoto_viz
-                                                data = viz_state.get('data')
-                                                
                                                 with phase_container:
                                                     fig = kuramoto_viz.create_phase_distribution_figure(data, viz_band.value, int(viz_epoch.value or 0))
                                                     ui.plotly(fig).classes('w-full').style('height: 280px;')
@@ -1443,7 +1461,8 @@ def pipeline_page():
                                                 with phase_container:
                                                     ui.label(f'Error: {e}').style(f'color:{THEME_TEXT_DIM};')
                                         
-                                        update_phase_plot()
+                                        if viz_state.get('data'):
+                                            update_phase_plot()
                                     
                                     # Sync Matrix
                                     with ui.card().classes('dark-card p-3 flex-1'):
@@ -1453,10 +1472,13 @@ def pipeline_page():
                                         
                                         def update_sync_matrix():
                                             sync_matrix_container.clear()
+                                            data = viz_state.get('data')
+                                            if not data:
+                                                with sync_matrix_container:
+                                                    ui.label('Load data first').style(f'color:{THEME_TEXT_DIM}; font-size: 0.75rem;')
+                                                return
                                             try:
                                                 from viz_scripts import kuramoto_viz
-                                                data = viz_state.get('data')
-                                                
                                                 with sync_matrix_container:
                                                     fig = kuramoto_viz.create_heatmap_figure(data, viz_band.value, int(viz_epoch.value or 0))
                                                     ui.plotly(fig).classes('w-full').style('height: 280px;')
@@ -1464,7 +1486,8 @@ def pipeline_page():
                                                 with sync_matrix_container:
                                                     ui.label(f'Error: {e}').style(f'color:{THEME_TEXT_DIM};')
                                         
-                                        update_sync_matrix()
+                                        if viz_state.get('data'):
+                                            update_sync_matrix()
                                     
                                     # Connectivity Graph
                                     with ui.card().classes('dark-card p-3 flex-1'):
@@ -1475,10 +1498,13 @@ def pipeline_page():
                                         
                                         def update_connectivity():
                                             connectivity_container.clear()
+                                            data = viz_state.get('data')
+                                            if not data:
+                                                with connectivity_container:
+                                                    ui.label('Load data first').style(f'color:{THEME_TEXT_DIM}; font-size: 0.75rem;')
+                                                return
                                             try:
                                                 from viz_scripts import kuramoto_viz
-                                                data = viz_state.get('data')
-                                                
                                                 with connectivity_container:
                                                     fig = kuramoto_viz.create_roi_connectivity_figure(data, viz_band.value, conn_threshold.value)
                                                     ui.plotly(fig).classes('w-full').style('height: 250px;')
@@ -1487,7 +1513,8 @@ def pipeline_page():
                                                     ui.label(f'Error: {e}').style(f'color:{THEME_TEXT_DIM};')
                                         
                                         conn_threshold.on('update:model-value', lambda e: update_connectivity())
-                                        update_connectivity()
+                                        if viz_state.get('data'):
+                                            update_connectivity()
                                 
                                 # FOURTH ROW - Hilbert Transform Visualizations
                                 with ui.row().classes('w-full gap-3'):
@@ -1499,10 +1526,13 @@ def pipeline_page():
                                         
                                         def update_hilbert_2d():
                                             hilbert_2d_container.clear()
+                                            data = viz_state.get('data')
+                                            if not data:
+                                                with hilbert_2d_container:
+                                                    ui.label('Load data first').style(f'color:{THEME_TEXT_DIM}; font-size: 0.75rem;')
+                                                return
                                             try:
                                                 from viz_scripts import kuramoto_viz
-                                                data = viz_state.get('data')
-                                                
                                                 with hilbert_2d_container:
                                                     fig = kuramoto_viz.create_hilbert_2d_figure(data, viz_band.value, int(viz_epoch.value or 0))
                                                     ui.plotly(fig).classes('w-full').style('height: 500px;')
@@ -1512,7 +1542,8 @@ def pipeline_page():
                                         
                                         # Store reference for later updates
                                         viz_state['update_hilbert_2d'] = update_hilbert_2d
-                                        update_hilbert_2d()
+                                        if viz_state.get('data'):
+                                            update_hilbert_2d()
                                     
                                     # Hilbert 3D
                                     with ui.card().classes('dark-card p-3 flex-1'):
@@ -1522,9 +1553,13 @@ def pipeline_page():
                                         
                                         def update_hilbert_3d():
                                             hilbert_3d_container.clear()
+                                            data = viz_state.get('data')
+                                            if not data:
+                                                with hilbert_3d_container:
+                                                    ui.label('Load data first').style(f'color:{THEME_TEXT_DIM}; font-size: 0.75rem;')
+                                                return
                                             try:
                                                 from viz_scripts import kuramoto_viz
-                                                data = viz_state.get('data')
                                                 subj = viz_subject.value or 'S01'
                                                 # Extract condition from subject (S01-DMT -> DMT)
                                                 cond = 'DMT'
@@ -1547,7 +1582,8 @@ def pipeline_page():
                                         
                                         # Store reference for later updates
                                         viz_state['update_hilbert_3d'] = update_hilbert_3d
-                                        update_hilbert_3d()
+                                        if viz_state.get('data'):
+                                            update_hilbert_3d()
                                 
                                 # FIFTH ROW - Clustering (if available)
                                 with ui.expansion('CLUSTERING ANALYSIS', icon='analytics').classes('w-full').style(f'background:{THEME_CARD};'):
