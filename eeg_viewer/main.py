@@ -3,6 +3,9 @@
 EEG Viewer - Powerful EEG Processing Interface
 """
 import asyncio
+import os
+import sys
+import re
 from pathlib import Path
 from nicegui import ui
 import plotly.graph_objects as go
@@ -740,6 +743,7 @@ def pipeline_page():
         with ui.row().classes('ml-auto gap-2'):
             ui.button('VIEWER', on_click=lambda: ui.navigate.to('/')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
             ui.button('PIPELINE', on_click=lambda: ui.navigate.to('/pipeline')).props('flat dense').style(f'color:{THEME_PRIMARY};')
+            ui.button('MODEL', on_click=lambda: ui.navigate.to('/model')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
     
     with ui.row().classes('w-full p-4 gap-4').style('height: calc(100vh - 50px); align-items: stretch;'):
         
@@ -1902,6 +1906,627 @@ def pipeline_page():
                                             ui.button('Clear Log', on_click=clear_log, icon='delete').props('dense flat')
 
 
+# =============================================================================
+# MODEL TRAINING PAGE
+# =============================================================================
+
+class ModelState:
+    """State for model training page."""
+    def __init__(self):
+        self.dataset_path = ""
+        self.dataset_info = {}
+        self.dataset_type = None  # 'graph', 'image', etc.
+        self.model_type = "vae"
+        self.training = False
+        self.current_process = None
+        self.history = {'train_loss': [], 'val_loss': [], 'recon_loss': [], 'kl_loss': [], 'epoch': []}
+        self.log_container = None
+        self.loss_plot = None
+        self.config = {}
+
+MS = ModelState()
+
+# Autoencoder paths
+AUTOENCODER_DIR = Path(__file__).parent.parent / "machine_learning" / "autoencoder"
+AUTOENCODER_CACHE_DIR = Path(__file__).parent / "cache" / "autoencoder"
+
+
+def detect_dataset_type(path: Path) -> dict:
+    """
+    Detect dataset type and structure from a given path.
+    
+    Returns dict with:
+        - type: 'graph', 'image', 'unknown'
+        - structure: 'single_file', 'split_files', 'hierarchical'
+        - conditions: list of detected conditions (e.g., ['DMT', 'EC', 'EO'])
+        - file_count: number of data files
+        - sample_file: path to a sample file
+    """
+    info = {
+        'type': 'unknown',
+        'structure': 'unknown',
+        'conditions': [],
+        'file_count': 0,
+        'sample_file': None,
+        'bands': [],
+        'error': None
+    }
+    
+    if not path.exists():
+        info['error'] = f"Path does not exist: {path}"
+        return info
+    
+    # Check for phases-*.pkl files (graph data from pipeline)
+    phases_files = list(path.rglob("phases-*.pkl"))
+    syncro_files = list(path.rglob("syncro-*.pkl"))
+    
+    if phases_files or syncro_files:
+        info['type'] = 'graph'
+        all_files = phases_files + syncro_files
+        info['file_count'] = len(all_files)
+        info['sample_file'] = str(all_files[0]) if all_files else None
+        
+        # Detect conditions from folder structure
+        conditions = set()
+        for f in all_files:
+            parent = f.parent.name
+            if parent in ['DMT', 'EC', 'EO']:
+                conditions.add(parent)
+        info['conditions'] = sorted(list(conditions)) if conditions else ['Unknown']
+        
+        # Check structure
+        if path.is_file():
+            info['structure'] = 'single_file'
+        elif any(path.iterdir()):
+            subdirs = [d for d in path.iterdir() if d.is_dir()]
+            if subdirs:
+                info['structure'] = 'hierarchical'
+            else:
+                info['structure'] = 'flat'
+        
+        # Try to detect bands from a sample file
+        if info['sample_file']:
+            try:
+                import pickle
+                with open(info['sample_file'], 'rb') as f:
+                    data = pickle.load(f)
+                if 'phases_stc' in data:
+                    info['bands'] = list(data['phases_stc'].keys())
+                elif 'phases_eeg' in data:
+                    info['bands'] = list(data['phases_eeg'].keys())
+            except:
+                pass
+        
+        return info
+    
+    # Check for image files
+    image_files = list(path.rglob("*.png")) + list(path.rglob("*.jpg")) + list(path.rglob("*.jpeg"))
+    if image_files:
+        info['type'] = 'image'
+        info['file_count'] = len(image_files)
+        info['structure'] = 'flat' if not any(path.iterdir() and d.is_dir() for d in path.iterdir()) else 'hierarchical'
+        info['sample_file'] = str(image_files[0])
+        return info
+    
+    # Check for numpy arrays
+    npy_files = list(path.rglob("*.npy")) + list(path.rglob("*.npz"))
+    if npy_files:
+        info['type'] = 'array'
+        info['file_count'] = len(npy_files)
+        info['sample_file'] = str(npy_files[0])
+        return info
+    
+    info['error'] = "No recognized data files found (phases-*.pkl, images, or numpy arrays)"
+    return info
+
+
+def model_log(msg: str, msg_type: str = 'info'):
+    """Add message to model training log."""
+    if MS.log_container:
+        colors = {
+            'info': THEME_TEXT,
+            'success': THEME_PRIMARY,
+            'warning': THEME_WARN,
+            'error': THEME_ERROR
+        }
+        with MS.log_container:
+            ui.label(msg).style(f'color:{colors.get(msg_type, THEME_TEXT)}; font-family: JetBrains Mono; font-size: 0.75rem;')
+
+
+def create_default_config(dataset_path: str, dataset_info: dict) -> dict:
+    """Create default VAE configuration based on detected dataset."""
+    config = {
+        'paths': {
+            'phases_dir': dataset_path,
+            'output_dir': str(AUTOENCODER_CACHE_DIR / 'output'),
+            'dataset_cache': str(AUTOENCODER_CACHE_DIR / 'dataset_cache'),
+            'checkpoints': str(AUTOENCODER_CACHE_DIR / 'checkpoints'),
+            'tensorboard': str(AUTOENCODER_CACHE_DIR / 'runs'),
+        },
+        'data': {
+            'conditions': dataset_info.get('conditions', ['DMT', 'EC', 'EO']),
+            'bands': dataset_info.get('bands', ['Delta', 'Theta', 'Alpha', 'Beta', 'Gamma']),
+            'use_stc': False,
+            'graph': {
+                'fully_connected': True,
+                'edge_threshold': 0.3,
+                'self_loops': False,
+            },
+            'split': {
+                'train_ratio': 0.7,
+                'val_ratio': 0.15,
+                'test_ratio': 0.15,
+                'stratify': True,
+                'random_state': 42,
+            }
+        },
+        'model': {
+            'name': 'BrainStateVAE',
+            'encoder': {
+                'conv_type': 'gatv2',
+                'hidden_dim': 64,
+                'num_gat_layers': 3,
+                'num_attention_heads': 4,
+                'dropout': 0.2,
+                'use_edge_attr': True,
+                'use_skip_connections': True,
+            },
+            'latent': {
+                'dim': 64,
+            },
+            'decoder': {
+                'hidden_dims': [256, 128],
+                'reconstruct_edges': True,
+                'dropout': 0.1,
+            },
+            'pooling': {
+                'method': 'mean',
+            }
+        },
+        'loss': {
+            'reconstruction': {
+                'node_weight': 0.3,
+                'edge_weight': 1.0,
+                'type': 'mse',
+            },
+            'kl': {
+                'weight': 0.01,
+                'annealing': {
+                    'enabled': True,
+                    'start': 0.0,
+                    'end': 0.05,
+                    'epochs': 50,
+                    'type': 'linear',
+                }
+            },
+            'free_bits': 0.1,
+        },
+        'training': {
+            'num_epochs': 100,
+            'batch_size': 256,
+            'learning_rate': 0.001,
+            'weight_decay': 1e-5,
+            'optimizer': 'adamw',
+            'scheduler': {
+                'type': 'cosine',
+                'min_lr': 1e-6,
+            },
+            'early_stopping': {
+                'patience': 20,
+                'min_delta': 0.0001,
+            },
+            'gradient_clipping': {
+                'enabled': True,
+                'max_norm': 0.5,
+            }
+        },
+        'logging': {
+            'level': 'INFO',
+            'tensorboard': True,
+            'save_frequency': 10,
+        },
+        'visualization': {
+            'plot_training_curves': True,
+            'plot_latent_space': True,
+        },
+        'seed': 42,
+        'device': 'cuda',
+        'num_workers': 4,
+        'pin_memory': True,
+    }
+    return config
+
+
+@ui.page('/model')
+def model_page():
+    """Model training page."""
+    ui.add_head_html(f'<style>{STYLE}</style>')
+    
+    # Header with navigation
+    with ui.header().classes('items-center px-4 py-1').style(f'background: {THEME_BG}; border-bottom: 1px solid {THEME_BORDER};'):
+        ui.label('▶').style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.75rem; letter-spacing: 2px;')
+        ui.label('EEG_VIEWER').classes('text-base font-medium ml-2').style(f'color: {THEME_PRIMARY}; font-family: JetBrains Mono; letter-spacing: 1px;')
+        ui.label('// MODEL').classes('text-xs ml-2').style(f'color: #f472b6; font-family: JetBrains Mono;')
+        with ui.row().classes('ml-auto gap-2'):
+            ui.button('VIEWER', on_click=lambda: ui.navigate.to('/')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
+            ui.button('PIPELINE', on_click=lambda: ui.navigate.to('/pipeline')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
+            ui.button('MODEL', on_click=lambda: ui.navigate.to('/model')).props('flat dense').style(f'color:#f472b6;')
+    
+    with ui.row().classes('w-full p-4 gap-4').style('height: calc(100vh - 50px); align-items: stretch;'):
+        
+        # LEFT PANEL: Configuration
+        with ui.column().classes('gap-4').style('width: 400px; overflow-y: auto;'):
+            
+            # DATASET CONFIGURATION
+            with ui.card().classes('dark-card p-4 w-full').style(f'border: 1px solid #f472b6;'):
+                ui.label('// DATASET').classes('terminal-header')
+                
+                with ui.row().classes('items-center gap-2 mt-2 w-full'):
+                    ui.label('Path:').style(f'color:{THEME_TEXT_DIM}; font-family: JetBrains Mono; font-size: 0.75rem; min-width: 50px;')
+                    dataset_path_input = ui.input(
+                        value='/media/storage_hdd/dmt_fz/fwd-inv-stc'
+                    ).props('dense dark').classes('flex-1')
+                
+                dataset_info_container = ui.column().classes('w-full mt-2 gap-1')
+                
+                def scan_dataset():
+                    """Scan and detect dataset."""
+                    path = Path(dataset_path_input.value.strip())
+                    MS.dataset_path = str(path)
+                    
+                    dataset_info_container.clear()
+                    with dataset_info_container:
+                        ui.label('Scanning...').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                    
+                    info = detect_dataset_type(path)
+                    MS.dataset_info = info
+                    MS.dataset_type = info['type']
+                    
+                    dataset_info_container.clear()
+                    with dataset_info_container:
+                        if info.get('error'):
+                            ui.label(f"❌ {info['error']}").style(f'color:{THEME_ERROR}; font-size: 0.7rem;')
+                        else:
+                            ui.label(f"✓ Type: {info['type'].upper()}").style(f'color:{THEME_PRIMARY}; font-size: 0.75rem;')
+                            ui.label(f"  Files: {info['file_count']}").style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                            ui.label(f"  Structure: {info['structure']}").style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                            if info['conditions']:
+                                ui.label(f"  Conditions: {', '.join(info['conditions'])}").style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                            if info['bands']:
+                                ui.label(f"  Bands: {', '.join(info['bands'])}").style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                            
+                            # Create default config
+                            MS.config = create_default_config(str(path), info)
+                            model_log(f"Dataset detected: {info['type']} ({info['file_count']} files)", 'success')
+                
+                ui.button('Scan Dataset', on_click=scan_dataset, icon='search').props('dense').classes('mt-2').style(f'background:#f472b6; color:black;')
+            
+            # MODEL CONFIGURATION
+            with ui.card().classes('dark-card p-4 w-full'):
+                ui.label('// MODEL CONFIG').classes('terminal-header')
+                
+                with ui.column().classes('gap-2 mt-2'):
+                    # Model type selector
+                    with ui.row().classes('items-center gap-2'):
+                        ui.label('Type:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.75rem; min-width: 80px;')
+                        model_type_select = ui.select(
+                            ['VAE (Graph)', 'VAE (Image)', 'AE (Graph)'],
+                            value='VAE (Graph)'
+                        ).props('dense dark').classes('flex-1')
+                    
+                    ui.separator().classes('my-2')
+                    
+                    # Architecture params
+                    ui.label('Architecture').style(f'color:{THEME_SECONDARY}; font-size: 0.7rem;')
+                    
+                    with ui.row().classes('items-center gap-2'):
+                        ui.label('Latent dim:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem; min-width: 80px;')
+                        latent_dim = ui.number(value=64, min=8, max=512, step=8).props('dense').classes('w-20')
+                    
+                    with ui.row().classes('items-center gap-2'):
+                        ui.label('Hidden dim:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem; min-width: 80px;')
+                        hidden_dim = ui.number(value=64, min=16, max=256, step=16).props('dense').classes('w-20')
+                    
+                    with ui.row().classes('items-center gap-2'):
+                        ui.label('GAT layers:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem; min-width: 80px;')
+                        gat_layers = ui.number(value=3, min=1, max=6).props('dense').classes('w-20')
+                    
+                    ui.separator().classes('my-2')
+                    
+                    # Training params
+                    ui.label('Training').style(f'color:{THEME_SECONDARY}; font-size: 0.7rem;')
+                    
+                    with ui.row().classes('items-center gap-2'):
+                        ui.label('Epochs:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem; min-width: 80px;')
+                        num_epochs = ui.number(value=100, min=10, max=500, step=10).props('dense').classes('w-20')
+                    
+                    with ui.row().classes('items-center gap-2'):
+                        ui.label('Batch size:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem; min-width: 80px;')
+                        batch_size = ui.number(value=256, min=16, max=1024, step=16).props('dense').classes('w-20')
+                    
+                    with ui.row().classes('items-center gap-2'):
+                        ui.label('Learn rate:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem; min-width: 80px;')
+                        learning_rate = ui.select(
+                            ['1e-2', '5e-3', '1e-3', '5e-4', '1e-4'],
+                            value='1e-3'
+                        ).props('dense dark').classes('w-20')
+                    
+                    ui.separator().classes('my-2')
+                    
+                    # Loss params
+                    ui.label('Loss').style(f'color:{THEME_SECONDARY}; font-size: 0.7rem;')
+                    
+                    with ui.row().classes('items-center gap-2'):
+                        ui.label('KL weight:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem; min-width: 80px;')
+                        kl_weight = ui.number(value=0.01, min=0.0, max=1.0, step=0.01).props('dense').classes('w-20')
+                    
+                    with ui.row().classes('items-center gap-2'):
+                        ui.label('β annealing:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem; min-width: 80px;')
+                        beta_annealing = ui.switch(value=True).props('dense')
+            
+            # TRAINING CONTROLS
+            with ui.card().classes('dark-card p-4 w-full'):
+                ui.label('// TRAINING').classes('terminal-header')
+                
+                training_status = ui.label('Ready').style(f'color:{THEME_TEXT_DIM}; font-size: 0.75rem;').classes('mt-2')
+                
+                with ui.row().classes('gap-2 mt-3'):
+                    async def start_training():
+                        if MS.training:
+                            ui.notify('Training already in progress', type='warning')
+                            return
+                        
+                        if not MS.dataset_path or not MS.dataset_info.get('type'):
+                            ui.notify('Please scan a dataset first', type='warning')
+                            return
+                        
+                        # Update config with UI values
+                        MS.config['model']['latent']['dim'] = int(latent_dim.value)
+                        MS.config['model']['encoder']['hidden_dim'] = int(hidden_dim.value)
+                        MS.config['model']['encoder']['num_gat_layers'] = int(gat_layers.value)
+                        MS.config['training']['num_epochs'] = int(num_epochs.value)
+                        MS.config['training']['batch_size'] = int(batch_size.value)
+                        MS.config['training']['learning_rate'] = float(learning_rate.value)
+                        MS.config['loss']['kl']['weight'] = float(kl_weight.value)
+                        MS.config['loss']['kl']['annealing']['enabled'] = beta_annealing.value
+                        
+                        # Create cache directories
+                        AUTOENCODER_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+                        (AUTOENCODER_CACHE_DIR / 'output').mkdir(exist_ok=True)
+                        (AUTOENCODER_CACHE_DIR / 'checkpoints').mkdir(exist_ok=True)
+                        (AUTOENCODER_CACHE_DIR / 'runs').mkdir(exist_ok=True)
+                        (AUTOENCODER_CACHE_DIR / 'dataset_cache').mkdir(exist_ok=True)
+                        
+                        # Save config to temp file
+                        import yaml
+                        config_path = AUTOENCODER_CACHE_DIR / 'train_config.yaml'
+                        with open(config_path, 'w') as f:
+                            yaml.dump(MS.config, f, default_flow_style=False)
+                        
+                        MS.training = True
+                        MS.history = {'train_loss': [], 'val_loss': [], 'recon_loss': [], 'kl_loss': [], 'epoch': []}
+                        training_status.text = 'Training...'
+                        training_status.style(f'color:{THEME_PRIMARY}; font-size: 0.75rem;')
+                        model_log(f"Starting training with config: {config_path}", 'info')
+                        
+                        # Run training in subprocess
+                        import subprocess
+                        cmd = [
+                            sys.executable,
+                            str(AUTOENCODER_DIR / 'train.py'),
+                            '--config', str(config_path)
+                        ]
+                        
+                        env = os.environ.copy()
+                        env['PYTHONPATH'] = str(AUTOENCODER_DIR.parent)
+                        
+                        try:
+                            process = await asyncio.create_subprocess_exec(
+                                *cmd,
+                                stdout=asyncio.subprocess.PIPE,
+                                stderr=asyncio.subprocess.STDOUT,
+                                env=env,
+                                cwd=str(AUTOENCODER_DIR)
+                            )
+                            MS.current_process = process
+                            
+                            # Read output line by line
+                            epoch_pattern = re.compile(r'Epoch (\d+).*Loss: ([\d.]+).*Recon: ([\d.]+).*KL: ([\d.]+)')
+                            val_pattern = re.compile(r'Epoch \d+.*\[val\].*Loss: ([\d.]+)')
+                            
+                            while True:
+                                line = await process.stdout.readline()
+                                if not line:
+                                    break
+                                line = line.decode('utf-8', errors='replace').strip()
+                                if line:
+                                    model_log(line, 'info')
+                                    
+                                    # Parse training metrics
+                                    epoch_match = epoch_pattern.search(line)
+                                    if epoch_match and '[train]' in line:
+                                        epoch = int(epoch_match.group(1))
+                                        loss = float(epoch_match.group(2))
+                                        recon = float(epoch_match.group(3))
+                                        kl = float(epoch_match.group(4))
+                                        
+                                        MS.history['epoch'].append(epoch)
+                                        MS.history['train_loss'].append(loss)
+                                        MS.history['recon_loss'].append(recon)
+                                        MS.history['kl_loss'].append(kl)
+                                        
+                                        # Update loss plot
+                                        update_loss_plot()
+                                    
+                                    val_match = val_pattern.search(line)
+                                    if val_match:
+                                        val_loss = float(val_match.group(1))
+                                        MS.history['val_loss'].append(val_loss)
+                                        update_loss_plot()
+                            
+                            await process.wait()
+                            
+                            if process.returncode == 0:
+                                model_log("Training completed successfully!", 'success')
+                                training_status.text = 'Completed'
+                                training_status.style(f'color:{THEME_PRIMARY}; font-size: 0.75rem;')
+                            else:
+                                model_log(f"Training failed with code {process.returncode}", 'error')
+                                training_status.text = 'Failed'
+                                training_status.style(f'color:{THEME_ERROR}; font-size: 0.75rem;')
+                        
+                        except Exception as e:
+                            model_log(f"Error: {e}", 'error')
+                            training_status.text = 'Error'
+                            training_status.style(f'color:{THEME_ERROR}; font-size: 0.75rem;')
+                        
+                        finally:
+                            MS.training = False
+                            MS.current_process = None
+                    
+                    async def stop_training():
+                        if MS.current_process:
+                            MS.current_process.terminate()
+                            model_log("Training stopped by user", 'warning')
+                            training_status.text = 'Stopped'
+                            training_status.style(f'color:{THEME_WARN}; font-size: 0.75rem;')
+                            MS.training = False
+                    
+                    ui.button('Train', on_click=start_training, icon='play_arrow').props('dense').style(f'background:{THEME_PRIMARY}; color:black;')
+                    ui.button('Stop', on_click=stop_training, icon='stop').props('dense color=negative')
+        
+        # RIGHT PANEL: Visualization & Logs
+        with ui.column().classes('flex-1').style('min-height: 0; display: flex; flex-direction: column;'):
+            
+            with ui.card().classes('dark-card p-2 w-full flex-1').style('display: flex; flex-direction: column; min-height: 0;'):
+                with ui.tabs().classes('w-full').style(f'background: {THEME_BG};') as tabs:
+                    tab_metrics = ui.tab('METRICS', icon='show_chart').style(f'color:#f472b6;')
+                    tab_console = ui.tab('CONSOLE', icon='terminal').style(f'color:{THEME_PRIMARY};')
+                
+                with ui.tab_panels(tabs, value=tab_metrics).classes('w-full').style('flex: 1; min-height: 0; overflow: hidden;'):
+                    
+                    # METRICS TAB
+                    with ui.tab_panel(tab_metrics).classes('p-2').style('height: 100%; display: flex; flex-direction: column;'):
+                        ui.label('▌TRAINING METRICS').style(f'color:#f472b6; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-2')
+                        
+                        loss_plot_container = ui.column().classes('w-full flex-1')
+                        
+                        def make_loss_figure():
+                            """Create loss curves plot."""
+                            fig = go.Figure()
+                            
+                            epochs = MS.history.get('epoch', [])
+                            train_loss = MS.history.get('train_loss', [])
+                            val_loss = MS.history.get('val_loss', [])
+                            recon_loss = MS.history.get('recon_loss', [])
+                            kl_loss = MS.history.get('kl_loss', [])
+                            
+                            if epochs:
+                                fig.add_trace(go.Scatter(
+                                    x=epochs, y=train_loss,
+                                    mode='lines', name='Train Loss',
+                                    line=dict(color=THEME_PRIMARY, width=2)
+                                ))
+                                
+                                if val_loss:
+                                    val_epochs = epochs[:len(val_loss)]
+                                    fig.add_trace(go.Scatter(
+                                        x=val_epochs, y=val_loss,
+                                        mode='lines', name='Val Loss',
+                                        line=dict(color='#f472b6', width=2)
+                                    ))
+                                
+                                fig.add_trace(go.Scatter(
+                                    x=epochs, y=recon_loss,
+                                    mode='lines', name='Recon Loss',
+                                    line=dict(color=THEME_SECONDARY, width=1, dash='dot')
+                                ))
+                                
+                                fig.add_trace(go.Scatter(
+                                    x=epochs, y=kl_loss,
+                                    mode='lines', name='KL Loss',
+                                    line=dict(color=THEME_WARN, width=1, dash='dot')
+                                ))
+                            
+                            fig.update_layout(
+                                template='plotly_dark',
+                                paper_bgcolor='rgba(8,8,8,1)',
+                                plot_bgcolor='rgba(8,8,8,1)',
+                                margin=dict(l=50, r=20, t=30, b=40),
+                                height=400,
+                                xaxis=dict(
+                                    title='Epoch',
+                                    gridcolor='rgba(0,255,136,0.1)',
+                                    showgrid=True
+                                ),
+                                yaxis=dict(
+                                    title='Loss',
+                                    gridcolor='rgba(0,255,136,0.1)',
+                                    showgrid=True
+                                ),
+                                legend=dict(
+                                    orientation='h',
+                                    yanchor='bottom',
+                                    y=1.02,
+                                    xanchor='right',
+                                    x=1
+                                ),
+                                font=dict(family='JetBrains Mono', color=THEME_TEXT)
+                            )
+                            
+                            return fig
+                        
+                        def update_loss_plot():
+                            """Update the loss plot with current history."""
+                            loss_plot_container.clear()
+                            with loss_plot_container:
+                                fig = make_loss_figure()
+                                MS.loss_plot = ui.plotly(fig).classes('w-full').style('height: 400px;')
+                        
+                        # Initial empty plot
+                        update_loss_plot()
+                        
+                        # Stats summary
+                        with ui.row().classes('w-full gap-4 mt-4'):
+                            with ui.card().classes('dark-card p-3 flex-1'):
+                                ui.label('Best Val Loss').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                                best_val_label = ui.label('--').style(f'color:#f472b6; font-size: 1.2rem; font-weight: bold;')
+                            
+                            with ui.card().classes('dark-card p-3 flex-1'):
+                                ui.label('Current Epoch').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                                current_epoch_label = ui.label('0').style(f'color:{THEME_PRIMARY}; font-size: 1.2rem; font-weight: bold;')
+                            
+                            with ui.card().classes('dark-card p-3 flex-1'):
+                                ui.label('Train Loss').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                                train_loss_label = ui.label('--').style(f'color:{THEME_SECONDARY}; font-size: 1.2rem; font-weight: bold;')
+                        
+                        def update_stats():
+                            """Update stats labels."""
+                            if MS.history['epoch']:
+                                current_epoch_label.text = str(MS.history['epoch'][-1])
+                            if MS.history['train_loss']:
+                                train_loss_label.text = f"{MS.history['train_loss'][-1]:.4f}"
+                            if MS.history['val_loss']:
+                                best_val_label.text = f"{min(MS.history['val_loss']):.4f}"
+                        
+                        ui.timer(2.0, update_stats)
+                    
+                    # CONSOLE TAB
+                    with ui.tab_panel(tab_console).classes('p-2').style('height: 100%; display: flex; flex-direction: column;'):
+                        with ui.row().classes('items-center gap-3 mb-2'):
+                            ui.label('// TRAINING_LOG').classes('terminal-header')
+                            
+                            def clear_log():
+                                if MS.log_container:
+                                    MS.log_container.clear()
+                            ui.button('CLEAR', on_click=clear_log, icon='delete').props('flat dense size=sm').classes('ml-auto')
+                        
+                        with ui.scroll_area().classes('w-full flex-1').style('background: #050505; border-radius: 4px; min-height: 200px;'):
+                            MS.log_container = ui.column().classes('w-full p-3 gap-0')
+                            with MS.log_container:
+                                ui.label('Ready. Select a dataset and click Train.').style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.75rem;')
+
+
 # Update main page header to include navigation
 @ui.page('/')
 def main_with_nav():
@@ -1914,6 +2539,7 @@ def main_with_nav():
         with ui.row().classes('ml-auto gap-2'):
             ui.button('VIEWER', on_click=lambda: ui.navigate.to('/')).props('flat dense').style(f'color:{THEME_PRIMARY};')
             ui.button('PIPELINE', on_click=lambda: ui.navigate.to('/pipeline')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
+            ui.button('MODEL', on_click=lambda: ui.navigate.to('/model')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
     
     # Rest of the main page content (call original main function logic)
     main_content()
@@ -2059,6 +2685,7 @@ def main_content():
 
 if __name__ in {"__main__", "__mp_main__"}:
     print("EEG VIEWER - http://localhost:8080")
-    print("  - Viewer:  http://localhost:8080/")
+    print("  - Viewer:   http://localhost:8080/")
     print("  - Pipeline: http://localhost:8080/pipeline")
+    print("  - Model:    http://localhost:8080/model")
     ui.run(title='EEG Viewer', port=8080, reload=False, show=False, dark=True)
