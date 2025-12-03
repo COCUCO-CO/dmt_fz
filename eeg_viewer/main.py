@@ -16,7 +16,7 @@ from datetime import datetime
 from config import (
     EEG_RAW_DIR, EEG_CLEAN_DIR, FREQ_BANDS,
     THEME_BG, THEME_CARD, THEME_BORDER, THEME_PRIMARY, THEME_SECONDARY,
-    THEME_WARN, THEME_TEXT, THEME_TEXT_DIM, SIGNAL_COLORS
+    THEME_WARN, THEME_ERROR, THEME_TEXT, THEME_TEXT_DIM, SIGNAL_COLORS
 )
 from eeg_loader import load_eeg_file, get_channel_data, scan_eeg_directory, EEGData
 
@@ -1657,11 +1657,8 @@ def pipeline_page():
                                             import subprocess
                                             from pathlib import Path
                                             
-                                            output_path = anim_output_dir.value.strip() if anim_output_dir.value else str(Path(data_path) / 'animation_frames')
-                                            
-                                            script_path = Path(__file__).parent.parent / 'viz_scripts' / 'generate_frames.py'
-                                            if not script_path.exists():
-                                                script_path = Path('/media/storage_hdd/dmt_fz/viz_scripts/generate_frames.py')
+                                            # Use plot.py directly (generate_frames.py is deprecated)
+                                            script_path = Path('/media/storage_hdd/dmt_fz/viz_scripts/plot.py')
                                             
                                             # Use conda environment python
                                             import os
@@ -1670,21 +1667,38 @@ def pipeline_page():
                                             if not python_path.exists():
                                                 python_path = 'python'  # Fallback
                                             
+                                            # Extract condition from subject if present (e.g., S01-DMT -> DMT)
+                                            subj = viz_subject.value or 'S01'
+                                            cond = 'DMT'
+                                            if '-' in str(subj):
+                                                parts = str(subj).split('-')
+                                                subj = parts[0]
+                                                cond = parts[1] if len(parts) > 1 else 'DMT'
+                                            
+                                            # Map mode names
+                                            mode_map = {'stc': 'stc', 'eeg': 'eeg', 'all': 'all', 'advanced': 'advanced'}
+                                            mode = mode_map.get(anim_mode.value, 'stc')
+                                            
+                                            # Build epochs range
+                                            start_ep = int(anim_start_epoch.value or 0)
+                                            end_ep = int(anim_end_epoch.value or 10)
+                                            
                                             cmd = [
                                                 str(python_path), str(script_path),
-                                                '--subject', viz_subject.value,
-                                                '--condition', 'DMT',  # Default
+                                                '--subject', subj,
+                                                '--condition', cond,
                                                 '--band', viz_band.value,
-                                                '--mode', anim_mode.value,
-                                                '--quality', anim_quality.value,
-                                                '--format', anim_format.value,
-                                                '--start', str(int(anim_start_epoch.value or 0)),
-                                                '--end', str(int(anim_end_epoch.value or 10)),
+                                                '--mode', mode,
+                                                '--epochs', f'{start_ep}:{end_ep}',
                                             ]
+                                            
+                                            # plot.py saves frames to: visualizations/plot/{mode}/{subj}_{cond}_{band}
+                                            band = viz_band.value or 'Alpha'
+                                            expected_output = Path('/media/storage_hdd/dmt_fz/visualizations/plot') / mode / f'{subj}_{cond}_{band}'
                                             
                                             with anim_log:
                                                 ui.label(f'Command: {" ".join(cmd)}').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
-                                                ui.label(f'Output: {output_path}').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
+                                                ui.label(f'Frames will be saved to: {expected_output}').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
                                             
                                             try:
                                                 import os
@@ -1737,16 +1751,30 @@ def pipeline_page():
                                             """Generate video from frames"""
                                             anim_log.clear()
                                             with anim_log:
-                                                ui.label('Generating video from frames...').style(f'color:{THEME_PRIMARY}; font-size: 0.7rem;')
-                                            
-                                            data_path = viz_state.get('custom_path') or current_run_dir[0]
-                                            if not data_path:
-                                                with anim_log:
-                                                    ui.label('Error: No data path set.').style(f'color:{THEME_ERROR}; font-size: 0.7rem;')
-                                                return
+                                                ui.label('🎬 Generating video from frames...').style(f'color:{THEME_PRIMARY}; font-size: 0.7rem;')
                                             
                                             from pathlib import Path
-                                            frames_dir = Path(anim_output_dir.value.strip()) if anim_output_dir.value else Path(data_path) / 'animation_frames'
+                                            
+                                            # Build the correct frames path based on plot.py output structure
+                                            # plot.py saves to: visualizations/plot/{mode}/{subject}_{condition}_{band}
+                                            subj = viz_subject.value or 'S01'
+                                            cond = 'DMT'
+                                            if '-' in str(subj):
+                                                parts = str(subj).split('-')
+                                                subj = parts[0]
+                                                cond = parts[1] if len(parts) > 1 else 'DMT'
+                                            
+                                            mode = anim_mode.value or 'stc'
+                                            band = viz_band.value or 'Alpha'
+                                            
+                                            # Check custom path first, then default visualizations path
+                                            if anim_output_dir.value and anim_output_dir.value.strip():
+                                                frames_dir = Path(anim_output_dir.value.strip())
+                                            else:
+                                                frames_dir = Path('/media/storage_hdd/dmt_fz/visualizations/plot') / mode / f'{subj}_{cond}_{band}'
+                                            
+                                            with anim_log:
+                                                ui.label(f'Looking for frames in: {frames_dir}').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
                                             
                                             if not frames_dir.exists():
                                                 with anim_log:
