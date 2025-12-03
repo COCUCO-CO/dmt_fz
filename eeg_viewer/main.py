@@ -602,7 +602,10 @@ class PipelineState:
     def __init__(self):
         self.running = False
         self.current_step = ""
+        self.start_time = None
+        self.current_process = None
         self.log_container = None
+        self.status_label = None
         self.progress = 0
         self.refresh_files = None  # Function to refresh file browser
         # Pipeline parameters
@@ -655,6 +658,7 @@ async def run_pipeline_step(script_name, args_list, step_name, output_dir=None, 
     
     PS.running = True
     PS.current_step = step_name
+    PS.start_time = datetime.now()
     
     script_path = PIPELINE_DIR / script_name
     if not script_path.exists():
@@ -685,6 +689,8 @@ async def run_pipeline_step(script_name, args_list, step_name, output_dir=None, 
             env=env
         )
         
+        PS.current_process = process
+        
         # Read both stdout and stderr
         async def read_stream(stream, prefix=""):
             while True:
@@ -704,10 +710,10 @@ async def run_pipeline_step(script_name, args_list, step_name, output_dir=None, 
         await process.wait()
         
         if process.returncode == 0:
-            pipeline_log(f"[{step_name}] ✓ Completed successfully")
+            pipeline_log(f"[{step_name}] Completed successfully")
             ui.notify(f'{step_name} completed!', type='positive')
         else:
-            pipeline_log(f"[{step_name}] ✗ Failed with code {process.returncode}")
+            pipeline_log(f"[{step_name}] Failed with code {process.returncode}")
             ui.notify(f'{step_name} failed', type='negative')
             
     except Exception as e:
@@ -718,6 +724,8 @@ async def run_pipeline_step(script_name, args_list, step_name, output_dir=None, 
     finally:
         PS.running = False
         PS.current_step = ""
+        PS.start_time = None
+        PS.current_process = None
 
 
 @ui.page('/pipeline')
@@ -804,7 +812,7 @@ def pipeline_page():
                                 pipeline_log(f"[RUN] Using existing: {current_run_dir[0]}")
                         run_select.on('update:model-value', lambda e: use_existing())
                 
-                ui.label(f'📁 {PIPELINE_OUTPUTS}/run_* (no pisa fwd-inv-stc/)').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem; margin-left: 68px;')
+                ui.label(f'Output: {PIPELINE_OUTPUTS}/run_* (no pisa fwd-inv-stc/)').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem; margin-left: 68px;')
             
             # GLOBAL PARAMETERS - Clean grid layout
             with ui.card().classes('dark-card p-4 w-full'):
@@ -962,10 +970,28 @@ def pipeline_page():
                     ui.button('RUN clustering.py', on_click=run_clustering, icon='play_arrow').props('dense').style(f'background:#ff6b9d; color:black;')
                     ui.label('Quick: ~30min, Full: ~4h').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
             
-            # STEP 5: PEARSON.PY
+            # STEP 5: BUILD_ORDER_DATA.PY
             with ui.card().classes('dark-card p-4 w-full'):
-                ui.label('// STEP_5: CORRELATIONS').classes('terminal-header')
+                ui.label('// STEP_5: AGGREGATE_DATA').classes('terminal-header')
+                ui.label('build_order_data.py - Aggregate Kuramoto metrics').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                ui.label('-> r_kuramoto_nets_*.pkl').style(f'color:{THEME_PRIMARY}; font-size: 0.65rem;')
+                
+                with ui.row().classes('gap-2 mt-3'):
+                    async def run_build_order():
+                        if not current_run_dir[0]:
+                            ui.notify('Primero creá un NEW RUN', type='warning')
+                            return
+                        args = ['--build-all', '--workers', str(int(workers_num.value or 7))]
+                        await run_pipeline_step('build_order_data.py', args, 'Aggregate Data', current_run_dir[0])
+                    
+                    ui.button('RUN build_order_data.py', on_click=run_build_order, icon='play_arrow').props('dense').style(f'background:#60a5fa; color:black;')
+                    ui.label('~2-5 min').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
+            
+            # STEP 6: PEARSON.PY
+            with ui.card().classes('dark-card p-4 w-full'):
+                ui.label('// STEP_6: CORRELATIONS').classes('terminal-header')
                 ui.label('pearson.py - Correlate with questionnaires').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                ui.label('-> pearson_results/').style(f'color:{THEME_PRIMARY}; font-size: 0.65rem;')
                 
                 with ui.row().classes('gap-2 mt-3'):
                     async def run_pearson():
@@ -977,134 +1003,496 @@ def pipeline_page():
                     ui.button('RUN pearson.py', on_click=run_pearson, icon='play_arrow').props('dense').style(f'background:#a78bfa; color:black;')
                     ui.label('~3-5 min').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
         
-        # RIGHT: Log Output + File Browser
-        with ui.column().classes('flex-1 gap-4'):
-            # LOG OUTPUT
-            with ui.card().classes('dark-card p-4 w-full'):
-                with ui.row().classes('items-center gap-3 mb-2'):
-                    ui.label('// OUTPUT_LOG').classes('terminal-header')
-                    
-                    def clear_log():
-                        if PS.log_container:
-                            PS.log_container.clear()
-                    ui.button('CLEAR', on_click=clear_log, icon='delete').props('flat dense size=sm')
+        # RIGHT: Tabbed Panel (Console, Files, System, Visualize)
+        with ui.column().classes('flex-1'):
+            with ui.card().classes('dark-card p-2 w-full').style('height: calc(100vh - 80px);'):
+                with ui.tabs().classes('w-full').style(f'background: {THEME_BG};') as tabs:
+                    tab_console = ui.tab('CONSOLE', icon='terminal').style(f'color:{THEME_PRIMARY};')
+                    tab_files = ui.tab('FILES', icon='folder').style(f'color:{THEME_SECONDARY};')
+                    tab_system = ui.tab('SYSTEM', icon='memory').style(f'color:{THEME_WARN};')
+                    tab_viz = ui.tab('VISUALIZE', icon='analytics').style(f'color:#a78bfa;')
                 
-                with ui.scroll_area().classes('w-full').style('height: 45vh; background: #050505; border-radius: 4px;'):
-                    PS.log_container = ui.column().classes('w-full p-3 gap-0')
-                    with PS.log_container:
-                        ui.label('Pipeline ready. Select a step and click RUN.').style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.75rem;')
-                        ui.label(f'Pipeline directory: {PIPELINE_DIR}').style(f'color:{THEME_TEXT_DIM}; font-family: JetBrains Mono; font-size: 0.7rem;')
-            
-            # SYSTEM MONITOR
-            with ui.card().classes('dark-card p-3 w-full'):
-                with ui.row().classes('items-center gap-3 mb-2'):
-                    ui.label('// SYSTEM').classes('terminal-header')
-                    
-                    system_container = ui.row().classes('flex-1 gap-4 items-center')
-                    
-                    def update_system_stats():
-                        import psutil
-                        system_container.clear()
-                        with system_container:
-                            # CPU
-                            cpu_percent = psutil.cpu_percent(interval=0.1)
-                            cpu_count = psutil.cpu_count()
-                            cpu_color = THEME_PRIMARY if cpu_percent < 50 else (THEME_WARN if cpu_percent < 80 else '#ff4444')
+                with ui.tab_panels(tabs, value=tab_console).classes('w-full flex-1'):
+                    # CONSOLE TAB
+                    with ui.tab_panel(tab_console).classes('p-2'):
+                        with ui.row().classes('items-center gap-3 mb-2'):
+                            ui.label('// OUTPUT_LOG').classes('terminal-header')
                             
-                            with ui.column().classes('gap-0'):
-                                ui.label(f'CPU {cpu_percent:.0f}%').style(f'color:{cpu_color}; font-family: JetBrains Mono; font-size: 0.8rem; font-weight: bold;')
-                                ui.label(f'{cpu_count} cores').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
+                            # Status indicator
+                            status_label = ui.label('Idle').style(f'color:{THEME_TEXT_DIM}; font-family: JetBrains Mono; font-size: 0.7rem; margin-left: auto;')
+                            PS.status_label = status_label
                             
-                            # Per-core usage (compact)
-                            per_cpu = psutil.cpu_percent(percpu=True)
-                            with ui.row().classes('gap-1 flex-wrap'):
-                                for i, pct in enumerate(per_cpu[:16]):  # Show max 16 cores
-                                    color = THEME_PRIMARY if pct < 50 else (THEME_WARN if pct < 80 else '#ff4444')
-                                    ui.label(f'{pct:.0f}').style(f'color:{color}; font-family: JetBrains Mono; font-size: 0.6rem; min-width: 20px; text-align: center;')
+                            def update_status():
+                                if PS.running and PS.start_time:
+                                    elapsed = (datetime.now() - PS.start_time).seconds
+                                    mins, secs = divmod(elapsed, 60)
+                                    status_label.text = f'Running: {PS.current_step} ({mins}m {secs}s)'
+                                    status_label.style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.7rem;')
+                                else:
+                                    status_label.text = 'Idle'
+                                    status_label.style(f'color:{THEME_TEXT_DIM}; font-family: JetBrains Mono; font-size: 0.7rem;')
                             
-                            # Memory
-                            mem = psutil.virtual_memory()
-                            mem_used_gb = mem.used / (1024**3)
-                            mem_total_gb = mem.total / (1024**3)
-                            mem_color = THEME_PRIMARY if mem.percent < 60 else (THEME_WARN if mem.percent < 85 else '#ff4444')
+                            ui.timer(1.0, update_status)
                             
-                            with ui.column().classes('gap-0'):
-                                ui.label(f'RAM {mem.percent:.0f}%').style(f'color:{mem_color}; font-family: JetBrains Mono; font-size: 0.8rem; font-weight: bold;')
-                                ui.label(f'{mem_used_gb:.1f}/{mem_total_gb:.0f}GB').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
+                            async def stop_pipeline():
+                                if PS.current_process:
+                                    try:
+                                        PS.current_process.terminate()
+                                        pipeline_log(f"[{PS.current_step}] STOPPED by user")
+                                        ui.notify('Pipeline stopped', type='warning')
+                                    except:
+                                        pass
                             
-                            # GPU (if available)
-                            try:
-                                import GPUtil
-                                gpus = GPUtil.getGPUs()
-                                if gpus:
-                                    gpu = gpus[0]
-                                    gpu_color = THEME_PRIMARY if gpu.load*100 < 50 else (THEME_WARN if gpu.load*100 < 80 else '#ff4444')
-                                    with ui.column().classes('gap-0'):
-                                        ui.label(f'GPU {gpu.load*100:.0f}%').style(f'color:{gpu_color}; font-family: JetBrains Mono; font-size: 0.8rem; font-weight: bold;')
-                                        ui.label(f'{gpu.memoryUsed:.0f}/{gpu.memoryTotal:.0f}MB').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
-                            except:
-                                pass
-                    
-                    ui.button(icon='refresh', on_click=update_system_stats).props('flat dense size=sm')
-                    
-                    # Auto-refresh timer
-                    ui.timer(2.0, update_system_stats)
-                    update_system_stats()
-            
-            # FILE BROWSER for current run
-            with ui.card().classes('dark-card p-4 w-full'):
-                with ui.row().classes('items-center gap-3 mb-2'):
-                    ui.label('// RUN_FILES').classes('terminal-header')
-                    
-                    file_browser_container = ui.column().classes('w-full')
-                    
-                    def refresh_files():
-                        file_browser_container.clear()
-                        if not current_run_dir[0] or not current_run_dir[0].exists():
-                            with file_browser_container:
-                                ui.label('No run selected').style(f'color:{THEME_TEXT_DIM}; font-size: 0.75rem;')
-                            return
+                            ui.button('STOP', on_click=stop_pipeline, icon='stop').props('flat dense size=sm color=negative')
+                            
+                            def clear_log():
+                                if PS.log_container:
+                                    PS.log_container.clear()
+                            ui.button('CLEAR', on_click=clear_log, icon='delete').props('flat dense size=sm')
                         
-                        run_path = current_run_dir[0]
-                        with file_browser_container:
-                            # Count files by type
-                            def count_files(pattern):
-                                return len(list(run_path.rglob(pattern)))
-                            
-                            stats = {
-                                'phases': count_files('phases-*.pkl'),
-                                'order_all': count_files('order_all-*.pkl'),
-                                'order': count_files('order-*.pkl'),
-                                'clustering': count_files('clustering_results/**/*.pkl') + count_files('clustering_results/**/*.csv'),
-                                'pearson': count_files('pearson_results/**/*'),
-                                'extra': 1 if (run_path / 'extra.pkl').exists() else 0,
-                            }
-                            
-                            ui.label(f'📁 {run_path.name}').style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.8rem;')
-                            
-                            with ui.row().classes('gap-4 mt-2 flex-wrap'):
-                                for name, count in stats.items():
-                                    color = THEME_PRIMARY if count > 0 else THEME_TEXT_DIM
-                                    ui.label(f'{name}: {count}').style(f'color:{color}; font-family: JetBrains Mono; font-size: 0.7rem;')
-                            
-                            ui.separator().classes('my-2')
-                            
-                            # List directories and files
-                            with ui.scroll_area().classes('w-full').style('height: 20vh;'):
-                                for item in sorted(run_path.iterdir()):
-                                    if item.is_dir():
-                                        file_count = len(list(item.rglob('*')))
-                                        ui.label(f'📁 {item.name}/ ({file_count} files)').style(f'color:{THEME_SECONDARY}; font-family: JetBrains Mono; font-size: 0.7rem;')
-                                    else:
-                                        size_kb = item.stat().st_size / 1024
-                                        size_str = f'{size_kb:.1f}KB' if size_kb < 1024 else f'{size_kb/1024:.1f}MB'
-                                        ui.label(f'📄 {item.name} ({size_str})').style(f'color:{THEME_TEXT_DIM}; font-family: JetBrains Mono; font-size: 0.7rem;')
+                        with ui.scroll_area().classes('w-full').style('height: calc(100vh - 200px); background: #050505; border-radius: 4px;'):
+                            PS.log_container = ui.column().classes('w-full p-3 gap-0')
+                            with PS.log_container:
+                                ui.label('Pipeline ready. Select a step and click RUN.').style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.75rem;')
+                                ui.label(f'Pipeline directory: {PIPELINE_DIR}').style(f'color:{THEME_TEXT_DIM}; font-family: JetBrains Mono; font-size: 0.7rem;')
                     
-                    ui.button('REFRESH', on_click=refresh_files, icon='refresh').props('flat dense size=sm')
-                
-                # Store refresh function and do initial refresh
-                PS.refresh_files = refresh_files
-                refresh_files()
+                    # FILES TAB
+                    with ui.tab_panel(tab_files).classes('p-2'):
+                        file_browser_container = ui.column().classes('w-full')
+                        
+                        def refresh_files():
+                            file_browser_container.clear()
+                            if not current_run_dir[0] or not current_run_dir[0].exists():
+                                with file_browser_container:
+                                    ui.label('No run selected').style(f'color:{THEME_TEXT_DIM}; font-size: 0.75rem;')
+                                return
+                            
+                            run_path = current_run_dir[0]
+                            with file_browser_container:
+                                def count_files(pattern):
+                                    return len(list(run_path.rglob(pattern)))
+                                
+                                stats = {
+                                    'syncro': count_files('syncro-*.pkl') + count_files('phases-*.pkl'),
+                                    'order_all': count_files('order_all-*.pkl'),
+                                    'order': count_files('order-*.pkl'),
+                                    'clustering': count_files('clustering_results/**/*.pkl') + count_files('clustering_results/**/*.csv'),
+                                    'pearson': count_files('pearson_results/**/*'),
+                                }
+                                
+                                ui.label(f'{run_path.name}').style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.8rem;')
+                                
+                                with ui.row().classes('gap-4 mt-2 flex-wrap'):
+                                    for name, count in stats.items():
+                                        color = THEME_PRIMARY if count > 0 else THEME_TEXT_DIM
+                                        ui.label(f'{name}: {count}').style(f'color:{color}; font-family: JetBrains Mono; font-size: 0.7rem;')
+                                
+                                ui.separator().classes('my-2')
+                                
+                                with ui.scroll_area().classes('w-full').style('height: calc(100vh - 280px);'):
+                                    for item in sorted(run_path.iterdir()):
+                                        if item.is_dir():
+                                            file_count = len(list(item.rglob('*')))
+                                            ui.label(f'[dir] {item.name}/ ({file_count} files)').style(f'color:{THEME_SECONDARY}; font-family: JetBrains Mono; font-size: 0.7rem;')
+                                        else:
+                                            size_kb = item.stat().st_size / 1024
+                                            size_str = f'{size_kb:.1f}KB' if size_kb < 1024 else f'{size_kb/1024:.1f}MB'
+                                            ui.label(f'[file] {item.name} ({size_str})').style(f'color:{THEME_TEXT_DIM}; font-family: JetBrains Mono; font-size: 0.7rem;')
+                        
+                        with ui.row().classes('mt-2'):
+                            ui.button('REFRESH', on_click=refresh_files, icon='refresh').props('flat dense size=sm')
+                        
+                        PS.refresh_files = refresh_files
+                        refresh_files()
+                    
+                    # SYSTEM TAB
+                    with ui.tab_panel(tab_system).classes('p-2'):
+                        ui.label('// SYSTEM_MONITOR').classes('terminal-header mb-2')
+                        system_container = ui.column().classes('w-full gap-4')
+                        
+                        def update_system_stats():
+                            import psutil
+                            system_container.clear()
+                            with system_container:
+                                cpu_percent = psutil.cpu_percent(interval=0.1)
+                                cpu_count = psutil.cpu_count()
+                                cpu_color = THEME_PRIMARY if cpu_percent < 50 else (THEME_WARN if cpu_percent < 80 else '#ff4444')
+                                
+                                with ui.row().classes('gap-4 items-center'):
+                                    with ui.column().classes('gap-0'):
+                                        ui.label(f'CPU {cpu_percent:.0f}%').style(f'color:{cpu_color}; font-family: JetBrains Mono; font-size: 1rem; font-weight: bold;')
+                                        ui.label(f'{cpu_count} cores').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                                    
+                                    per_cpu = psutil.cpu_percent(percpu=True)
+                                    with ui.row().classes('gap-1 flex-wrap'):
+                                        for i, pct in enumerate(per_cpu[:16]):
+                                            color = THEME_PRIMARY if pct < 50 else (THEME_WARN if pct < 80 else '#ff4444')
+                                            ui.label(f'{pct:.0f}').style(f'color:{color}; font-family: JetBrains Mono; font-size: 0.65rem; min-width: 22px; text-align: center;')
+                                
+                                mem = psutil.virtual_memory()
+                                mem_used_gb = mem.used / (1024**3)
+                                mem_total_gb = mem.total / (1024**3)
+                                mem_color = THEME_PRIMARY if mem.percent < 60 else (THEME_WARN if mem.percent < 85 else '#ff4444')
+                                
+                                with ui.row().classes('gap-4 items-center'):
+                                    ui.label(f'RAM {mem.percent:.0f}%').style(f'color:{mem_color}; font-family: JetBrains Mono; font-size: 1rem; font-weight: bold;')
+                                    ui.label(f'{mem_used_gb:.1f} / {mem_total_gb:.0f} GB').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                                
+                                try:
+                                    import GPUtil
+                                    gpus = GPUtil.getGPUs()
+                                    if gpus:
+                                        gpu = gpus[0]
+                                        gpu_color = THEME_PRIMARY if gpu.load*100 < 50 else (THEME_WARN if gpu.load*100 < 80 else '#ff4444')
+                                        with ui.row().classes('gap-4 items-center'):
+                                            ui.label(f'GPU {gpu.load*100:.0f}%').style(f'color:{gpu_color}; font-family: JetBrains Mono; font-size: 1rem; font-weight: bold;')
+                                            ui.label(f'{gpu.memoryUsed:.0f} / {gpu.memoryTotal:.0f} MB').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                                except:
+                                    ui.label('GPU: N/A').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                        
+                        ui.timer(2.0, update_system_stats)
+                        update_system_stats()
+                    
+                    # VISUALIZE TAB - Unified Visualization Dashboard
+                    with ui.tab_panel(tab_viz).classes('p-0'):
+                        # State for visualization
+                        viz_state = {'data': None, 'file': None}
+                        
+                        with ui.scroll_area().classes('w-full').style('height: calc(100vh - 150px);'):
+                            with ui.column().classes('w-full p-3 gap-3'):
+                                
+                                # HEADER - Data Selection
+                                with ui.card().classes('dark-card p-3 w-full'):
+                                    with ui.row().classes('items-center gap-4 flex-wrap'):
+                                        ui.label('▌VISUALIZATION').style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.9rem; letter-spacing: 1px;')
+                                        
+                                        viz_band = ui.select(['Delta', 'Theta', 'Alpha', 'Beta', 'Gamma'], value='Alpha', label='Band').props('dense dark').classes('w-24')
+                                        viz_subject = ui.select([], label='Subject').props('dense dark').classes('w-32')
+                                        viz_epoch = ui.number(value=0, min=0, max=100, label='Epoch').props('dense').classes('w-20')
+                                        
+                                        def load_subjects():
+                                            viz_subject.options = []
+                                            if current_run_dir[0]:
+                                                all_files = list(current_run_dir[0].rglob('syncro-*.pkl')) + list(current_run_dir[0].rglob('phases-*.pkl'))
+                                                subjects = sorted(list(set([f.stem.split('-')[1] if '-' in f.stem else f.stem for f in all_files])))[:30]
+                                                viz_subject.options = subjects
+                                                if subjects:
+                                                    viz_subject.value = subjects[0]
+                                                ui.notify(f'Found {len(subjects)} subjects', type='info')
+                                        
+                                        ui.button('Load Subjects', on_click=load_subjects, icon='refresh').props('dense flat')
+                                        
+                                        viz_status = ui.label('No data loaded').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem; margin-left: auto;')
+                                
+                                # MAIN VISUALIZATION AREA - 3D Brain + Stats
+                                with ui.row().classes('w-full gap-3'):
+                                    # LEFT: 3D Brain Visualization
+                                    with ui.card().classes('dark-card p-3').style('flex: 2; min-width: 400px;'):
+                                        ui.label('▌3D BRAIN NETWORK').style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-2')
+                                        
+                                        brain_plot_container = ui.column().classes('w-full')
+                                        
+                                        def update_brain_plot(plot_type='network'):
+                                            brain_plot_container.clear()
+                                            try:
+                                                from viz_scripts import brain_3d
+                                                import pickle
+                                                
+                                                # Try to load data
+                                                data = None
+                                                if current_run_dir[0] and viz_subject.value:
+                                                    files = list(current_run_dir[0].rglob(f'*{viz_subject.value}*.pkl'))
+                                                    if files:
+                                                        with open(files[0], 'rb') as f:
+                                                            data = pickle.load(f)
+                                                        viz_state['data'] = data
+                                                        viz_state['file'] = files[0]
+                                                        viz_status.text = f'Loaded: {files[0].name}'
+                                                        viz_status.style(f'color:{THEME_PRIMARY}; font-size: 0.7rem;')
+                                                
+                                                with brain_plot_container:
+                                                    if plot_type == 'network':
+                                                        fig = brain_3d.create_brain_network_figure()
+                                                    elif plot_type == 'colored':
+                                                        fig = brain_3d.create_colored_brain_figure()
+                                                    elif plot_type == 'sync':
+                                                        fig = brain_3d.create_sync_brain_figure(data, viz_band.value, int(viz_epoch.value or 0))
+                                                    elif plot_type == 'all_bands':
+                                                        fig = brain_3d.create_all_bands_brain_figure(data)
+                                                    else:
+                                                        fig = brain_3d.create_brain_network_figure()
+                                                    
+                                                    ui.plotly(fig).classes('w-full').style('height: 450px;')
+                                            except Exception as e:
+                                                with brain_plot_container:
+                                                    ui.label(f'Error: {e}').style(f'color:{THEME_ERROR}; font-size: 0.75rem;')
+                                                    import traceback
+                                                    ui.label(traceback.format_exc()[:500]).style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem; white-space: pre-wrap;')
+                                        
+                                        with ui.row().classes('gap-2 mb-2'):
+                                            ui.button('Networks', on_click=lambda: update_brain_plot('network')).props('dense').style(f'background:{THEME_PRIMARY}; color:black;')
+                                            ui.button('Parcellation', on_click=lambda: update_brain_plot('colored')).props('dense outline')
+                                            ui.button('Sync Map', on_click=lambda: update_brain_plot('sync')).props('dense outline')
+                                            ui.button('All Bands', on_click=lambda: update_brain_plot('all_bands')).props('dense outline')
+                                        
+                                        # Load initial plot
+                                        update_brain_plot('network')
+                                    
+                                    # RIGHT: Network Stats
+                                    with ui.card().classes('dark-card p-3').style('flex: 1; min-width: 300px;'):
+                                        ui.label('▌NETWORK SYNC').style(f'color:{THEME_SECONDARY}; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-2')
+                                        
+                                        network_plot_container = ui.column().classes('w-full')
+                                        
+                                        def update_network_plot():
+                                            network_plot_container.clear()
+                                            try:
+                                                from viz_scripts import brain_3d
+                                                data = viz_state.get('data')
+                                                
+                                                with network_plot_container:
+                                                    fig = brain_3d.create_network_comparison_figure(data, viz_band.value)
+                                                    ui.plotly(fig).classes('w-full').style('height: 350px;')
+                                            except Exception as e:
+                                                with network_plot_container:
+                                                    ui.label(f'Error: {e}').style(f'color:{THEME_TEXT_DIM};')
+                                        
+                                        ui.button('Update', on_click=update_network_plot, icon='refresh').props('dense flat size=sm').classes('mb-2')
+                                        update_network_plot()
+                                
+                                # SECOND ROW - Kuramoto Analysis
+                                with ui.row().classes('w-full gap-3'):
+                                    # Timeline
+                                    with ui.card().classes('dark-card p-3 flex-1'):
+                                        ui.label('▌KURAMOTO TIMELINE').style(f'color:{THEME_WARN}; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-2')
+                                        
+                                        kura_timeline_container = ui.column().classes('w-full')
+                                        
+                                        def update_kuramoto_timeline():
+                                            kura_timeline_container.clear()
+                                            try:
+                                                from viz_scripts import kuramoto_viz
+                                                data = viz_state.get('data')
+                                                
+                                                with kura_timeline_container:
+                                                    fig = kuramoto_viz.create_timeline_figure(data, viz_band.value)
+                                                    ui.plotly(fig).classes('w-full').style('height: 280px;')
+                                            except Exception as e:
+                                                with kura_timeline_container:
+                                                    ui.label(f'Error: {e}').style(f'color:{THEME_TEXT_DIM};')
+                                        
+                                        with ui.row().classes('gap-2 mb-2'):
+                                            ui.button('Timeline', on_click=update_kuramoto_timeline).props('dense flat size=sm')
+                                            
+                                            def show_all_bands():
+                                                kura_timeline_container.clear()
+                                                try:
+                                                    from viz_scripts import kuramoto_viz
+                                                    data = viz_state.get('data')
+                                                    with kura_timeline_container:
+                                                        fig = kuramoto_viz.create_all_bands_timeline(data)
+                                                        ui.plotly(fig).classes('w-full').style('height: 280px;')
+                                                except Exception as e:
+                                                    with kura_timeline_container:
+                                                        ui.label(f'Error: {e}').style(f'color:{THEME_TEXT_DIM};')
+                                            
+                                            ui.button('All Bands', on_click=show_all_bands).props('dense flat size=sm')
+                                        
+                                        update_kuramoto_timeline()
+                                    
+                                    # Band Comparison
+                                    with ui.card().classes('dark-card p-3 flex-1'):
+                                        ui.label('▌BAND COMPARISON').style(f'color:{THEME_SECONDARY}; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-2')
+                                        
+                                        band_comp_container = ui.column().classes('w-full')
+                                        
+                                        def update_band_comparison():
+                                            band_comp_container.clear()
+                                            try:
+                                                from viz_scripts import kuramoto_viz
+                                                data = viz_state.get('data')
+                                                
+                                                with band_comp_container:
+                                                    fig = kuramoto_viz.create_band_comparison_figure(data)
+                                                    ui.plotly(fig).classes('w-full').style('height: 280px;')
+                                            except Exception as e:
+                                                with band_comp_container:
+                                                    ui.label(f'Error: {e}').style(f'color:{THEME_TEXT_DIM};')
+                                        
+                                        ui.button('Update', on_click=update_band_comparison, icon='refresh').props('dense flat size=sm').classes('mb-2')
+                                        update_band_comparison()
+                                
+                                # THIRD ROW - More Analysis
+                                with ui.row().classes('w-full gap-3'):
+                                    # Phase Distribution
+                                    with ui.card().classes('dark-card p-3 flex-1'):
+                                        ui.label('▌PHASE DISTRIBUTION').style(f'color:#a78bfa; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-2')
+                                        
+                                        phase_container = ui.column().classes('w-full')
+                                        
+                                        def update_phase_plot():
+                                            phase_container.clear()
+                                            try:
+                                                from viz_scripts import kuramoto_viz
+                                                data = viz_state.get('data')
+                                                
+                                                with phase_container:
+                                                    fig = kuramoto_viz.create_phase_distribution_figure(data, viz_band.value, int(viz_epoch.value or 0))
+                                                    ui.plotly(fig).classes('w-full').style('height: 280px;')
+                                            except Exception as e:
+                                                with phase_container:
+                                                    ui.label(f'Error: {e}').style(f'color:{THEME_TEXT_DIM};')
+                                        
+                                        ui.button('Update', on_click=update_phase_plot, icon='refresh').props('dense flat size=sm').classes('mb-2')
+                                        update_phase_plot()
+                                    
+                                    # Sync Matrix
+                                    with ui.card().classes('dark-card p-3 flex-1'):
+                                        ui.label('▌SYNC MATRIX').style(f'color:#60a5fa; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-2')
+                                        
+                                        sync_matrix_container = ui.column().classes('w-full')
+                                        
+                                        def update_sync_matrix():
+                                            sync_matrix_container.clear()
+                                            try:
+                                                from viz_scripts import kuramoto_viz
+                                                data = viz_state.get('data')
+                                                
+                                                with sync_matrix_container:
+                                                    fig = kuramoto_viz.create_heatmap_figure(data, viz_band.value, int(viz_epoch.value or 0))
+                                                    ui.plotly(fig).classes('w-full').style('height: 280px;')
+                                            except Exception as e:
+                                                with sync_matrix_container:
+                                                    ui.label(f'Error: {e}').style(f'color:{THEME_TEXT_DIM};')
+                                        
+                                        ui.button('Update', on_click=update_sync_matrix, icon='refresh').props('dense flat size=sm').classes('mb-2')
+                                        update_sync_matrix()
+                                    
+                                    # Connectivity Graph
+                                    with ui.card().classes('dark-card p-3 flex-1'):
+                                        ui.label('▌ROI CONNECTIVITY').style(f'color:#22c55e; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-2')
+                                        
+                                        connectivity_container = ui.column().classes('w-full')
+                                        conn_threshold = ui.slider(min=0.3, max=0.9, step=0.1, value=0.5).props('label-always').classes('w-full')
+                                        
+                                        def update_connectivity():
+                                            connectivity_container.clear()
+                                            try:
+                                                from viz_scripts import kuramoto_viz
+                                                data = viz_state.get('data')
+                                                
+                                                with connectivity_container:
+                                                    fig = kuramoto_viz.create_roi_connectivity_figure(data, viz_band.value, conn_threshold.value)
+                                                    ui.plotly(fig).classes('w-full').style('height: 250px;')
+                                            except Exception as e:
+                                                with connectivity_container:
+                                                    ui.label(f'Error: {e}').style(f'color:{THEME_TEXT_DIM};')
+                                        
+                                        conn_threshold.on('update:model-value', lambda e: update_connectivity())
+                                        update_connectivity()
+                                
+                                # FOURTH ROW - Clustering (if available)
+                                with ui.expansion('CLUSTERING ANALYSIS', icon='analytics').classes('w-full').style(f'background:{THEME_CARD};'):
+                                    with ui.row().classes('w-full gap-3 p-2'):
+                                        # Clustering Scores
+                                        with ui.card().classes('dark-card p-3 flex-1'):
+                                            ui.label('▌CLUSTER SCORES').style(f'color:#ec4899; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-2')
+                                            
+                                            cluster_scores_container = ui.column().classes('w-full')
+                                            
+                                            def update_cluster_scores():
+                                                cluster_scores_container.clear()
+                                                try:
+                                                    from viz_scripts import clustering_viz
+                                                    if current_run_dir[0]:
+                                                        with cluster_scores_container:
+                                                            fig = clustering_viz.create_band_comparison_figure(current_run_dir[0])
+                                                            ui.plotly(fig).classes('w-full').style('height: 280px;')
+                                                    else:
+                                                        with cluster_scores_container:
+                                                            ui.label('Select a run first').style(f'color:{THEME_TEXT_DIM};')
+                                                except Exception as e:
+                                                    with cluster_scores_container:
+                                                        ui.label(f'Error: {e}').style(f'color:{THEME_TEXT_DIM};')
+                                            
+                                            ui.button('Load', on_click=update_cluster_scores).props('dense flat size=sm').classes('mb-2')
+                                        
+                                        # PCA Scatter
+                                        with ui.card().classes('dark-card p-3 flex-1'):
+                                            ui.label('▌PCA CLUSTERS').style(f'color:#f97316; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-2')
+                                            
+                                            pca_container = ui.column().classes('w-full')
+                                            
+                                            def update_pca_scatter():
+                                                pca_container.clear()
+                                                try:
+                                                    from viz_scripts import clustering_viz
+                                                    if current_run_dir[0]:
+                                                        with pca_container:
+                                                            fig = clustering_viz.create_pca_scatter_figure(current_run_dir[0], viz_band.value)
+                                                            ui.plotly(fig).classes('w-full').style('height: 280px;')
+                                                    else:
+                                                        with pca_container:
+                                                            ui.label('Select a run first').style(f'color:{THEME_TEXT_DIM};')
+                                                except Exception as e:
+                                                    with pca_container:
+                                                        ui.label(f'Error: {e}').style(f'color:{THEME_TEXT_DIM};')
+                                            
+                                            ui.button('Load', on_click=update_pca_scatter).props('dense flat size=sm').classes('mb-2')
+                                
+                                # FIFTH ROW - Pearson Results Gallery
+                                with ui.expansion('PEARSON CORRELATIONS', icon='insights').classes('w-full').style(f'background:{THEME_CARD};'):
+                                    with ui.column().classes('w-full p-2'):
+                                        with ui.row().classes('gap-2 items-center mb-2'):
+                                            prs_metric = ui.select(['All', 'Coherence', 'Metastability'], value='All', label='Metric').props('dense').classes('w-28')
+                                            prs_cond = ui.select(['All', 'DMT', 'EC', 'EO'], value='All', label='Condition').props('dense').classes('w-20')
+                                            prs_band = ui.select(['All', 'Delta', 'Theta', 'Alpha', 'Beta', 'Gamma'], value='All', label='Band').props('dense').classes('w-24')
+                                        
+                                        pearson_gallery = ui.column().classes('w-full')
+                                        pearson_image_dialog = ui.dialog().classes('w-full max-w-4xl')
+                                        
+                                        def refresh_pearson_gallery():
+                                            pearson_gallery.clear()
+                                            if not current_run_dir[0]:
+                                                with pearson_gallery:
+                                                    ui.label('No run selected').style(f'color:{THEME_TEXT_DIM};')
+                                                return
+                                            
+                                            pearson_dir = current_run_dir[0] / 'pearson_results'
+                                            if not pearson_dir.exists():
+                                                with pearson_gallery:
+                                                    ui.label('No Pearson results. Run pearson.py first.').style(f'color:{THEME_TEXT_DIM};')
+                                                return
+                                            
+                                            all_files = list(pearson_dir.glob('*.png')) + list(pearson_dir.glob('*.svg'))
+                                            filtered = [f for f in all_files if 
+                                                (prs_metric.value == 'All' or prs_metric.value.lower() in f.name.lower()) and
+                                                (prs_cond.value == 'All' or prs_cond.value.lower() in f.name.lower()) and
+                                                (prs_band.value == 'All' or prs_band.value.lower() in f.name.lower())]
+                                            
+                                            with pearson_gallery:
+                                                ui.label(f'{len(filtered)} images').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                                                with ui.element('div').classes('grid gap-3 mt-2').style('grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));'):
+                                                    for img_file in sorted(filtered)[:30]:
+                                                        def show_full_image(p=img_file):
+                                                            pearson_image_dialog.clear()
+                                                            with pearson_image_dialog:
+                                                                with ui.column().classes('w-full items-center'):
+                                                                    ui.label(p.name).style(f'color:{THEME_PRIMARY}; font-size: 0.9rem; margin-bottom: 10px;')
+                                                                    if p.suffix == '.png':
+                                                                        ui.image(str(p)).classes('w-full').style('max-height: 70vh;')
+                                                                    else:
+                                                                        ui.html(f'<object data="{p}" type="image/svg+xml" style="width:100%; max-height: 70vh;"></object>')
+                                                                    ui.button('Close', on_click=pearson_image_dialog.close).props('flat').classes('mt-3')
+                                                            pearson_image_dialog.open()
+                                                        
+                                                        with ui.card().classes('cursor-pointer p-2').style(f'background:{THEME_CARD};').on('click', show_full_image):
+                                                            ui.label(img_file.stem[:30] + ('...' if len(img_file.stem) > 30 else '')).style(f'color:{THEME_TEXT}; font-size: 0.65rem;')
+                                        
+                                        for sel in [prs_metric, prs_cond, prs_band]:
+                                            sel.on('update:model-value', lambda e: refresh_pearson_gallery())
+                                        
+                                        ui.button('Load Images', on_click=refresh_pearson_gallery, icon='refresh').props('dense flat').classes('mt-2')
 
 
 # Update main page header to include navigation
@@ -1160,7 +1548,7 @@ def main_content():
                             for f in files:
                                 conds.setdefault(f['condition'], []).append(f)
                             for cond, cfs in conds.items():
-                                with ui.expansion(f'📁 {cond} ({len(cfs)} files)').classes('w-full'):
+                                with ui.expansion(f'{cond} ({len(cfs)} files)').classes('w-full'):
                                     for f in cfs:
                                         with ui.row().classes('file-item items-center w-full gap-3'):
                                             ui.icon('description', size='sm').classes('opacity-60')
