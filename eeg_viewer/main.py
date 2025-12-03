@@ -1004,21 +1004,27 @@ def pipeline_page():
                     ui.label('~3-5 min').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
         
         # RIGHT: Tabbed Panel (Console, Files, System, Visualize)
-        with ui.column().classes('flex-1'):
-            with ui.card().classes('dark-card p-2 w-full').style('height: calc(100vh - 80px);'):
+        with ui.column().classes('flex-1 h-full'):
+            with ui.card().classes('dark-card p-2 w-full h-full').style('min-height: calc(100vh - 80px);'):
                 with ui.tabs().classes('w-full').style(f'background: {THEME_BG};') as tabs:
                     tab_console = ui.tab('CONSOLE', icon='terminal').style(f'color:{THEME_PRIMARY};')
                     tab_files = ui.tab('FILES', icon='folder').style(f'color:{THEME_SECONDARY};')
                     tab_system = ui.tab('SYSTEM', icon='memory').style(f'color:{THEME_WARN};')
                     tab_viz = ui.tab('VISUALIZE', icon='analytics').style(f'color:#a78bfa;')
                 
-                with ui.tab_panels(tabs, value=tab_console).classes('w-full flex-1'):
+                with ui.tab_panels(tabs, value=tab_console).classes('w-full flex-1').style('flex: 1; overflow: hidden;'):
                     # CONSOLE TAB
                     with ui.tab_panel(tab_console).classes('p-2'):
                         with ui.row().classes('items-center gap-3 mb-2'):
                             ui.label('// OUTPUT_LOG').classes('terminal-header')
                             
                             # Status indicator
+                            # Reset pipeline state on page load
+                            PS.running = False
+                            PS.current_step = ""
+                            PS.start_time = None
+                            PS.current_process = None
+                            
                             status_label = ui.label('Idle').style(f'color:{THEME_TEXT_DIM}; font-family: JetBrains Mono; font-size: 0.7rem; margin-left: auto;')
                             PS.status_label = status_label
                             
@@ -1154,80 +1160,150 @@ def pipeline_page():
                         update_system_stats()
                     
                     # VISUALIZE TAB - Unified Visualization Dashboard
-                    with ui.tab_panel(tab_viz).classes('p-0'):
+                    with ui.tab_panel(tab_viz).classes('p-0 h-full'):
                         # State for visualization
                         viz_state = {'data': None, 'file': None}
                         
-                        with ui.scroll_area().classes('w-full').style('height: calc(100vh - 150px);'):
-                            with ui.column().classes('w-full p-3 gap-3'):
+                        with ui.column().classes('w-full').style('height: calc(100vh - 140px); display: flex; flex-direction: column;'):
+                            # STICKY HEADER - Data Selection with custom path support
+                            with ui.card().classes('dark-card p-3 w-full').style('flex-shrink: 0;'):
+                                # Custom data path
+                                with ui.row().classes('items-center gap-2 w-full mb-2'):
+                                    ui.label('Data Path:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                                    custom_data_path = ui.input(placeholder='/path/to/data or leave empty for run dir').props('dense dark').classes('flex-1')
+                                    
+                                    def browse_path():
+                                        """Load data from custom path"""
+                                        path = custom_data_path.value.strip() if custom_data_path.value else None
+                                        if path:
+                                            from pathlib import Path
+                                            p = Path(path)
+                                            if p.exists():
+                                                viz_state['custom_path'] = p
+                                                load_subjects_from_path(p)
+                                            else:
+                                                ui.notify(f'Path not found: {path}', type='warning')
+                                        elif current_run_dir[0]:
+                                            viz_state['custom_path'] = None
+                                            load_subjects_from_path(current_run_dir[0])
+                                    
+                                    ui.button('Load', on_click=browse_path, icon='folder_open').props('dense flat')
                                 
-                                # HEADER - Data Selection
-                                with ui.card().classes('dark-card p-3 w-full'):
-                                    with ui.row().classes('items-center gap-4 flex-wrap'):
-                                        ui.label('▌VISUALIZATION').style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.9rem; letter-spacing: 1px;')
-                                        
-                                        viz_band = ui.select(['Delta', 'Theta', 'Alpha', 'Beta', 'Gamma'], value='Alpha', label='Band').props('dense dark').classes('w-24')
-                                        viz_subject = ui.select([], label='Subject').props('dense dark').classes('w-32')
-                                        viz_epoch = ui.number(value=0, min=0, max=100, label='Epoch').props('dense').classes('w-20')
-                                        
-                                        def load_subjects():
-                                            viz_subject.options = []
-                                            if current_run_dir[0]:
-                                                all_files = list(current_run_dir[0].rglob('syncro-*.pkl')) + list(current_run_dir[0].rglob('phases-*.pkl'))
-                                                subjects = sorted(list(set([f.stem.split('-')[1] if '-' in f.stem else f.stem for f in all_files])))[:30]
-                                                viz_subject.options = subjects
-                                                if subjects:
-                                                    viz_subject.value = subjects[0]
-                                                ui.notify(f'Found {len(subjects)} subjects', type='info')
-                                        
-                                        ui.button('Load Subjects', on_click=load_subjects, icon='refresh').props('dense flat')
-                                        
-                                        viz_status = ui.label('No data loaded').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem; margin-left: auto;')
-                                
-                                # MAIN VISUALIZATION AREA - 3D Brain + Stats
-                                with ui.row().classes('w-full gap-3'):
-                                    # LEFT: 3D Brain Visualization
-                                    with ui.card().classes('dark-card p-3').style('flex: 2; min-width: 400px;'):
-                                        ui.label('▌3D BRAIN NETWORK').style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-2')
-                                        
-                                        brain_plot_container = ui.column().classes('w-full')
-                                        
-                                        def update_brain_plot(plot_type='network'):
-                                            brain_plot_container.clear()
+                                with ui.row().classes('items-center gap-4 flex-wrap'):
+                                    ui.label('▌VISUALIZATION').style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.9rem; letter-spacing: 1px;')
+                                    
+                                    viz_band = ui.select(['Delta', 'Theta', 'Alpha', 'Beta', 'Gamma'], value='Alpha', label='Band').props('dense dark').classes('w-24')
+                                    viz_subject = ui.select([], label='Subject').props('dense dark').classes('w-32')
+                                    viz_epoch = ui.number(value=0, min=0, max=100, label='Epoch').props('dense').classes('w-20')
+                                    
+                                    def load_subjects_from_path(path):
+                                        """Load subjects from given path"""
+                                        from pathlib import Path
+                                        p = Path(path)
+                                        viz_subject.options = []
+                                        all_files = list(p.rglob('syncro-*.pkl')) + list(p.rglob('phases-*.pkl'))
+                                        subjects = sorted(list(set([f.stem.split('-')[1] if '-' in f.stem else f.stem for f in all_files])))[:30]
+                                        viz_subject.options = subjects
+                                        if subjects:
+                                            viz_subject.value = subjects[0]
+                                        ui.notify(f'Found {len(subjects)} subjects in {p.name}', type='info')
+                                    
+                                    def load_subjects():
+                                        path = viz_state.get('custom_path') or current_run_dir[0]
+                                        if path:
+                                            load_subjects_from_path(path)
+                                    
+                                    ui.button('Load Subjects', on_click=load_subjects, icon='refresh').props('dense flat')
+                                    
+                                    viz_status = ui.label('No data loaded').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem; margin-left: auto;')
+                                    
+                                    # Function to refresh all plots when parameters change
+                                    def refresh_all_plots():
+                                        """Refresh all visualizations with current parameters"""
+                                        # Load data for current subject
+                                        data_path = viz_state.get('custom_path') or current_run_dir[0]
+                                        if data_path and viz_subject.value:
+                                            import pickle
+                                            from pathlib import Path
                                             try:
-                                                from viz_scripts import brain_3d
-                                                import pickle
-                                                
-                                                # Try to load data
-                                                data = None
-                                                if current_run_dir[0] and viz_subject.value:
-                                                    files = list(current_run_dir[0].rglob(f'*{viz_subject.value}*.pkl'))
-                                                    if files:
-                                                        with open(files[0], 'rb') as f:
-                                                            data = pickle.load(f)
-                                                        viz_state['data'] = data
-                                                        viz_state['file'] = files[0]
-                                                        viz_status.text = f'Loaded: {files[0].name}'
-                                                        viz_status.style(f'color:{THEME_PRIMARY}; font-size: 0.7rem;')
-                                                
-                                                with brain_plot_container:
-                                                    if plot_type == 'network':
-                                                        fig = brain_3d.create_brain_network_figure()
-                                                    elif plot_type == 'colored':
-                                                        fig = brain_3d.create_colored_brain_figure()
-                                                    elif plot_type == 'sync':
-                                                        fig = brain_3d.create_sync_brain_figure(data, viz_band.value, int(viz_epoch.value or 0))
-                                                    elif plot_type == 'all_bands':
-                                                        fig = brain_3d.create_all_bands_brain_figure(data)
-                                                    else:
-                                                        fig = brain_3d.create_brain_network_figure()
-                                                    
-                                                    ui.plotly(fig).classes('w-full').style('height: 450px;')
+                                                files = list(Path(data_path).rglob(f'*{viz_subject.value}*.pkl'))
+                                                if files:
+                                                    with open(files[0], 'rb') as f:
+                                                        viz_state['data'] = pickle.load(f)
+                                                    viz_state['file'] = files[0]
+                                                    viz_status.text = f'Loaded: {files[0].name}'
+                                                    viz_status.style(f'color:{THEME_PRIMARY}; font-size: 0.7rem;')
                                             except Exception as e:
-                                                with brain_plot_container:
-                                                    ui.label(f'Error: {e}').style(f'color:{THEME_ERROR}; font-size: 0.75rem;')
-                                                    import traceback
-                                                    ui.label(traceback.format_exc()[:500]).style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem; white-space: pre-wrap;')
+                                                viz_status.text = f'Error: {e}'
+                                        
+                                        # Update all plots
+                                        try:
+                                            update_network_plot()
+                                            update_kuramoto_timeline()
+                                            update_band_comparison()
+                                            update_phase_plot()
+                                            update_sync_matrix()
+                                            update_connectivity()
+                                            # Use stored references for Hilbert functions (defined later)
+                                            if 'update_hilbert_2d' in viz_state:
+                                                viz_state['update_hilbert_2d']()
+                                            if 'update_hilbert_3d' in viz_state:
+                                                viz_state['update_hilbert_3d']()
+                                        except:
+                                            pass  # Some functions might not be defined yet
+                                    
+                                    # Connect selectors to auto-refresh
+                                    viz_band.on('update:model-value', lambda e: refresh_all_plots())
+                                    viz_subject.on('update:model-value', lambda e: refresh_all_plots())
+                                    viz_epoch.on('update:model-value', lambda e: refresh_all_plots())
+                            
+                            # VISUALIZATION CONTENT - using scroll_area with proper height
+                            with ui.scroll_area().classes('w-full').style('flex: 1; min-height: 0;'):
+                                with ui.column().classes('w-full p-3 gap-3'):
+                                    # MAIN VISUALIZATION AREA - 3D Brain + Stats
+                                    with ui.row().classes('w-full gap-3'):
+                                        # LEFT: 3D Brain Visualization
+                                        with ui.card().classes('dark-card p-3').style('flex: 2; min-width: 400px;'):
+                                            ui.label('▌3D BRAIN NETWORK').style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-2')
+                                            
+                                            brain_plot_container = ui.column().classes('w-full')
+                                            
+                                            def update_brain_plot(plot_type='network'):
+                                                brain_plot_container.clear()
+                                                try:
+                                                    from viz_scripts import brain_3d
+                                                    import pickle
+                                                    
+                                                    # Try to load data
+                                                    data = None
+                                                    if current_run_dir[0] and viz_subject.value:
+                                                        files = list(current_run_dir[0].rglob(f'*{viz_subject.value}*.pkl'))
+                                                        if files:
+                                                            with open(files[0], 'rb') as f:
+                                                                data = pickle.load(f)
+                                                            viz_state['data'] = data
+                                                            viz_state['file'] = files[0]
+                                                            viz_status.text = f'Loaded: {files[0].name}'
+                                                            viz_status.style(f'color:{THEME_PRIMARY}; font-size: 0.7rem;')
+                                                    
+                                                    with brain_plot_container:
+                                                        if plot_type == 'network':
+                                                            fig = brain_3d.create_brain_network_figure()
+                                                        elif plot_type == 'colored':
+                                                            fig = brain_3d.create_colored_brain_figure()
+                                                        elif plot_type == 'sync':
+                                                            fig = brain_3d.create_sync_brain_figure(data, viz_band.value, int(viz_epoch.value or 0))
+                                                        elif plot_type == 'all_bands':
+                                                            fig = brain_3d.create_all_bands_brain_figure(data)
+                                                        else:
+                                                            fig = brain_3d.create_brain_network_figure()
+                                                        
+                                                        ui.plotly(fig).classes('w-full').style('height: 450px;')
+                                                except Exception as e:
+                                                    with brain_plot_container:
+                                                        ui.label(f'Error: {e}').style(f'color:{THEME_ERROR}; font-size: 0.75rem;')
+                                                        import traceback
+                                                        ui.label(traceback.format_exc()[:500]).style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem; white-space: pre-wrap;')
                                         
                                         with ui.row().classes('gap-2 mb-2'):
                                             ui.button('Networks', on_click=lambda: update_brain_plot('network')).props('dense').style(f'background:{THEME_PRIMARY}; color:black;')
@@ -1257,7 +1333,6 @@ def pipeline_page():
                                                 with network_plot_container:
                                                     ui.label(f'Error: {e}').style(f'color:{THEME_TEXT_DIM};')
                                         
-                                        ui.button('Update', on_click=update_network_plot, icon='refresh').props('dense flat size=sm').classes('mb-2')
                                         update_network_plot()
                                 
                                 # SECOND ROW - Kuramoto Analysis
@@ -1281,23 +1356,19 @@ def pipeline_page():
                                                 with kura_timeline_container:
                                                     ui.label(f'Error: {e}').style(f'color:{THEME_TEXT_DIM};')
                                         
-                                        with ui.row().classes('gap-2 mb-2'):
-                                            ui.button('Timeline', on_click=update_kuramoto_timeline).props('dense flat size=sm')
-                                            
-                                            def show_all_bands():
-                                                kura_timeline_container.clear()
-                                                try:
-                                                    from viz_scripts import kuramoto_viz
-                                                    data = viz_state.get('data')
-                                                    with kura_timeline_container:
-                                                        fig = kuramoto_viz.create_all_bands_timeline(data)
-                                                        ui.plotly(fig).classes('w-full').style('height: 280px;')
-                                                except Exception as e:
-                                                    with kura_timeline_container:
-                                                        ui.label(f'Error: {e}').style(f'color:{THEME_TEXT_DIM};')
-                                            
-                                            ui.button('All Bands', on_click=show_all_bands).props('dense flat size=sm')
+                                        def show_all_bands():
+                                            kura_timeline_container.clear()
+                                            try:
+                                                from viz_scripts import kuramoto_viz
+                                                data = viz_state.get('data')
+                                                with kura_timeline_container:
+                                                    fig = kuramoto_viz.create_all_bands_timeline(data)
+                                                    ui.plotly(fig).classes('w-full').style('height: 280px;')
+                                            except Exception as e:
+                                                with kura_timeline_container:
+                                                    ui.label(f'Error: {e}').style(f'color:{THEME_TEXT_DIM};')
                                         
+                                        ui.button('All Bands', on_click=show_all_bands).props('dense flat size=sm').classes('mb-1')
                                         update_kuramoto_timeline()
                                     
                                     # Band Comparison
@@ -1319,7 +1390,6 @@ def pipeline_page():
                                                 with band_comp_container:
                                                     ui.label(f'Error: {e}').style(f'color:{THEME_TEXT_DIM};')
                                         
-                                        ui.button('Update', on_click=update_band_comparison, icon='refresh').props('dense flat size=sm').classes('mb-2')
                                         update_band_comparison()
                                 
                                 # THIRD ROW - More Analysis
@@ -1343,7 +1413,6 @@ def pipeline_page():
                                                 with phase_container:
                                                     ui.label(f'Error: {e}').style(f'color:{THEME_TEXT_DIM};')
                                         
-                                        ui.button('Update', on_click=update_phase_plot, icon='refresh').props('dense flat size=sm').classes('mb-2')
                                         update_phase_plot()
                                     
                                     # Sync Matrix
@@ -1365,7 +1434,6 @@ def pipeline_page():
                                                 with sync_matrix_container:
                                                     ui.label(f'Error: {e}').style(f'color:{THEME_TEXT_DIM};')
                                         
-                                        ui.button('Update', on_click=update_sync_matrix, icon='refresh').props('dense flat size=sm').classes('mb-2')
                                         update_sync_matrix()
                                     
                                     # Connectivity Graph
@@ -1391,7 +1459,67 @@ def pipeline_page():
                                         conn_threshold.on('update:model-value', lambda e: update_connectivity())
                                         update_connectivity()
                                 
-                                # FOURTH ROW - Clustering (if available)
+                                # FOURTH ROW - Hilbert Transform Visualizations
+                                with ui.row().classes('w-full gap-3'):
+                                    # Hilbert 2D
+                                    with ui.card().classes('dark-card p-3 flex-1'):
+                                        ui.label('▌HILBERT 2D').style(f'color:#f472b6; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-2')
+                                        
+                                        hilbert_2d_container = ui.column().classes('w-full')
+                                        
+                                        def update_hilbert_2d():
+                                            hilbert_2d_container.clear()
+                                            try:
+                                                from viz_scripts import kuramoto_viz
+                                                data = viz_state.get('data')
+                                                
+                                                with hilbert_2d_container:
+                                                    fig = kuramoto_viz.create_hilbert_2d_figure(data, viz_band.value, int(viz_epoch.value or 0))
+                                                    ui.plotly(fig).classes('w-full').style('height: 500px;')
+                                            except Exception as e:
+                                                with hilbert_2d_container:
+                                                    ui.label(f'Error: {e}').style(f'color:{THEME_TEXT_DIM};')
+                                        
+                                        # Store reference for later updates
+                                        viz_state['update_hilbert_2d'] = update_hilbert_2d
+                                        update_hilbert_2d()
+                                    
+                                    # Hilbert 3D
+                                    with ui.card().classes('dark-card p-3 flex-1'):
+                                        ui.label('▌HILBERT 3D PHASE SPACE').style(f'color:#c084fc; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-2')
+                                        
+                                        hilbert_3d_container = ui.column().classes('w-full')
+                                        
+                                        def update_hilbert_3d():
+                                            hilbert_3d_container.clear()
+                                            try:
+                                                from viz_scripts import kuramoto_viz
+                                                data = viz_state.get('data')
+                                                subj = viz_subject.value or 'S01'
+                                                # Extract condition from subject (S01-DMT -> DMT)
+                                                cond = 'DMT'
+                                                if '-' in str(subj):
+                                                    cond = str(subj).split('-')[-1]
+                                                
+                                                with hilbert_3d_container:
+                                                    fig = kuramoto_viz.create_hilbert_3d_figure(
+                                                        data, 
+                                                        viz_band.value, 
+                                                        int(viz_epoch.value or 0),
+                                                        roi_idx=0,
+                                                        subject=subj,
+                                                        condition=cond
+                                                    )
+                                                    ui.plotly(fig).classes('w-full').style('height: 500px;')
+                                            except Exception as e:
+                                                with hilbert_3d_container:
+                                                    ui.label(f'Error: {e}').style(f'color:{THEME_TEXT_DIM};')
+                                        
+                                        # Store reference for later updates
+                                        viz_state['update_hilbert_3d'] = update_hilbert_3d
+                                        update_hilbert_3d()
+                                
+                                # FIFTH ROW - Clustering (if available)
                                 with ui.expansion('CLUSTERING ANALYSIS', icon='analytics').classes('w-full').style(f'background:{THEME_CARD};'):
                                     with ui.row().classes('w-full gap-3 p-2'):
                                         # Clustering Scores
@@ -1482,7 +1610,7 @@ def pipeline_page():
                                                                     if p.suffix == '.png':
                                                                         ui.image(str(p)).classes('w-full').style('max-height: 70vh;')
                                                                     else:
-                                                                        ui.html(f'<object data="{p}" type="image/svg+xml" style="width:100%; max-height: 70vh;"></object>')
+                                                                        ui.html(f'<object data="{p}" type="image/svg+xml" style="width:100%; max-height: 70vh;"></object>', sanitize=False)
                                                                     ui.button('Close', on_click=pearson_image_dialog.close).props('flat').classes('mt-3')
                                                             pearson_image_dialog.open()
                                                         
@@ -1493,6 +1621,178 @@ def pipeline_page():
                                             sel.on('update:model-value', lambda e: refresh_pearson_gallery())
                                         
                                         ui.button('Load Images', on_click=refresh_pearson_gallery, icon='refresh').props('dense flat').classes('mt-2')
+                                
+                                # SEVENTH ROW - Animation/Frame Generator
+                                with ui.expansion('ANIMATION GENERATOR', icon='movie').classes('w-full').style(f'background:{THEME_CARD};'):
+                                    with ui.column().classes('w-full p-3 gap-3'):
+                                        ui.label('Generate Kuramoto visualization frames and animations').style(f'color:{THEME_TEXT_DIM}; font-size: 0.75rem;')
+                                        
+                                        with ui.row().classes('gap-4 items-center flex-wrap'):
+                                            anim_mode = ui.select(['stc', 'eeg', 'all', 'advanced'], value='stc', label='Mode').props('dense').classes('w-28')
+                                            anim_quality = ui.select(['high', 'medium', 'low'], value='medium', label='Quality').props('dense').classes('w-24')
+                                            anim_format = ui.select(['png', 'jpg'], value='png', label='Format').props('dense').classes('w-20')
+                                            anim_start_epoch = ui.number(value=0, min=0, max=100, label='Start').props('dense').classes('w-20')
+                                            anim_end_epoch = ui.number(value=10, min=1, max=200, label='End').props('dense').classes('w-20')
+                                            anim_fps = ui.number(value=5, min=1, max=30, label='FPS').props('dense').classes('w-16')
+                                        
+                                        with ui.row().classes('gap-4 items-center'):
+                                            anim_output_dir = ui.input(value='', placeholder='/path/to/output or auto').props('dense').classes('flex-1')
+                                            ui.label('Output dir (leave empty for auto)').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
+                                        
+                                        anim_log = ui.column().classes('w-full').style('max-height: 150px; overflow-y: auto; background: #050505; border-radius: 4px; padding: 8px;')
+                                        
+                                        async def generate_frames():
+                                            """Generate visualization frames"""
+                                            anim_log.clear()
+                                            with anim_log:
+                                                ui.label('Starting frame generation...').style(f'color:{THEME_PRIMARY}; font-size: 0.7rem;')
+                                            
+                                            data_path = viz_state.get('custom_path') or current_run_dir[0]
+                                            if not data_path or not viz_subject.value:
+                                                with anim_log:
+                                                    ui.label('Error: No data loaded. Load a subject first.').style(f'color:{THEME_ERROR}; font-size: 0.7rem;')
+                                                return
+                                            
+                                            # Build command
+                                            import subprocess
+                                            from pathlib import Path
+                                            
+                                            output_path = anim_output_dir.value.strip() if anim_output_dir.value else str(Path(data_path) / 'animation_frames')
+                                            
+                                            script_path = Path(__file__).parent.parent / 'viz_scripts' / 'generate_frames.py'
+                                            if not script_path.exists():
+                                                script_path = Path('/media/storage_hdd/dmt_fz/viz_scripts/generate_frames.py')
+                                            
+                                            # Use conda environment python
+                                            import os
+                                            conda_prefix = os.environ.get('CONDA_PREFIX', os.path.expanduser('~/anaconda3/envs/dmt_fz'))
+                                            python_path = Path(conda_prefix) / 'bin' / 'python'
+                                            if not python_path.exists():
+                                                python_path = 'python'  # Fallback
+                                            
+                                            cmd = [
+                                                str(python_path), str(script_path),
+                                                '--subject', viz_subject.value,
+                                                '--condition', 'DMT',  # Default
+                                                '--band', viz_band.value,
+                                                '--mode', anim_mode.value,
+                                                '--quality', anim_quality.value,
+                                                '--format', anim_format.value,
+                                                '--start', str(int(anim_start_epoch.value or 0)),
+                                                '--end', str(int(anim_end_epoch.value or 10)),
+                                            ]
+                                            
+                                            with anim_log:
+                                                ui.label(f'Command: {" ".join(cmd)}').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
+                                                ui.label(f'Output: {output_path}').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
+                                            
+                                            try:
+                                                import os
+                                                env = os.environ.copy()
+                                                env['PIPELINE_OUTPUT_DIR'] = str(data_path)
+                                                # Add required paths for viz_scripts modules
+                                                base_path = Path('/media/storage_hdd/dmt_fz')
+                                                pythonpath = [
+                                                    str(base_path / 'viz_scripts'),
+                                                    str(base_path / 'pipeline'),
+                                                    str(base_path),
+                                                ]
+                                                existing_pythonpath = env.get('PYTHONPATH', '')
+                                                env['PYTHONPATH'] = ':'.join(pythonpath) + (':' + existing_pythonpath if existing_pythonpath else '')
+                                                
+                                                process = await asyncio.create_subprocess_exec(
+                                                    *cmd,
+                                                    stdout=asyncio.subprocess.PIPE,
+                                                    stderr=asyncio.subprocess.PIPE,
+                                                    env=env
+                                                )
+                                                
+                                                async def read_output(stream):
+                                                    while True:
+                                                        line = await stream.readline()
+                                                        if not line:
+                                                            break
+                                                        text = line.decode().strip()
+                                                        if text:
+                                                            with anim_log:
+                                                                ui.label(text).style(f'color:{THEME_TEXT}; font-size: 0.65rem;')
+                                                
+                                                await asyncio.gather(
+                                                    read_output(process.stdout),
+                                                    read_output(process.stderr)
+                                                )
+                                                
+                                                await process.wait()
+                                                
+                                                with anim_log:
+                                                    if process.returncode == 0:
+                                                        ui.label('✓ Frames generated successfully!').style(f'color:{THEME_PRIMARY}; font-size: 0.75rem;')
+                                                    else:
+                                                        ui.label(f'Process exited with code {process.returncode}').style(f'color:{THEME_WARN}; font-size: 0.7rem;')
+                                            except Exception as e:
+                                                with anim_log:
+                                                    ui.label(f'Error: {e}').style(f'color:{THEME_ERROR}; font-size: 0.7rem;')
+                                        
+                                        async def generate_video():
+                                            """Generate video from frames"""
+                                            anim_log.clear()
+                                            with anim_log:
+                                                ui.label('Generating video from frames...').style(f'color:{THEME_PRIMARY}; font-size: 0.7rem;')
+                                            
+                                            data_path = viz_state.get('custom_path') or current_run_dir[0]
+                                            if not data_path:
+                                                with anim_log:
+                                                    ui.label('Error: No data path set.').style(f'color:{THEME_ERROR}; font-size: 0.7rem;')
+                                                return
+                                            
+                                            from pathlib import Path
+                                            frames_dir = Path(anim_output_dir.value.strip()) if anim_output_dir.value else Path(data_path) / 'animation_frames'
+                                            
+                                            if not frames_dir.exists():
+                                                with anim_log:
+                                                    ui.label(f'Frames directory not found: {frames_dir}').style(f'color:{THEME_ERROR}; font-size: 0.7rem;')
+                                                return
+                                            
+                                            output_video = frames_dir.parent / f'{viz_subject.value}_{viz_band.value}_animation.mp4'
+                                            
+                                            # Use ffmpeg to create video
+                                            cmd = [
+                                                'ffmpeg', '-y',
+                                                '-framerate', str(int(anim_fps.value or 5)),
+                                                '-pattern_type', 'glob',
+                                                '-i', str(frames_dir / f'*.{anim_format.value}'),
+                                                '-c:v', 'libx264',
+                                                '-pix_fmt', 'yuv420p',
+                                                str(output_video)
+                                            ]
+                                            
+                                            with anim_log:
+                                                ui.label(f'Running: ffmpeg -> {output_video.name}').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
+                                            
+                                            try:
+                                                process = await asyncio.create_subprocess_exec(
+                                                    *cmd,
+                                                    stdout=asyncio.subprocess.PIPE,
+                                                    stderr=asyncio.subprocess.PIPE
+                                                )
+                                                _, stderr = await process.communicate()
+                                                
+                                                with anim_log:
+                                                    if process.returncode == 0:
+                                                        ui.label(f'✓ Video saved: {output_video}').style(f'color:{THEME_PRIMARY}; font-size: 0.75rem;')
+                                                    else:
+                                                        ui.label(f'ffmpeg error: {stderr.decode()[:200]}').style(f'color:{THEME_ERROR}; font-size: 0.65rem;')
+                                            except Exception as e:
+                                                with anim_log:
+                                                    ui.label(f'Error: {e}').style(f'color:{THEME_ERROR}; font-size: 0.7rem;')
+                                        
+                                        with ui.row().classes('gap-2'):
+                                            ui.button('Generate Frames', on_click=generate_frames, icon='photo_library').props('dense').style(f'background:{THEME_PRIMARY}; color:black;')
+                                            ui.button('Create Video', on_click=generate_video, icon='movie').props('dense').style(f'background:{THEME_SECONDARY}; color:black;')
+                                            
+                                            def clear_log():
+                                                anim_log.clear()
+                                            ui.button('Clear Log', on_click=clear_log, icon='delete').props('dense flat')
 
 
 # Update main page header to include navigation

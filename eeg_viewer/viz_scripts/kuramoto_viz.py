@@ -674,3 +674,389 @@ def create_all_bands_timeline(data):
     )
     
     return fig
+
+
+# ============================================================================
+# HILBERT TRANSFORM VISUALIZATIONS
+# ============================================================================
+
+def create_hilbert_2d_figure(data, band='Alpha', epoch=0, n_oscillators=24):
+    """
+    2D Hilbert transform visualization showing amplitude envelope and instantaneous phase
+    """
+    fig = make_subplots(
+        rows=2, cols=2,
+        subplot_titles=['Amplitude Envelope', 'Instantaneous Phase', 'Phase Evolution', 'Polar View'],
+        specs=[[{'type': 'xy'}, {'type': 'xy'}],
+               [{'type': 'xy'}, {'type': 'polar'}]],
+        horizontal_spacing=0.15,  # Increased spacing
+        vertical_spacing=0.18     # Increased spacing to prevent overlap
+    )
+    
+    # Try to get real phase data
+    phases = extract_phases(data, band, epoch)
+    
+    if phases is None:
+        # Generate demo Hilbert data
+        np.random.seed(42)
+        t = np.linspace(0, 2, 500)
+        n_osc = n_oscillators
+        
+        # Simulate oscillators with different phases
+        base_freq = 10  # Hz
+        amplitudes = []
+        inst_phases = []
+        
+        for i in range(n_osc):
+            phase_offset = 2 * np.pi * i / n_osc + 0.5 * np.random.randn()
+            freq_jitter = base_freq + 2 * np.random.randn()
+            signal = np.sin(2 * np.pi * freq_jitter * t + phase_offset)
+            
+            # Hilbert envelope (simulated)
+            envelope = 0.8 + 0.2 * np.sin(2 * np.pi * 0.5 * t) + 0.1 * np.random.randn(len(t))
+            envelope = np.clip(envelope, 0.3, 1.2)
+            amplitudes.append(envelope)
+            
+            # Instantaneous phase
+            inst_phase = 2 * np.pi * freq_jitter * t + phase_offset
+            inst_phases.append(np.mod(inst_phase, 2 * np.pi))
+        
+        amplitudes = np.array(amplitudes)
+        inst_phases = np.array(inst_phases)
+    else:
+        # Use real data
+        if phases.ndim == 1:
+            phases = phases.reshape(-1, 1)
+        n_osc = min(phases.shape[0], n_oscillators)
+        n_samples = phases.shape[1] if phases.ndim > 1 else 1
+        
+        t = np.linspace(0, 2, n_samples)
+        inst_phases = phases[:n_osc, :]
+        
+        # Estimate envelope from phase differences
+        amplitudes = np.ones((n_osc, n_samples)) * 0.8
+        for i in range(n_osc):
+            if n_samples > 1:
+                phase_velocity = np.abs(np.diff(inst_phases[i]))
+                phase_velocity = np.append(phase_velocity, phase_velocity[-1])
+                amplitudes[i] = 0.5 + 0.5 * (1 - phase_velocity / (np.max(phase_velocity) + 1e-8))
+    
+    n_osc = amplitudes.shape[0]
+    n_samples = amplitudes.shape[1]
+    t = np.linspace(0, 2, n_samples)
+    
+    # 1. Amplitude envelope heatmap
+    fig.add_trace(go.Heatmap(
+        z=amplitudes,
+        x=t,
+        y=list(range(n_osc)),
+        colorscale='Viridis',
+        showscale=True,
+        colorbar=dict(title='Amp', len=0.4, y=0.8),
+        hovertemplate='t=%{x:.2f}s<br>Osc %{y}<br>Amp: %{z:.2f}<extra></extra>'
+    ), row=1, col=1)
+    
+    # 2. Instantaneous phase heatmap
+    fig.add_trace(go.Heatmap(
+        z=inst_phases,
+        x=t,
+        y=list(range(n_osc)),
+        colorscale='HSV',
+        zmin=0, zmax=2*np.pi,
+        showscale=True,
+        colorbar=dict(title='Phase', len=0.4, y=0.8, x=1.02),
+        hovertemplate='t=%{x:.2f}s<br>Osc %{y}<br>Phase: %{z:.2f} rad<extra></extra>'
+    ), row=1, col=2)
+    
+    # 3. Phase evolution for selected oscillators
+    colors_selected = ['#ef4444', '#3b82f6', '#22c55e', '#f97316', '#a855f7']
+    for i, osc_idx in enumerate([0, n_osc//4, n_osc//2, 3*n_osc//4, n_osc-1]):
+        if osc_idx < n_osc:
+            fig.add_trace(go.Scatter(
+                x=t, y=np.unwrap(inst_phases[osc_idx]),
+                mode='lines',
+                name=f'Osc {osc_idx}',
+                line=dict(color=colors_selected[i % len(colors_selected)], width=1.5),
+                showlegend=True
+            ), row=2, col=1)
+    
+    # 4. Polar view at final time point
+    final_phases = inst_phases[:, -1] if n_samples > 1 else inst_phases.flatten()
+    radii = amplitudes[:, -1] if n_samples > 1 else amplitudes.flatten()
+    
+    # Oscillators
+    fig.add_trace(go.Scatterpolar(
+        r=radii,
+        theta=np.degrees(final_phases),
+        mode='markers',
+        marker=dict(size=10, color=BAND_COLORS.get(band, '#888'), line=dict(color='white', width=1)),
+        name='Oscillators',
+        showlegend=False
+    ), row=2, col=2)
+    
+    # Mean vector
+    z_mean = np.mean(radii * np.exp(1j * final_phases))
+    r_mean = np.abs(z_mean)
+    theta_mean = np.angle(z_mean)
+    
+    fig.add_trace(go.Scatterpolar(
+        r=[0, r_mean],
+        theta=[0, np.degrees(theta_mean)],
+        mode='lines+markers',
+        line=dict(color='white', width=3),
+        marker=dict(size=[0, 12], symbol=['circle', 'triangle-up'], color='white'),
+        name=f'r={r_mean:.3f}',
+        showlegend=False
+    ), row=2, col=2)
+    
+    fig.update_layout(
+        title=dict(text=f'Hilbert Transform Analysis - {band}', font=dict(size=14)),
+        template='plotly_dark',
+        paper_bgcolor='#0a0a0a',
+        plot_bgcolor='#0a0a0a',
+        height=550,  # Increased height
+        showlegend=True,
+        legend=dict(
+            x=0.01, 
+            y=0.48,  # Position between rows
+            font=dict(size=8),
+            bgcolor='rgba(20,20,20,0.8)',
+            bordercolor='rgba(255,255,255,0.2)',
+            borderwidth=1,
+            orientation='v',
+            tracegroupgap=2
+        ),
+        margin=dict(l=50, r=70, t=60, b=50)  # Increased margins
+    )
+    
+    # Update subplot titles to avoid overlap
+    for annotation in fig.layout.annotations:
+        annotation.font = dict(size=11, color='white')
+    
+    # Update polar layout
+    fig.update_polars(
+        radialaxis=dict(visible=True, range=[0, max(radii) * 1.2]),
+        angularaxis=dict(gridcolor='rgba(255,255,255,0.1)'),
+        bgcolor='#0a0a0a'
+    )
+    
+    return fig
+
+
+def create_hilbert_3d_figure(data, band='Alpha', epoch=0, roi_idx=0, subject='S01', condition='DMT'):
+    """
+    3D Hilbert transform visualization - Analytic signal trajectory
+    Based on visualize_hilbert_improved.py - shows trajectory with projections
+    """
+    import plotly.graph_objects as go
+    
+    # Try to get real data
+    phases = None
+    amplitudes = None
+    roi_name = f'ROI {roi_idx}'
+    
+    if data is not None and isinstance(data, dict):
+        if 'phases_stc' in data and data['phases_stc'] is not None and band in data['phases_stc']:
+            try:
+                phases_data = data['phases_stc'][band]
+                if isinstance(phases_data, list) and len(phases_data) > epoch:
+                    phases = np.array(phases_data[epoch])
+                elif isinstance(phases_data, np.ndarray) and phases_data.shape[0] > epoch:
+                    phases = phases_data[epoch]
+            except:
+                pass
+        
+        if 'amplitudes_stc' in data and data['amplitudes_stc'] is not None and band in data['amplitudes_stc']:
+            try:
+                amp_data = data['amplitudes_stc'][band]
+                if isinstance(amp_data, list) and len(amp_data) > epoch:
+                    amplitudes = np.array(amp_data[epoch])
+                elif isinstance(amp_data, np.ndarray) and amp_data.shape[0] > epoch:
+                    amplitudes = amp_data[epoch]
+            except:
+                pass
+    
+    # Generate demo data if needed
+    if phases is None or amplitudes is None:
+        np.random.seed(42 + epoch)
+        fs = 500.0
+        duration = 2.0
+        n_samples = int(fs * duration)
+        t = np.arange(n_samples) / fs
+        
+        # Simulate analytic signal
+        freq = 10 + 2 * np.random.randn()
+        phase_offset = np.random.rand() * 2 * np.pi
+        
+        # Phase: linear + slow modulation
+        phases = 2 * np.pi * freq * t + phase_offset + 0.3 * np.sin(2 * np.pi * 0.5 * t)
+        
+        # Amplitude: slow envelope variation
+        amplitudes = 0.05 + 0.03 * np.sin(2 * np.pi * 0.3 * t) + 0.01 * np.random.randn(n_samples)
+        amplitudes = np.abs(amplitudes)
+        
+        roi_name = f'Demo ROI {roi_idx}'
+    else:
+        # Extract single ROI data
+        if phases.ndim == 2:
+            roi_idx = min(roi_idx, phases.shape[0] - 1)
+            phases = phases[roi_idx, :]
+        if amplitudes.ndim == 2:
+            roi_idx = min(roi_idx, amplitudes.shape[0] - 1)
+            amplitudes = amplitudes[roi_idx, :]
+        
+        fs = 500.0
+        n_samples = len(phases)
+        t = np.arange(n_samples) / fs
+    
+    # Trim edges (like original script)
+    start = int(len(t) * 0.15)
+    end = int(len(t) * 0.85)
+    
+    time_seg = t[start:end]
+    phase_seg = phases[start:end]
+    amp_seg = amplitudes[start:end]
+    
+    # Compute analytic signal components
+    analytic_seg = amp_seg * np.exp(1j * phase_seg)
+    real_seg = analytic_seg.real
+    imag_seg = analytic_seg.imag
+    
+    fig = go.Figure()
+    
+    # Main trajectory (time vs real vs imag) with color by time
+    trajectory = go.Scatter3d(
+        x=time_seg,
+        y=real_seg,
+        z=imag_seg,
+        mode='lines',
+        line=dict(
+            color=time_seg,
+            colorscale='Viridis',
+            width=4,
+            colorbar=dict(title='Tiempo (s)', x=1.02)
+        ),
+        name='Trayectoria',
+        hovertemplate='t=%{x:.3f}s<br>Real=%{y:.4f}<br>Imag=%{z:.4f}<extra></extra>'
+    )
+    fig.add_trace(trajectory)
+    
+    # Projection onto time-real plane (floor)
+    z_floor = np.full_like(time_seg, imag_seg.min() - 0.02)
+    proj_time_real = go.Scatter3d(
+        x=time_seg,
+        y=real_seg,
+        z=z_floor,
+        mode='lines',
+        line=dict(color='rgba(31, 119, 180, 0.75)', width=2, dash='dot'),
+        hoverinfo='skip',
+        showlegend=True,
+        name='Proyección tiempo-real',
+        opacity=0.65
+    )
+    fig.add_trace(proj_time_real)
+    
+    # Projection onto time-imag plane (back wall)
+    y_wall = np.full_like(time_seg, real_seg.min() - 0.02)
+    proj_time_imag = go.Scatter3d(
+        x=time_seg,
+        y=y_wall,
+        z=imag_seg,
+        mode='lines',
+        line=dict(color='rgba(214, 39, 40, 0.8)', width=2, dash='dot'),
+        hoverinfo='skip',
+        showlegend=True,
+        name='Proyección tiempo-imag',
+        opacity=0.65
+    )
+    fig.add_trace(proj_time_imag)
+    
+    # Projection onto complex plane (right wall)
+    x_wall = np.full_like(real_seg, time_seg.max() + 0.02)
+    proj_real_imag = go.Scatter3d(
+        x=x_wall,
+        y=real_seg,
+        z=imag_seg,
+        mode='lines',
+        line=dict(color='rgba(148, 103, 189, 0.8)', width=2, dash='longdash'),
+        hoverinfo='skip',
+        showlegend=True,
+        name='Proyección plano complejo',
+        opacity=0.65
+    )
+    fig.add_trace(proj_real_imag)
+    
+    # Start/end markers
+    markers = go.Scatter3d(
+        x=[time_seg[0], time_seg[-1]],
+        y=[real_seg[0], real_seg[-1]],
+        z=[imag_seg[0], imag_seg[-1]],
+        mode='markers',
+        marker=dict(
+            size=8,
+            color=['#2ca02c', '#ff7f0e'],
+            symbol=['circle', 'square'],
+            line=dict(width=1.5, color='black')
+        ),
+        name='Inicio / Final',
+        hovertemplate='Tiempo: %{x:.3f}s<br>Real: %{y:.4f}<br>Imag: %{z:.4f}<extra></extra>'
+    )
+    fig.add_trace(markers)
+    
+    fig.update_layout(
+        width=None,  # Responsive
+        height=550,
+        template='plotly_white',
+        paper_bgcolor='#0a0a0a',
+        scene=dict(
+            xaxis=dict(
+                title=dict(text='Tiempo (s)', font=dict(size=14, color='white')),
+                tickfont=dict(size=10, color='white'),
+                backgroundcolor='rgba(0,0,0,0)',
+                gridcolor='rgba(255,255,255,0.1)',
+                linecolor='rgba(255,255,255,0.3)'
+            ),
+            yaxis=dict(
+                title=dict(text='Real(z) = A·cos(φ)', font=dict(size=14, color='white')),
+                tickfont=dict(size=10, color='white'),
+                backgroundcolor='rgba(0,0,0,0)',
+                gridcolor='rgba(255,255,255,0.1)',
+                linecolor='rgba(255,255,255,0.3)'
+            ),
+            zaxis=dict(
+                title=dict(text='Imag(z) = A·sin(φ)', font=dict(size=14, color='white')),
+                tickfont=dict(size=10, color='white'),
+                backgroundcolor='rgba(0,0,0,0)',
+                gridcolor='rgba(255,255,255,0.1)',
+                linecolor='rgba(255,255,255,0.3)'
+            ),
+            camera=dict(eye=dict(x=1.6, y=1.4, z=0.9)),
+            aspectmode='manual',
+            aspectratio=dict(x=1.5, y=1, z=1),
+            bgcolor='#0a0a0a'
+        ),
+        legend=dict(
+            orientation='h',
+            yanchor='top',
+            y=-0.05,
+            xanchor='center',
+            x=0.5,
+            bgcolor='rgba(20,20,20,0.9)',
+            bordercolor='rgba(255,255,255,0.2)',
+            borderwidth=1,
+            font=dict(size=11, color='white')
+        ),
+        margin=dict(l=10, r=10, b=60, t=80),
+        title=dict(
+            text=(
+                f"<b>Transformada de Hilbert - Señal Analítica 3D</b>"
+                f"<br><span style='font-size:12px; color:#888;'>"
+                f"{subject} | {condition} | Banda {band} | Época #{epoch + 1} | {roi_name}</span>"
+            ),
+            x=0.5,
+            xanchor='center',
+            font=dict(size=16, color='white')
+        )
+    )
+    
+    return fig
