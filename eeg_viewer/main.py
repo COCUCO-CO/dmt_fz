@@ -741,7 +741,7 @@ def pipeline_page():
             ui.button('VIEWER', on_click=lambda: ui.navigate.to('/')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
             ui.button('PIPELINE', on_click=lambda: ui.navigate.to('/pipeline')).props('flat dense').style(f'color:{THEME_PRIMARY};')
     
-    with ui.row().classes('w-full p-4 gap-4').style('min-height: calc(100vh - 50px);'):
+    with ui.row().classes('w-full p-4 gap-4').style('height: calc(100vh - 50px); align-items: stretch;'):
         
         # LEFT: Pipeline Controls
         with ui.column().classes('gap-4').style('width: 450px;'):
@@ -1004,17 +1004,17 @@ def pipeline_page():
                     ui.label('~3-5 min').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
         
         # RIGHT: Tabbed Panel (Console, Files, System, Visualize)
-        with ui.column().classes('flex-1 h-full'):
-            with ui.card().classes('dark-card p-2 w-full h-full').style('min-height: calc(100vh - 80px);'):
+        with ui.column().classes('flex-1').style('min-height: 0; display: flex; flex-direction: column;'):
+            with ui.card().classes('dark-card p-2 w-full flex-1').style('display: flex; flex-direction: column; min-height: 0;'):
                 with ui.tabs().classes('w-full').style(f'background: {THEME_BG};') as tabs:
                     tab_console = ui.tab('CONSOLE', icon='terminal').style(f'color:{THEME_PRIMARY};')
                     tab_files = ui.tab('FILES', icon='folder').style(f'color:{THEME_SECONDARY};')
                     tab_system = ui.tab('SYSTEM', icon='memory').style(f'color:{THEME_WARN};')
                     tab_viz = ui.tab('VISUALIZE', icon='analytics').style(f'color:#a78bfa;')
                 
-                with ui.tab_panels(tabs, value=tab_console).classes('w-full flex-1').style('flex: 1; overflow: hidden;'):
+                with ui.tab_panels(tabs, value=tab_console).classes('w-full').style('flex: 1; min-height: 0; overflow: hidden;'):
                     # CONSOLE TAB
-                    with ui.tab_panel(tab_console).classes('p-2'):
+                    with ui.tab_panel(tab_console).classes('p-2').style('height: 100%; display: flex; flex-direction: column;'):
                         with ui.row().classes('items-center gap-3 mb-2'):
                             ui.label('// OUTPUT_LOG').classes('terminal-header')
                             
@@ -1056,15 +1056,15 @@ def pipeline_page():
                                     PS.log_container.clear()
                             ui.button('CLEAR', on_click=clear_log, icon='delete').props('flat dense size=sm')
                         
-                        with ui.scroll_area().classes('w-full').style('height: calc(100vh - 200px); background: #050505; border-radius: 4px;'):
+                        with ui.scroll_area().classes('w-full flex-1').style('background: #050505; border-radius: 4px; min-height: 200px;'):
                             PS.log_container = ui.column().classes('w-full p-3 gap-0')
                             with PS.log_container:
                                 ui.label('Pipeline ready. Select a step and click RUN.').style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.75rem;')
                                 ui.label(f'Pipeline directory: {PIPELINE_DIR}').style(f'color:{THEME_TEXT_DIM}; font-family: JetBrains Mono; font-size: 0.7rem;')
                     
                     # FILES TAB
-                    with ui.tab_panel(tab_files).classes('p-2'):
-                        file_browser_container = ui.column().classes('w-full')
+                    with ui.tab_panel(tab_files).classes('p-2').style('height: 100%; display: flex; flex-direction: column;'):
+                        file_browser_container = ui.column().classes('w-full flex-1').style('min-height: 0; overflow: hidden;')
                         
                         def refresh_files():
                             file_browser_container.clear()
@@ -1095,7 +1095,7 @@ def pipeline_page():
                                 
                                 ui.separator().classes('my-2')
                                 
-                                with ui.scroll_area().classes('w-full').style('height: calc(100vh - 280px);'):
+                                with ui.scroll_area().classes('w-full flex-1').style('min-height: 150px;'):
                                     for item in sorted(run_path.iterdir()):
                                         if item.is_dir():
                                             file_count = len(list(item.rglob('*')))
@@ -1160,12 +1160,12 @@ def pipeline_page():
                         update_system_stats()
                     
                     # VISUALIZE TAB - Unified Visualization Dashboard
-                    with ui.tab_panel(tab_viz).classes('p-0 h-full'):
+                    with ui.tab_panel(tab_viz).classes('p-0').style('height: 100%; overflow: hidden;'):
                         # State for visualization
                         viz_state = {'data': None, 'file': None}
                         
-                        with ui.column().classes('w-full').style('height: calc(100vh - 140px); display: flex; flex-direction: column;'):
-                            # STICKY HEADER - Data Selection with custom path support
+                        with ui.column().classes('w-full h-full').style('display: flex; flex-direction: column; overflow: hidden;'):
+                            # FIXED HEADER - Data Selection with custom path support (outside scroll area)
                             with ui.card().classes('dark-card p-3 w-full').style('flex-shrink: 0;'):
                                 # Custom data path
                                 with ui.row().classes('items-center gap-2 w-full mb-2'):
@@ -1238,6 +1238,9 @@ def pipeline_page():
                                         
                                         # Update all plots
                                         try:
+                                            # Update brain plot using stored reference
+                                            if 'update_brain_plot' in viz_state:
+                                                viz_state['update_brain_plot']()
                                             update_network_plot()
                                             update_kuramoto_timeline()
                                             update_band_comparison()
@@ -1257,8 +1260,8 @@ def pipeline_page():
                                     viz_subject.on('update:model-value', lambda e: refresh_all_plots())
                                     viz_epoch.on('update:model-value', lambda e: refresh_all_plots())
                             
-                            # VISUALIZATION CONTENT - using scroll_area with proper height
-                            with ui.scroll_area().classes('w-full').style('flex: 1; min-height: 0;'):
+                            # VISUALIZATION CONTENT - scroll area fills remaining space
+                            with ui.scroll_area().classes('w-full flex-1').style('min-height: 0;'):
                                 with ui.column().classes('w-full p-3 gap-3'):
                                     # MAIN VISUALIZATION AREA - 3D Brain + Stats
                                     with ui.row().classes('w-full gap-3'):
@@ -1268,16 +1271,25 @@ def pipeline_page():
                                             
                                             brain_plot_container = ui.column().classes('w-full')
                                             
-                                            def update_brain_plot(plot_type='network'):
+                                            # Track current plot type for auto-refresh
+                                            viz_state['current_brain_plot'] = 'network'
+                                            
+                                            def update_brain_plot(plot_type=None):
+                                                if plot_type is None:
+                                                    plot_type = viz_state.get('current_brain_plot', 'network')
+                                                else:
+                                                    viz_state['current_brain_plot'] = plot_type
+                                                
                                                 brain_plot_container.clear()
                                                 try:
                                                     from viz_scripts import brain_3d
                                                     import pickle
                                                     
-                                                    # Try to load data
-                                                    data = None
-                                                    if current_run_dir[0] and viz_subject.value:
-                                                        files = list(current_run_dir[0].rglob(f'*{viz_subject.value}*.pkl'))
+                                                    # Try to load data from custom path or run dir
+                                                    data = viz_state.get('data')
+                                                    data_path = viz_state.get('custom_path') or current_run_dir[0]
+                                                    if data_path and viz_subject.value:
+                                                        files = list(data_path.rglob(f'*{viz_subject.value}*.pkl'))
                                                         if files:
                                                             with open(files[0], 'rb') as f:
                                                                 data = pickle.load(f)
@@ -1299,17 +1311,35 @@ def pipeline_page():
                                                             fig = brain_3d.create_brain_network_figure()
                                                         
                                                         ui.plotly(fig).classes('w-full').style('height: 450px;')
+                                                    
+                                                    # Update button states
+                                                    update_brain_buttons(plot_type)
                                                 except Exception as e:
                                                     with brain_plot_container:
                                                         ui.label(f'Error: {e}').style(f'color:{THEME_ERROR}; font-size: 0.75rem;')
                                                         import traceback
                                                         ui.label(traceback.format_exc()[:500]).style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem; white-space: pre-wrap;')
+                                            
+                                            # Store reference for refresh_all_plots
+                                            viz_state['update_brain_plot'] = update_brain_plot
                                         
+                                        # Brain plot type buttons with active state
+                                        brain_buttons = {}
                                         with ui.row().classes('gap-2 mb-2'):
-                                            ui.button('Networks', on_click=lambda: update_brain_plot('network')).props('dense').style(f'background:{THEME_PRIMARY}; color:black;')
-                                            ui.button('Parcellation', on_click=lambda: update_brain_plot('colored')).props('dense outline')
-                                            ui.button('Sync Map', on_click=lambda: update_brain_plot('sync')).props('dense outline')
-                                            ui.button('All Bands', on_click=lambda: update_brain_plot('all_bands')).props('dense outline')
+                                            brain_buttons['network'] = ui.button('Networks', on_click=lambda: update_brain_plot('network')).props('dense')
+                                            brain_buttons['colored'] = ui.button('Parcellation', on_click=lambda: update_brain_plot('colored')).props('dense')
+                                            brain_buttons['sync'] = ui.button('Sync Map', on_click=lambda: update_brain_plot('sync')).props('dense')
+                                            brain_buttons['all_bands'] = ui.button('All Bands', on_click=lambda: update_brain_plot('all_bands')).props('dense')
+                                        
+                                        def update_brain_buttons(active_type):
+                                            for btn_type, btn in brain_buttons.items():
+                                                if btn_type == active_type:
+                                                    btn.style(f'background:{THEME_PRIMARY}; color:black;')
+                                                else:
+                                                    btn.style(f'background:transparent; color:{THEME_TEXT_DIM}; border: 1px solid {THEME_BORDER};')
+                                        
+                                        # Initial button state
+                                        update_brain_buttons('network')
                                         
                                         # Load initial plot
                                         update_brain_plot('network')
@@ -1741,6 +1771,14 @@ def pipeline_page():
                                                 with anim_log:
                                                     if process.returncode == 0:
                                                         ui.label('✓ Frames generated successfully!').style(f'color:{THEME_PRIMARY}; font-size: 0.75rem;')
+                                                        # Show preview of first frame
+                                                        frames = sorted(expected_output.glob(f'*.{anim_format.value}'))
+                                                        if frames:
+                                                            ui.label(f'Generated {len(frames)} frames').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
+                                                            # Show first frame as preview
+                                                            with ui.card().classes('mt-2 p-2').style('background: #1a1a1a;'):
+                                                                ui.label('Preview (first frame):').style(f'color:{THEME_TEXT_DIM}; font-size: 0.6rem;')
+                                                                ui.image(str(frames[0])).classes('w-full').style('max-height: 300px; object-fit: contain;')
                                                     else:
                                                         ui.label(f'Process exited with code {process.returncode}').style(f'color:{THEME_WARN}; font-size: 0.7rem;')
                                             except Exception as e:
@@ -1808,6 +1846,11 @@ def pipeline_page():
                                                 with anim_log:
                                                     if process.returncode == 0:
                                                         ui.label(f'✓ Video saved: {output_video}').style(f'color:{THEME_PRIMARY}; font-size: 0.75rem;')
+                                                        # Show video player
+                                                        if output_video.exists():
+                                                            with ui.card().classes('mt-2 p-2 w-full').style('background: #1a1a1a;'):
+                                                                ui.label('Generated video:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.6rem;')
+                                                                ui.video(str(output_video)).classes('w-full').style('max-height: 400px;')
                                                     else:
                                                         ui.label(f'ffmpeg error: {stderr.decode()[:200]}').style(f'color:{THEME_ERROR}; font-size: 0.65rem;')
                                             except Exception as e:
