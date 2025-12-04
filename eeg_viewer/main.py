@@ -2584,11 +2584,12 @@ def model_page():
         with ui.column().classes('flex-1').style('min-height: 0; display: flex; flex-direction: column;'):
             
             with ui.card().classes('dark-card p-2 w-full flex-1').style('display: flex; flex-direction: column; min-height: 0;'):
-                with ui.tabs().classes('w-full').style(f'background: {THEME_BG};') as tabs:
+                with ui.tabs().classes('w-full').style(f'background: {THEME_BG};') as model_tabs:
                     tab_metrics = ui.tab('METRICS', icon='show_chart').style(f'color:#f472b6;')
+                    tab_recon = ui.tab('RECON', icon='compare').style(f'color:{THEME_SECONDARY};')
                     tab_console = ui.tab('CONSOLE', icon='terminal').style(f'color:{THEME_PRIMARY};')
                 
-                with ui.tab_panels(tabs, value=tab_metrics).classes('w-full').style('flex: 1; min-height: 0; overflow: hidden;'):
+                with ui.tab_panels(model_tabs, value=tab_console).classes('w-full').style('flex: 1; min-height: 0; overflow: hidden;'):
                     
                     # METRICS TAB
                     with ui.tab_panel(tab_metrics).classes('p-2').style('height: 100%; display: flex; flex-direction: column;'):
@@ -2597,8 +2598,8 @@ def model_page():
                         loss_plot_container = ui.column().classes('w-full flex-1')
                         
                         def make_loss_figure():
-                            """Create loss curves plot."""
-                            fig = go.Figure()
+                            """Create separate plots for different metrics."""
+                            from plotly.subplots import make_subplots
                             
                             epochs = MS.history.get('epoch', [])
                             train_loss = MS.history.get('train_loss', [])
@@ -2606,58 +2607,63 @@ def model_page():
                             recon_loss = MS.history.get('recon_loss', [])
                             kl_loss = MS.history.get('kl_loss', [])
                             
+                            # Create 1x3 subplot grid
+                            fig = make_subplots(
+                                rows=1, cols=3,
+                                subplot_titles=('Total Loss', 'Recon Loss', 'KL Loss'),
+                                horizontal_spacing=0.08
+                            )
+                            
                             if epochs:
+                                # Plot 1: Train + Val Loss
                                 fig.add_trace(go.Scatter(
                                     x=epochs, y=train_loss,
-                                    mode='lines', name='Train Loss',
+                                    mode='lines', name='Train',
                                     line=dict(color=THEME_PRIMARY, width=2)
-                                ))
+                                ), row=1, col=1)
                                 
                                 if val_loss:
-                                    val_epochs = epochs[:len(val_loss)]
                                     fig.add_trace(go.Scatter(
-                                        x=val_epochs, y=val_loss,
-                                        mode='lines', name='Val Loss',
+                                        x=epochs[:len(val_loss)], y=val_loss,
+                                        mode='lines', name='Val',
                                         line=dict(color='#f472b6', width=2)
-                                    ))
+                                    ), row=1, col=1)
                                 
+                                # Plot 2: Recon Loss
                                 fig.add_trace(go.Scatter(
                                     x=epochs, y=recon_loss,
-                                    mode='lines', name='Recon Loss',
-                                    line=dict(color=THEME_SECONDARY, width=1, dash='dot')
-                                ))
+                                    mode='lines', name='Recon',
+                                    line=dict(color=THEME_SECONDARY, width=2),
+                                    showlegend=False
+                                ), row=1, col=2)
                                 
+                                # Plot 3: KL Loss
                                 fig.add_trace(go.Scatter(
                                     x=epochs, y=kl_loss,
-                                    mode='lines', name='KL Loss',
-                                    line=dict(color=THEME_WARN, width=1, dash='dot')
-                                ))
+                                    mode='lines', name='KL',
+                                    line=dict(color=THEME_WARN, width=2),
+                                    showlegend=False
+                                ), row=1, col=3)
                             
                             fig.update_layout(
                                 template='plotly_dark',
                                 paper_bgcolor='rgba(8,8,8,1)',
                                 plot_bgcolor='rgba(8,8,8,1)',
-                                margin=dict(l=50, r=20, t=30, b=40),
-                                height=400,
-                                xaxis=dict(
-                                    title='Epoch',
-                                    gridcolor='rgba(0,255,136,0.1)',
-                                    showgrid=True
-                                ),
-                                yaxis=dict(
-                                    title='Loss',
-                                    gridcolor='rgba(0,255,136,0.1)',
-                                    showgrid=True
-                                ),
+                                margin=dict(l=40, r=20, t=40, b=40),
+                                height=280,
                                 legend=dict(
                                     orientation='h',
                                     yanchor='bottom',
-                                    y=1.02,
-                                    xanchor='right',
-                                    x=1
+                                    y=1.08,
+                                    xanchor='left',
+                                    x=0
                                 ),
-                                font=dict(family='JetBrains Mono', color=THEME_TEXT)
+                                font=dict(family='JetBrains Mono', size=10, color=THEME_TEXT)
                             )
+                            
+                            # Update axes
+                            fig.update_xaxes(gridcolor='rgba(0,255,136,0.1)', showgrid=True)
+                            fig.update_yaxes(gridcolor='rgba(0,255,136,0.1)', showgrid=True)
                             
                             return fig
                         
@@ -2666,7 +2672,7 @@ def model_page():
                             loss_plot_container.clear()
                             with loss_plot_container:
                                 fig = make_loss_figure()
-                                MS.loss_plot = ui.plotly(fig).classes('w-full').style('height: 400px;')
+                                MS.loss_plot = ui.plotly(fig).classes('w-full').style('height: 280px;')
                         
                         # Initial empty plot
                         update_loss_plot()
@@ -2695,6 +2701,112 @@ def model_page():
                                 best_val_label.text = f"{min(MS.history['val_loss']):.4f}"
                         
                         ui.timer(2.0, update_stats)
+                    
+                    # RECONSTRUCTION TAB - Show original vs reconstructed with epoch slider
+                    with ui.tab_panel(tab_recon).classes('p-2').style('height: 100%; display: flex; flex-direction: column;'):
+                        ui.label('▌RECONSTRUCTION QUALITY').style(f'color:{THEME_SECONDARY}; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-2')
+                        
+                        recon_container = ui.column().classes('w-full flex-1')
+                        
+                        # Epoch selector
+                        with ui.row().classes('items-center gap-3 mb-3'):
+                            ui.label('Epoch:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.75rem;')
+                            epoch_slider = ui.slider(min=1, max=100, step=10, value=10).props('label-always').classes('flex-1')
+                            refresh_btn = ui.button('Refresh', icon='refresh').props('flat dense size=sm')
+                        
+                        def load_reconstruction(epoch_val):
+                            """Load and display reconstruction for given epoch."""
+                            recon_dir = AUTOENCODER_CACHE_DIR / 'output' / 'reconstructions'
+                            recon_file = recon_dir / f'recon_epoch_{int(epoch_val):03d}.npz'
+                            
+                            recon_container.clear()
+                            with recon_container:
+                                if not recon_file.exists():
+                                    ui.label(f'No reconstruction for epoch {int(epoch_val)}').style(f'color:{THEME_TEXT_DIM};')
+                                    ui.label('Reconstructions are saved every 10 epochs during training').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                                    
+                                    # List available epochs
+                                    if recon_dir.exists():
+                                        available = sorted([f.stem.split('_')[-1] for f in recon_dir.glob('*.npz')])
+                                        if available:
+                                            ui.label(f'Available: {", ".join(available)}').style(f'color:{THEME_PRIMARY}; font-size: 0.7rem;')
+                                    return
+                                
+                                try:
+                                    data = np.load(recon_file)
+                                    original = data['original']
+                                    reconstructed = data['reconstructed']
+                                    
+                                    # Create side-by-side heatmaps
+                                    from plotly.subplots import make_subplots
+                                    
+                                    # Use first 100 samples, reshape to 10x10 grid
+                                    n_features = min(original.shape[1], 10) if len(original.shape) > 1 else 10
+                                    n_samples = min(100, original.shape[0])
+                                    
+                                    # Take mean across features for visualization
+                                    if len(original.shape) > 1:
+                                        orig_grid = original[:n_samples, :n_features]
+                                        recon_grid = reconstructed[:n_samples, :n_features]
+                                    else:
+                                        orig_grid = original[:n_samples].reshape(-1, 1)
+                                        recon_grid = reconstructed[:n_samples].reshape(-1, 1)
+                                    
+                                    diff_grid = np.abs(orig_grid - recon_grid)
+                                    
+                                    fig = make_subplots(
+                                        rows=1, cols=3,
+                                        subplot_titles=(f'Original (Epoch {int(epoch_val)})', 'Reconstructed', 'Difference'),
+                                        horizontal_spacing=0.05
+                                    )
+                                    
+                                    # Original heatmap
+                                    fig.add_trace(go.Heatmap(
+                                        z=orig_grid, colorscale='Viridis', showscale=False,
+                                        name='Original'
+                                    ), row=1, col=1)
+                                    
+                                    # Reconstructed heatmap  
+                                    fig.add_trace(go.Heatmap(
+                                        z=recon_grid, colorscale='Viridis', showscale=False,
+                                        name='Reconstructed'
+                                    ), row=1, col=2)
+                                    
+                                    # Difference heatmap
+                                    fig.add_trace(go.Heatmap(
+                                        z=diff_grid, colorscale='Reds', showscale=True,
+                                        colorbar=dict(title='|Δ|', x=1.02, len=0.9),
+                                        name='Difference'
+                                    ), row=1, col=3)
+                                    
+                                    fig.update_layout(
+                                        template='plotly_dark',
+                                        paper_bgcolor='rgba(8,8,8,1)',
+                                        plot_bgcolor='rgba(8,8,8,1)',
+                                        height=500,
+                                        margin=dict(l=40, r=60, t=50, b=40),
+                                        font=dict(family='JetBrains Mono', size=10, color=THEME_TEXT)
+                                    )
+                                    
+                                    ui.plotly(fig).classes('w-full').style('height: 500px;')
+                                    
+                                    # Stats
+                                    mse = np.mean(diff_grid ** 2)
+                                    mae = np.mean(diff_grid)
+                                    with ui.row().classes('gap-4 mt-2'):
+                                        ui.label(f'MSE: {mse:.6f}').style(f'color:{THEME_PRIMARY}; font-size: 0.8rem;')
+                                        ui.label(f'MAE: {mae:.6f}').style(f'color:{THEME_SECONDARY}; font-size: 0.8rem;')
+                                        ui.label(f'Samples: {n_samples} × {n_features} features').style(f'color:{THEME_TEXT_DIM}; font-size: 0.75rem;')
+                                    
+                                except Exception as e:
+                                    ui.label(f'Error loading: {e}').style(f'color:{THEME_ERROR};')
+                        
+                        # Bind events
+                        epoch_slider.on('update:model-value', lambda e: load_reconstruction(e.args))
+                        refresh_btn.on('click', lambda: load_reconstruction(epoch_slider.value))
+                        
+                        # Initial load
+                        load_reconstruction(10)
                     
                     # CONSOLE TAB
                     with ui.tab_panel(tab_console).classes('p-2').style('height: 100%; display: flex; flex-direction: column;'):
