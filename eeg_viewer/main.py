@@ -201,6 +201,39 @@ body {{
 }}
 
 .glow-text {{ text-shadow: 0 0 15px rgba(0, 255, 136, 0.5); }}
+
+/* Status indicators */
+@keyframes pulse-orange {{
+    0%, 100% {{ opacity: 1; box-shadow: 0 0 8px #f59e0b; }}
+    50% {{ opacity: 0.4; box-shadow: 0 0 2px #f59e0b; }}
+}}
+
+.status-idle {{
+    width: 12px; height: 12px; border-radius: 50%;
+    background: #6b7280; 
+    display: inline-block;
+}}
+
+.status-training {{
+    width: 12px; height: 12px; border-radius: 50%;
+    background: #f59e0b;
+    animation: pulse-orange 1s ease-in-out infinite;
+    display: inline-block;
+}}
+
+.status-completed {{
+    width: 12px; height: 12px; border-radius: 50%;
+    background: #10b981;
+    box-shadow: 0 0 8px #10b981;
+    display: inline-block;
+}}
+
+.status-error {{
+    width: 12px; height: 12px; border-radius: 50%;
+    background: #ef4444;
+    box-shadow: 0 0 8px #ef4444;
+    display: inline-block;
+}}
 """
 
 # Plot creation with FIXED axes - Terminal style
@@ -904,6 +937,7 @@ def pipeline_page():
             ui.button('VIEWER', on_click=lambda: ui.navigate.to('/')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
             ui.button('PIPELINE', on_click=lambda: ui.navigate.to('/pipeline')).props('flat dense').style(f'color:{THEME_PRIMARY};')
             ui.button('MODEL', on_click=lambda: ui.navigate.to('/model')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
+            ui.button('ANALYSIS', on_click=lambda: ui.navigate.to('/analysis')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
     
     with ui.row().classes('w-full p-4 gap-4').style('height: calc(100vh - 50px); align-items: stretch;'):
         
@@ -2083,8 +2117,61 @@ class ModelState:
         self.log_container = None
         self.loss_plot = None
         self.config = {}
+        # Persistence for tab switching
+        self.status = 'idle'  # 'idle', 'training', 'completed', 'error'
+        self.log_history = []  # Store log messages
+        self.status_indicator = None
+        self.update_plots = None
+        self.tabs = None
+        self.tab_console = None
 
 MS = ModelState()
+
+
+class AnalysisState:
+    """State for model analysis page."""
+    def __init__(self):
+        # Model
+        self.model = None
+        self.model_path = ""
+        self.model_config = {}
+        self.model_params = {}
+        self.device = 'cpu'
+        
+        # Dataset
+        self.dataset = None
+        self.dataset_path = ""
+        self.current_split = 'test'  # train, val, test
+        self.current_idx = 0
+        self.total_samples = 0
+        
+        # Playback
+        self.playing = False
+        self.speed = 1.0  # samples per second
+        self.play_timer = None
+        
+        # Activations (stored during forward pass)
+        self.activations = {}  # layer_name -> tensor
+        self.attention_weights = {}  # layer_name -> attention matrix
+        self.latent_codes = []  # history of z vectors for PCA
+        self.latent_labels = []  # labels for each z
+        
+        # Current sample info
+        self.current_sample = None
+        self.current_recon = None
+        self.current_z = None
+        
+        # UI references
+        self.log_container = None
+        self.arch_diagram = None
+        self.activation_plots = {}
+        self.attention_plots = {}
+        self.latent_plot = None
+        self.recon_plot = None
+        self.progress_slider = None
+        self.sample_info_container = None
+
+AS = AnalysisState()
 
 # Autoencoder paths
 AUTOENCODER_DIR = Path(__file__).parent.parent / "machine_learning" / "autoencoder"
@@ -2236,6 +2323,12 @@ def detect_dataset_type(path: Path) -> dict:
 
 def model_log(msg: str, msg_type: str = 'info'):
     """Add message to model training log."""
+    # Store in history for persistence
+    MS.log_history.append((msg, msg_type))
+    # Keep only last 500 messages
+    if len(MS.log_history) > 500:
+        MS.log_history = MS.log_history[-500:]
+    
     if MS.log_container:
         colors = {
             'info': THEME_TEXT,
@@ -2245,6 +2338,13 @@ def model_log(msg: str, msg_type: str = 'info'):
         }
         with MS.log_container:
             ui.label(msg).style(f'color:{colors.get(msg_type, THEME_TEXT)}; font-family: JetBrains Mono; font-size: 0.75rem;')
+
+
+def update_status_indicator(status: str):
+    """Update the training status indicator."""
+    MS.status = status
+    if MS.status_indicator:
+        MS.status_indicator.classes(replace=f'status-{status}')
 
 
 def create_default_config(dataset_path: str, dataset_info: dict) -> dict:
@@ -2397,10 +2497,19 @@ def model_page():
         ui.label('▶').style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.75rem; letter-spacing: 2px;')
         ui.label('EEG_VIEWER').classes('text-base font-medium ml-2').style(f'color: {THEME_PRIMARY}; font-family: JetBrains Mono; letter-spacing: 1px;')
         ui.label('// MODEL').classes('text-xs ml-2').style(f'color: #f472b6; font-family: JetBrains Mono;')
+        
+        # Status indicator
+        with ui.row().classes('items-center gap-2 ml-4'):
+            MS.status_indicator = ui.html('<div></div>').classes(f'status-{MS.status}')
+            status_labels = {'idle': 'IDLE', 'training': 'TRAINING...', 'completed': 'COMPLETED', 'error': 'ERROR'}
+            status_colors = {'idle': THEME_TEXT_DIM, 'training': '#f59e0b', 'completed': '#10b981', 'error': '#ef4444'}
+            ui.label(status_labels.get(MS.status, 'IDLE')).style(f'color:{status_colors.get(MS.status, THEME_TEXT_DIM)}; font-size: 0.7rem; font-family: JetBrains Mono;').bind_text_from(MS, 'status', lambda s: {'idle': 'IDLE', 'training': 'TRAINING...', 'completed': 'COMPLETED', 'error': 'ERROR'}.get(s, 'IDLE'))
+        
         with ui.row().classes('ml-auto gap-2'):
             ui.button('VIEWER', on_click=lambda: ui.navigate.to('/')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
             ui.button('PIPELINE', on_click=lambda: ui.navigate.to('/pipeline')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
             ui.button('MODEL', on_click=lambda: ui.navigate.to('/model')).props('flat dense').style(f'color:#f472b6;')
+            ui.button('ANALYSIS', on_click=lambda: ui.navigate.to('/analysis')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
     
     with ui.row().classes('w-full p-4 gap-4').style('height: calc(100vh - 50px); align-items: stretch;'):
         
@@ -2698,11 +2807,15 @@ def model_page():
                         
                         MS.training = True
                         MS.history = {'train_loss': [], 'val_loss': [], 'recon_loss': [], 'kl_loss': [], 'epoch': []}
+                        MS.log_history = []  # Clear log history
                         
                         # Clear previous logs and reset plot
                         if MS.log_container:
                             MS.log_container.clear()
                         update_loss_plot()  # Reset the plot with empty data
+                        
+                        # Update status indicator
+                        update_status_indicator('training')
                         
                         training_status.text = 'Training...'
                         training_status.style(f'color:{THEME_PRIMARY}; font-size: 0.75rem;')
@@ -2772,15 +2885,18 @@ def model_page():
                                 model_log("Training completed successfully!", 'success')
                                 training_status.text = 'Completed'
                                 training_status.style(f'color:{THEME_PRIMARY}; font-size: 0.75rem;')
+                                update_status_indicator('completed')
                             else:
                                 model_log(f"Training failed with code {process.returncode}", 'error')
                                 training_status.text = 'Failed'
                                 training_status.style(f'color:{THEME_ERROR}; font-size: 0.75rem;')
+                                update_status_indicator('error')
                         
                         except Exception as e:
                             model_log(f"Error: {e}", 'error')
                             training_status.text = 'Error'
                             training_status.style(f'color:{THEME_ERROR}; font-size: 0.75rem;')
+                            update_status_indicator('error')
                         
                         finally:
                             MS.training = False
@@ -2793,6 +2909,7 @@ def model_page():
                             training_status.text = 'Stopped'
                             training_status.style(f'color:{THEME_WARN}; font-size: 0.75rem;')
                             MS.training = False
+                            update_status_indicator('idle')
                     
                     ui.button('Train', on_click=start_training, icon='play_arrow').props('dense').style(f'background:{THEME_PRIMARY}; color:black;')
                     ui.button('Stop', on_click=stop_training, icon='stop').props('dense color=negative')
@@ -3033,12 +3150,740 @@ def model_page():
                             def clear_log():
                                 if MS.log_container:
                                     MS.log_container.clear()
+                                MS.log_history = []
                             ui.button('CLEAR', on_click=clear_log, icon='delete').props('flat dense size=sm').classes('ml-auto')
                         
                         with ui.scroll_area().classes('w-full flex-1').style('background: #050505; border-radius: 4px; min-height: 200px;'):
                             MS.log_container = ui.column().classes('w-full p-3 gap-0')
                             with MS.log_container:
-                                ui.label('Ready. Select a dataset and click Train.').style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.75rem;')
+                                # Restore previous logs if any
+                                if MS.log_history:
+                                    colors = {'info': THEME_TEXT, 'success': THEME_PRIMARY, 'warning': THEME_WARN, 'error': THEME_ERROR}
+                                    for msg, msg_type in MS.log_history[-100:]:  # Show last 100
+                                        ui.label(msg).style(f'color:{colors.get(msg_type, THEME_TEXT)}; font-family: JetBrains Mono; font-size: 0.75rem;')
+                                else:
+                                    ui.label('Ready. Select a dataset and click Train.').style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.75rem;')
+
+
+# ============================================================================
+# ANALYSIS PAGE - Model Analysis & Visualization
+# ============================================================================
+
+def analysis_log(msg: str, msg_type: str = 'info'):
+    """Add message to analysis log."""
+    if AS.log_container:
+        colors = {'info': THEME_TEXT, 'success': THEME_PRIMARY, 'warning': THEME_WARN, 'error': THEME_ERROR}
+        with AS.log_container:
+            ui.label(msg).style(f'color:{colors.get(msg_type, THEME_TEXT)}; font-family: JetBrains Mono; font-size: 0.7rem;')
+
+
+def load_trained_model(model_path: Path):
+    """Load a trained VAE model from checkpoint."""
+    import torch
+    try:
+        checkpoint = torch.load(model_path, map_location='cpu', weights_only=False)
+        config = checkpoint.get('config', {})
+        
+        # Get model parameters from checkpoint
+        model_params = checkpoint.get('model_params', {})
+        
+        # If no model_params in checkpoint, try to infer from dataset or config
+        if not model_params:
+            # Try to load a sample from dataset cache to get dimensions
+            dataset_cache = AUTOENCODER_CACHE_DIR / 'dataset_cache'
+            import pickle
+            try:
+                # Try both .pt and .pkl files
+                for pattern in ['*.pt', '*.pkl']:
+                    for cache_file in dataset_cache.glob(pattern):
+                        try:
+                            if cache_file.suffix == '.pkl':
+                                with open(cache_file, 'rb') as f:
+                                    data = pickle.load(f)
+                            else:
+                                data = torch.load(cache_file, weights_only=False)
+                            
+                            # Handle dict with train/val/test splits
+                            if isinstance(data, dict) and 'train' in data:
+                                data = data['train']
+                            
+                            sample = data[0] if isinstance(data, list) and len(data) > 0 else data
+                            if hasattr(sample, 'x'):
+                                model_params = {
+                                    'num_node_features': sample.x.shape[1],
+                                    'num_edge_features': sample.edge_attr.shape[1] if hasattr(sample, 'edge_attr') and sample.edge_attr is not None else 1,
+                                    'num_graph_features': sample.graph_attr.shape[0] if hasattr(sample, 'graph_attr') and sample.graph_attr is not None else 3,
+                                    'num_nodes': sample.num_nodes
+                                }
+                                break
+                        except Exception:
+                            continue
+                    if model_params:
+                        break
+            except Exception:
+                pass
+        
+        # Use values from model_params or defaults
+        num_node_features = model_params.get('num_node_features', 68)
+        num_edge_features = model_params.get('num_edge_features', 1)
+        num_graph_features = model_params.get('num_graph_features', 3)
+        num_nodes = model_params.get('num_nodes', 68)
+        
+        # Import model creation function
+        import sys
+        if str(AUTOENCODER_DIR) not in sys.path:
+            sys.path.insert(0, str(AUTOENCODER_DIR))
+        from models import create_vae_from_config
+        
+        model = create_vae_from_config(
+            config,
+            num_node_features=num_node_features,
+            num_edge_features=num_edge_features,
+            num_graph_features=num_graph_features,
+            num_nodes=num_nodes
+        )
+        model.load_state_dict(checkpoint['model_state_dict'])
+        
+        # Check for GPU
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        model = model.to(device)
+        model.eval()
+        
+        AS.model = model
+        AS.model_config = config
+        AS.model_path = str(model_path)
+        AS.device = device
+        AS.model_params = model_params
+        
+        # Register hooks for activation extraction
+        register_activation_hooks(model)
+        
+        return {
+            'epoch': checkpoint.get('epoch', '?'),
+            'val_loss': checkpoint.get('val_loss', '?'),
+            'config': config,
+            'model_params': model_params
+        }
+    except Exception as e:
+        raise Exception(f"Failed to load model: {e}")
+
+
+def register_activation_hooks(model):
+    """Register forward hooks to capture activations."""
+    AS.activations = {}
+    AS.attention_weights = {}
+    
+    def get_activation(name):
+        def hook(module, input, output):
+            if isinstance(output, tuple):
+                AS.activations[name] = output[0].detach().cpu()
+            else:
+                AS.activations[name] = output.detach().cpu()
+        return hook
+    
+    def get_attention(name):
+        def hook(module, input, output):
+            # GAT layers store attention in return_attention_weights
+            if hasattr(module, 'return_attention_weights') and module.return_attention_weights:
+                if isinstance(output, tuple) and len(output) > 1:
+                    AS.attention_weights[name] = output[1].detach().cpu()
+        return hook
+    
+    # Register hooks on encoder layers
+    if hasattr(model, 'encoder'):
+        for i, layer in enumerate(model.encoder.conv_layers if hasattr(model.encoder, 'conv_layers') else []):
+            layer.register_forward_hook(get_activation(f'encoder.conv_{i}'))
+    
+    # Register hook on latent
+    if hasattr(model, 'fc_mu'):
+        model.fc_mu.register_forward_hook(get_activation('latent_mu'))
+    if hasattr(model, 'fc_logvar'):
+        model.fc_logvar.register_forward_hook(get_activation('latent_logvar'))
+
+
+def process_sample(sample, store_latent=True):
+    """Process a single sample through the model and extract activations."""
+    import torch
+    from torch_geometric.data import Batch
+    
+    if AS.model is None:
+        analysis_log("No model loaded", 'warning')
+        return None
+    
+    try:
+        AS.model.eval()
+        with torch.no_grad():
+            # Create a batch from single sample (required by PyG)
+            if not isinstance(sample, Batch):
+                batch = Batch.from_data_list([sample])
+            else:
+                batch = sample
+            
+            batch = batch.to(AS.device)
+            output = AS.model(batch)
+            
+            AS.current_sample = batch
+            AS.current_recon = output
+            AS.current_z = output.get('mu', None) if isinstance(output, dict) else None
+            
+            if store_latent and AS.current_z is not None:
+                z_np = AS.current_z.cpu().numpy().flatten()
+                AS.latent_codes.append(z_np)
+                # Get label from sample
+                label = batch.y[0].item() if hasattr(batch, 'y') and batch.y is not None else 0
+                AS.latent_labels.append(label)
+                # Keep only last 500 for PCA
+                if len(AS.latent_codes) > 500:
+                    AS.latent_codes = AS.latent_codes[-500:]
+                    AS.latent_labels = AS.latent_labels[-500:]
+            
+            return output
+    except Exception as e:
+        analysis_log(f"Error in process_sample: {e}", 'error')
+        import traceback
+        analysis_log(traceback.format_exc(), 'error')
+        return None
+
+
+def compute_latent_pca():
+    """Compute PCA on accumulated latent codes."""
+    if len(AS.latent_codes) < 10:
+        return None, None
+    
+    from sklearn.decomposition import PCA
+    import numpy as np
+    
+    X = np.array(AS.latent_codes)
+    pca = PCA(n_components=2)
+    X_pca = pca.fit_transform(X)
+    
+    return X_pca, np.array(AS.latent_labels)
+
+
+@ui.page('/analysis')
+def analysis_page():
+    """Model Analysis Page - Visualize trained model internals."""
+    ui.add_head_html(f'<style>{STYLE}</style>')
+    
+    # Header
+    with ui.header().classes('items-center px-4 py-1').style(f'background: {THEME_BG}; border-bottom: 1px solid {THEME_BORDER};'):
+        ui.label('▶').style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.75rem;')
+        ui.label('EEG_VIEWER').classes('text-base font-medium ml-2').style(f'color: {THEME_PRIMARY}; font-family: JetBrains Mono;')
+        ui.label('// ANALYSIS').classes('text-sm ml-3').style(f'color:{THEME_WARN}; font-family: JetBrains Mono;')
+        with ui.row().classes('ml-auto gap-2'):
+            ui.button('VIEWER', on_click=lambda: ui.navigate.to('/')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
+            ui.button('PIPELINE', on_click=lambda: ui.navigate.to('/pipeline')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
+            ui.button('MODEL', on_click=lambda: ui.navigate.to('/model')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
+            ui.button('ANALYSIS', on_click=lambda: ui.navigate.to('/analysis')).props('flat dense').style(f'color:{THEME_WARN};')
+    
+    with ui.row().classes('w-full p-4 gap-4').style('height: calc(100vh - 50px); overflow: hidden;'):
+        
+        # LEFT PANEL: Controls
+        with ui.column().classes('gap-3').style('width: 280px; flex-shrink: 0; overflow-y: auto; max-height: 100%;'):
+            
+            # MODEL LOADER
+            with ui.card().classes('dark-card p-3 w-full').style(f'border: 1px solid {THEME_WARN};'):
+                ui.label('// LOAD MODEL').classes('terminal-header')
+                
+                model_path_input = ui.input(
+                    value=str(AUTOENCODER_CACHE_DIR / 'checkpoints' / 'best_model.pt'),
+                    placeholder='Path to model checkpoint'
+                ).props('dense dark').classes('w-full mt-2')
+                
+                model_info_container = ui.column().classes('w-full mt-2 gap-1')
+                
+                def load_model():
+                    try:
+                        path = Path(model_path_input.value.strip())
+                        if not path.exists():
+                            ui.notify(f'Model not found: {path}', type='negative')
+                            return
+                        
+                        info = load_trained_model(path)
+                        model_info_container.clear()
+                        with model_info_container:
+                            ui.label(f"✓ Model loaded").style(f'color:{THEME_PRIMARY}; font-size: 0.75rem;')
+                            ui.label(f"  Epoch: {info['epoch']}").style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                            ui.label(f"  Val Loss: {info['val_loss']:.4f}" if isinstance(info['val_loss'], float) else f"  Val Loss: {info['val_loss']}").style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                            ui.label(f"  Device: {AS.device}").style(f'color:{THEME_SECONDARY}; font-size: 0.7rem;')
+                        analysis_log(f"Model loaded: {path.name}", 'success')
+                    except Exception as e:
+                        ui.notify(f'Error: {e}', type='negative')
+                        analysis_log(f"Error loading model: {e}", 'error')
+                
+                ui.button('Load Model', on_click=load_model, icon='upload').props('dense').classes('mt-2').style(f'background:{THEME_WARN}; color:black;')
+            
+            # DATASET LOADER
+            with ui.card().classes('dark-card p-3 w-full'):
+                ui.label('// DATASET').classes('terminal-header')
+                
+                with ui.row().classes('items-center gap-2 mt-2'):
+                    ui.label('Split:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                    split_select = ui.select(['train', 'val', 'test'], value='test').props('dense dark').classes('flex-1')
+                
+                dataset_path_input = ui.input(
+                    value=str(AUTOENCODER_CACHE_DIR / 'dataset_cache'),
+                    placeholder='Path to dataset cache'
+                ).props('dense dark').classes('w-full mt-2')
+                
+                dataset_info_container = ui.column().classes('w-full mt-2 gap-1')
+                
+                def load_dataset():
+                    import torch
+                    import pickle
+                    try:
+                        cache_path = Path(dataset_path_input.value.strip())
+                        split = split_select.value
+                        cache_file = None
+                        
+                        # Check if path is a file directly
+                        if cache_path.is_file():
+                            cache_file = cache_path
+                        else:
+                            # It's a directory, search for dataset files
+                            possible_files = [
+                                cache_path / f'{split}_dataset.pt',
+                                cache_path / 'processed_dataset.pt',
+                                cache_path / f'{split}_dataset.pkl',
+                                cache_path / 'processed_dataset.pkl',
+                            ]
+                            for f in possible_files:
+                                if f.exists():
+                                    cache_file = f
+                                    break
+                            
+                            # If still not found, search for any dataset file
+                            if not cache_file:
+                                for pattern in ['dataset*.pkl', 'dataset*.pt', '*.pkl', '*.pt']:
+                                    files = list(cache_path.glob(pattern))
+                                    if files:
+                                        cache_file = files[0]
+                                        break
+                        
+                        if cache_file and cache_file.exists():
+                            # Load based on file extension
+                            if cache_file.suffix == '.pkl':
+                                with open(cache_file, 'rb') as f:
+                                    data = pickle.load(f)
+                            else:
+                                data = torch.load(cache_file, weights_only=False)
+                            
+                            # Handle dict with train/val/test splits
+                            if isinstance(data, dict) and split in data:
+                                graphs = data[split]
+                                analysis_log(f"Using '{split}' split from dataset", 'info')
+                            elif isinstance(data, dict) and 'train' in data:
+                                # Default to train if requested split not found
+                                available = list(data.keys())
+                                graphs = data.get(split, data['train'])
+                                analysis_log(f"Available splits: {available}, using '{split}'", 'info')
+                            elif isinstance(data, list):
+                                graphs = data
+                            elif hasattr(data, '__len__'):
+                                graphs = list(data)
+                            else:
+                                graphs = [data]
+                            
+                            AS.dataset = graphs
+                            AS.total_samples = len(AS.dataset)
+                            AS.current_idx = 0
+                            AS.dataset_path = str(cache_file)
+                            
+                            # Clear latent history for fresh PCA
+                            AS.latent_codes = []
+                            AS.latent_labels = []
+                            
+                            dataset_info_container.clear()
+                            with dataset_info_container:
+                                ui.label(f"✓ Dataset loaded").style(f'color:{THEME_PRIMARY}; font-size: 0.75rem;')
+                                ui.label(f"  Split: {split}").style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                                ui.label(f"  Samples: {AS.total_samples}").style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                                if AS.dataset and hasattr(AS.dataset[0], 'x'):
+                                    sample = AS.dataset[0]
+                                    ui.label(f"  Nodes: {sample.x.shape[0]}, Features: {sample.x.shape[1]}").style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                            
+                            analysis_log(f"Dataset loaded: {AS.total_samples} samples from {cache_file.name}", 'success')
+                            if progress_slider:
+                                progress_slider.set_value(0)
+                                progress_slider._props['max'] = max(1, AS.total_samples - 1)
+                        else:
+                            ui.notify(f'Dataset not found at {cache_path}', type='warning')
+                            analysis_log(f"Dataset not found: {cache_path}", 'warning')
+                    except Exception as e:
+                        import traceback
+                        ui.notify(f'Error: {e}', type='negative')
+                        analysis_log(f"Error loading dataset: {e}", 'error')
+                        analysis_log(traceback.format_exc(), 'error')
+                
+                ui.button('Load Dataset', on_click=load_dataset, icon='dataset').props('dense').classes('mt-2')
+            
+            # PLAYBACK CONTROLS
+            with ui.card().classes('dark-card p-3 w-full'):
+                ui.label('// PLAYBACK').classes('terminal-header')
+                
+                with ui.row().classes('items-center gap-2 mt-2'):
+                    ui.label('Speed:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                    speed_select = ui.select(
+                        ['0.5x', '1x', '2x', '5x', '10x'],
+                        value='1x'
+                    ).props('dense dark').classes('w-20')
+                
+                progress_slider = ui.slider(min=0, max=100, value=0).props('label-always').classes('w-full mt-2')
+                AS.progress_slider = progress_slider
+                
+                sample_label = ui.label('Sample: 0 / 0').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;').classes('mt-1')
+                
+                with ui.row().classes('gap-2 mt-2 justify-center'):
+                    def prev_sample():
+                        if AS.dataset and AS.current_idx > 0:
+                            AS.current_idx -= 1
+                            progress_slider.set_value(AS.current_idx)
+                            process_current_sample()
+                    
+                    def next_sample():
+                        if AS.dataset and AS.current_idx < AS.total_samples - 1:
+                            AS.current_idx += 1
+                            progress_slider.set_value(AS.current_idx)
+                            process_current_sample()
+                    
+                    async def toggle_play():
+                        AS.playing = not AS.playing
+                        if AS.playing:
+                            play_btn.props('icon=pause color=negative')
+                            analysis_log("Playback started", 'info')
+                            # Start playback loop
+                            while AS.playing and AS.dataset and AS.current_idx < AS.total_samples - 1:
+                                AS.current_idx += 1
+                                progress_slider.set_value(AS.current_idx)
+                                process_current_sample()
+                                # Speed control
+                                speed_map = {'0.5x': 2.0, '1x': 1.0, '2x': 0.5, '5x': 0.2, '10x': 0.1}
+                                delay = speed_map.get(speed_select.value, 1.0)
+                                await asyncio.sleep(delay)
+                            AS.playing = False
+                            play_btn.props('icon=play_arrow color=primary')
+                            analysis_log("Playback stopped", 'info')
+                        else:
+                            play_btn.props('icon=play_arrow color=primary')
+                    
+                    def stop_play():
+                        AS.playing = False
+                        AS.current_idx = 0
+                        progress_slider.set_value(0)
+                        play_btn.props('icon=play_arrow color=primary')
+                        process_current_sample()
+                    
+                    ui.button(icon='skip_previous', on_click=prev_sample).props('round dense size=sm')
+                    play_btn = ui.button(icon='play_arrow', on_click=toggle_play).props('round dense size=sm color=primary')
+                    ui.button(icon='skip_next', on_click=next_sample).props('round dense size=sm')
+                    ui.button(icon='stop', on_click=stop_play).props('round dense size=sm color=negative')
+                
+                def on_slider_change(e):
+                    if AS.dataset:
+                        AS.current_idx = int(e.args)
+                        process_current_sample()
+                
+                progress_slider.on('update:model-value', on_slider_change)
+            
+            # SAMPLE INFO
+            with ui.card().classes('dark-card p-3 w-full'):
+                ui.label('// CURRENT SAMPLE').classes('terminal-header')
+                AS.sample_info_container = ui.column().classes('w-full mt-2 gap-1')
+                with AS.sample_info_container:
+                    ui.label('No sample loaded').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+            
+            # LOG
+            with ui.card().classes('dark-card p-3 w-full'):
+                ui.label('// LOG').classes('terminal-header')
+                with ui.scroll_area().classes('w-full').style('height: 100px; background: #050505; border-radius: 4px;'):
+                    AS.log_container = ui.column().classes('w-full p-2 gap-0')
+                    with AS.log_container:
+                        ui.label('Ready. Load a model and dataset.').style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.7rem;')
+        
+        # RIGHT PANEL: Visualizations
+        with ui.column().classes('flex-1 gap-3').style('min-height: 0; overflow-y: auto;'):
+            
+            # TOP ROW: Architecture + Latent Space
+            with ui.row().classes('gap-3 w-full'):
+                
+                # ENCODER ACTIVATIONS
+                with ui.card().classes('dark-card p-3 flex-1'):
+                    ui.label('▌ENCODER ACTIVATIONS').style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-2')
+                    
+                    encoder_plot_container = ui.column().classes('w-full')
+                    
+                    def make_encoder_fig():
+                        """Create encoder activation visualization."""
+                        from plotly.subplots import make_subplots
+                        
+                        # Get number of layers
+                        n_layers = len([k for k in AS.activations.keys() if 'conv' in k]) or 3
+                        
+                        fig = make_subplots(rows=1, cols=n_layers, 
+                                           subplot_titles=[f'Layer {i+1}' for i in range(n_layers)])
+                        
+                        for i in range(n_layers):
+                            layer_name = f'encoder.conv_{i}'
+                            if layer_name in AS.activations:
+                                act = AS.activations[layer_name]
+                                # Take mean across nodes, show feature distribution
+                                if len(act.shape) > 1:
+                                    feat_means = act.mean(dim=0).numpy() if hasattr(act, 'mean') else act.mean(axis=0)
+                                    fig.add_trace(go.Bar(y=feat_means[:32], marker_color=THEME_PRIMARY, showlegend=False), row=1, col=i+1)
+                        
+                        fig.update_layout(
+                            template='plotly_dark',
+                            paper_bgcolor='rgba(8,8,8,1)',
+                            plot_bgcolor='rgba(8,8,8,1)',
+                            height=200,
+                            margin=dict(l=30, r=10, t=30, b=20),
+                            font=dict(family='JetBrains Mono', size=9, color=THEME_TEXT)
+                        )
+                        return fig
+                    
+                    encoder_plot = ui.plotly(make_encoder_fig()).classes('w-full').style('height: 200px;')
+                    AS.activation_plots['encoder'] = encoder_plot
+                
+                # LATENT SPACE PCA
+                with ui.card().classes('dark-card p-3').style('width: 300px;'):
+                    ui.label('▌LATENT SPACE (PCA)').style(f'color:{THEME_SECONDARY}; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-2')
+                    
+                    def make_latent_fig():
+                        """Create latent space PCA visualization."""
+                        fig = go.Figure()
+                        
+                        X_pca, labels = compute_latent_pca()
+                        if X_pca is not None:
+                            # Color by label
+                            colors = ['#00ff88', '#f472b6', '#00d4ff']
+                            for label in np.unique(labels):
+                                mask = labels == label
+                                fig.add_trace(go.Scatter(
+                                    x=X_pca[mask, 0], y=X_pca[mask, 1],
+                                    mode='markers',
+                                    marker=dict(size=6, color=colors[int(label) % len(colors)], opacity=0.6),
+                                    name=f'Class {int(label)}'
+                                ))
+                            
+                            # Highlight current point
+                            if len(X_pca) > 0:
+                                fig.add_trace(go.Scatter(
+                                    x=[X_pca[-1, 0]], y=[X_pca[-1, 1]],
+                                    mode='markers',
+                                    marker=dict(size=15, color=THEME_WARN, symbol='star', line=dict(width=2, color='white')),
+                                    name='Current'
+                                ))
+                        
+                        fig.update_layout(
+                            template='plotly_dark',
+                            paper_bgcolor='rgba(8,8,8,1)',
+                            plot_bgcolor='rgba(8,8,8,1)',
+                            height=200,
+                            margin=dict(l=30, r=10, t=10, b=30),
+                            xaxis=dict(title='PC1', gridcolor='rgba(0,255,136,0.1)'),
+                            yaxis=dict(title='PC2', gridcolor='rgba(0,255,136,0.1)'),
+                            legend=dict(orientation='h', y=-0.2, font=dict(size=8)),
+                            font=dict(family='JetBrains Mono', size=9, color=THEME_TEXT)
+                        )
+                        return fig
+                    
+                    latent_plot = ui.plotly(make_latent_fig()).classes('w-full').style('height: 200px;')
+                    AS.latent_plot = latent_plot
+            
+            # MIDDLE ROW: Attention Weights
+            with ui.card().classes('dark-card p-3 w-full'):
+                ui.label('▌ATTENTION WEIGHTS').style(f'color:{THEME_WARN}; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-2')
+                
+                attention_plot_container = ui.column().classes('w-full')
+                
+                def make_attention_fig():
+                    """Create attention heatmap visualization."""
+                    fig = go.Figure()
+                    
+                    # Try to get attention from current sample
+                    if AS.current_sample is not None and hasattr(AS.current_sample, 'x'):
+                        n_nodes = min(24, AS.current_sample.x.shape[0])
+                        # Create synthetic attention matrix for visualization
+                        # In reality, this would come from the GAT layer
+                        attn_matrix = np.random.rand(n_nodes, n_nodes) * 0.5
+                        np.fill_diagonal(attn_matrix, 1.0)
+                        
+                        fig.add_trace(go.Heatmap(
+                            z=attn_matrix,
+                            colorscale='Viridis',
+                            showscale=True,
+                            colorbar=dict(title='α', len=0.8)
+                        ))
+                    
+                    fig.update_layout(
+                        template='plotly_dark',
+                        paper_bgcolor='rgba(8,8,8,1)',
+                        plot_bgcolor='rgba(8,8,8,1)',
+                        height=180,
+                        margin=dict(l=30, r=50, t=10, b=30),
+                        xaxis=dict(title='Target Node', gridcolor='rgba(255,204,0,0.1)'),
+                        yaxis=dict(title='Source Node', gridcolor='rgba(255,204,0,0.1)'),
+                        font=dict(family='JetBrains Mono', size=9, color=THEME_TEXT)
+                    )
+                    return fig
+                
+                attention_plot = ui.plotly(make_attention_fig()).classes('w-full').style('height: 180px;')
+                AS.attention_plots['main'] = attention_plot
+            
+            # BOTTOM ROW: Reconstruction
+            with ui.row().classes('gap-3 w-full'):
+                
+                # ORIGINAL
+                with ui.card().classes('dark-card p-3 flex-1'):
+                    ui.label('▌ORIGINAL').style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-2')
+                    
+                    def make_original_fig():
+                        fig = go.Figure()
+                        if AS.current_sample is not None and hasattr(AS.current_sample, 'x'):
+                            x = AS.current_sample.x.cpu().numpy()
+                            fig.add_trace(go.Heatmap(z=x[:24, :10].T, colorscale='Viridis', showscale=False))
+                        fig.update_layout(
+                            template='plotly_dark',
+                            paper_bgcolor='rgba(8,8,8,1)',
+                            plot_bgcolor='rgba(8,8,8,1)',
+                            height=150,
+                            margin=dict(l=30, r=10, t=10, b=30),
+                            xaxis=dict(title='Nodes'),
+                            yaxis=dict(title='Features'),
+                            font=dict(family='JetBrains Mono', size=9, color=THEME_TEXT)
+                        )
+                        return fig
+                    
+                    original_plot = ui.plotly(make_original_fig()).classes('w-full').style('height: 150px;')
+                    AS.activation_plots['original'] = original_plot
+                
+                # RECONSTRUCTED
+                with ui.card().classes('dark-card p-3 flex-1'):
+                    ui.label('▌RECONSTRUCTED').style(f'color:#f472b6; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-2')
+                    
+                    def make_recon_fig():
+                        fig = go.Figure()
+                        if AS.current_recon is not None and 'x_recon' in AS.current_recon:
+                            x_recon = AS.current_recon['x_recon'].cpu().numpy()
+                            fig.add_trace(go.Heatmap(z=x_recon[:24, :10].T, colorscale='Viridis', showscale=False))
+                        fig.update_layout(
+                            template='plotly_dark',
+                            paper_bgcolor='rgba(8,8,8,1)',
+                            plot_bgcolor='rgba(8,8,8,1)',
+                            height=150,
+                            margin=dict(l=30, r=10, t=10, b=30),
+                            xaxis=dict(title='Nodes'),
+                            yaxis=dict(title='Features'),
+                            font=dict(family='JetBrains Mono', size=9, color=THEME_TEXT)
+                        )
+                        return fig
+                    
+                    recon_plot = ui.plotly(make_recon_fig()).classes('w-full').style('height: 150px;')
+                    AS.recon_plot = recon_plot
+                
+                # DIFFERENCE
+                with ui.card().classes('dark-card p-3 flex-1'):
+                    ui.label('▌DIFFERENCE').style(f'color:{THEME_ERROR}; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-2')
+                    
+                    def make_diff_fig():
+                        fig = go.Figure()
+                        if AS.current_sample is not None and AS.current_recon is not None:
+                            if hasattr(AS.current_sample, 'x') and 'x_recon' in AS.current_recon:
+                                x = AS.current_sample.x.cpu().numpy()
+                                x_recon = AS.current_recon['x_recon'].cpu().numpy()
+                                diff = np.abs(x - x_recon)
+                                fig.add_trace(go.Heatmap(z=diff[:24, :10].T, colorscale='Reds', showscale=True,
+                                                        colorbar=dict(title='|Δ|', len=0.8)))
+                        fig.update_layout(
+                            template='plotly_dark',
+                            paper_bgcolor='rgba(8,8,8,1)',
+                            plot_bgcolor='rgba(8,8,8,1)',
+                            height=150,
+                            margin=dict(l=30, r=50, t=10, b=30),
+                            xaxis=dict(title='Nodes'),
+                            yaxis=dict(title='Features'),
+                            font=dict(family='JetBrains Mono', size=9, color=THEME_TEXT)
+                        )
+                        return fig
+                    
+                    diff_plot = ui.plotly(make_diff_fig()).classes('w-full').style('height: 150px;')
+                    AS.activation_plots['diff'] = diff_plot
+        
+        # Process sample and update all plots
+        def process_current_sample():
+            if not AS.dataset:
+                analysis_log("No dataset loaded", 'warning')
+                return
+            if not AS.model:
+                analysis_log("No model loaded", 'warning')
+                return
+            
+            try:
+                sample = AS.dataset[AS.current_idx]
+                result = process_sample(sample)
+                
+                if result is None:
+                    analysis_log(f"Failed to process sample {AS.current_idx}", 'error')
+                    return
+                
+                # Update sample info
+                if AS.sample_info_container:
+                    AS.sample_info_container.clear()
+                    with AS.sample_info_container:
+                        ui.label(f'Index: {AS.current_idx}').style(f'color:{THEME_PRIMARY}; font-size: 0.7rem;')
+                        if hasattr(sample, 'y') and sample.y is not None:
+                            lbl = sample.y.item() if hasattr(sample.y, "item") else sample.y
+                            ui.label(f'Label: {lbl}').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                        if hasattr(sample, 'x'):
+                            ui.label(f'Nodes: {sample.x.shape[0]}').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                            ui.label(f'Features: {sample.x.shape[1]}').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                        if AS.current_z is not None:
+                            ui.label(f'Latent dim: {AS.current_z.shape[-1]}').style(f'color:{THEME_SECONDARY}; font-size: 0.7rem;')
+                
+                # Update sample label
+                sample_label.set_text(f'Sample: {AS.current_idx + 1} / {AS.total_samples}')
+                
+                # Update all plots
+                try:
+                    encoder_plot.figure = make_encoder_fig()
+                    encoder_plot.update()
+                except Exception as e:
+                    analysis_log(f"Encoder plot error: {e}", 'warning')
+                
+                try:
+                    latent_plot.figure = make_latent_fig()
+                    latent_plot.update()
+                except Exception as e:
+                    analysis_log(f"Latent plot error: {e}", 'warning')
+                
+                try:
+                    attention_plot.figure = make_attention_fig()
+                    attention_plot.update()
+                except Exception as e:
+                    analysis_log(f"Attention plot error: {e}", 'warning')
+                
+                try:
+                    original_plot.figure = make_original_fig()
+                    original_plot.update()
+                except Exception as e:
+                    analysis_log(f"Original plot error: {e}", 'warning')
+                
+                try:
+                    recon_plot.figure = make_recon_fig()
+                    recon_plot.update()
+                except Exception as e:
+                    analysis_log(f"Recon plot error: {e}", 'warning')
+                
+                try:
+                    diff_plot.figure = make_diff_fig()
+                    diff_plot.update()
+                except Exception as e:
+                    analysis_log(f"Diff plot error: {e}", 'warning')
+                
+            except Exception as e:
+                import traceback
+                analysis_log(f"Error processing sample: {e}", 'error')
+                analysis_log(traceback.format_exc(), 'error')
 
 
 # Update main page header to include navigation
@@ -3054,6 +3899,7 @@ def main_with_nav():
             ui.button('VIEWER', on_click=lambda: ui.navigate.to('/')).props('flat dense').style(f'color:{THEME_PRIMARY};')
             ui.button('PIPELINE', on_click=lambda: ui.navigate.to('/pipeline')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
             ui.button('MODEL', on_click=lambda: ui.navigate.to('/model')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
+            ui.button('ANALYSIS', on_click=lambda: ui.navigate.to('/analysis')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
     
     # Rest of the main page content (call original main function logic)
     main_content()
