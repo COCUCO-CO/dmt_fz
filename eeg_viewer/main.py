@@ -1941,6 +1941,10 @@ def detect_dataset_type(path: Path) -> dict:
         - conditions: list of detected conditions (e.g., ['DMT', 'EC', 'EO'])
         - file_count: number of data files
         - sample_file: path to a sample file
+        - data_sources: what data is available (phases, syncro, etc.)
+        - has_stc: whether STC (source localized) data is available
+        - has_eeg: whether EEG data is available
+        - num_nodes: number of nodes (channels/parcels)
     """
     info = {
         'type': 'unknown',
@@ -1949,6 +1953,12 @@ def detect_dataset_type(path: Path) -> dict:
         'file_count': 0,
         'sample_file': None,
         'bands': [],
+        'data_sources': [],
+        'has_stc': False,
+        'has_eeg': False,
+        'num_nodes_eeg': 0,
+        'num_nodes_stc': 0,
+        'num_epochs_sample': 0,
         'error': None
     }
     
@@ -1959,44 +1969,88 @@ def detect_dataset_type(path: Path) -> dict:
     # Check for phases-*.pkl files (graph data from pipeline)
     phases_files = list(path.rglob("phases-*.pkl"))
     syncro_files = list(path.rglob("syncro-*.pkl"))
+    order_files = list(path.rglob("order-*.pkl"))
     
-    if phases_files or syncro_files:
+    if phases_files:
         info['type'] = 'graph'
-        all_files = phases_files + syncro_files
-        info['file_count'] = len(all_files)
-        info['sample_file'] = str(all_files[0]) if all_files else None
+        info['file_count'] = len(phases_files)
+        info['sample_file'] = str(phases_files[0])
+        info['data_sources'].append('phases (syncro + phases + amplitudes + kuramoto)')
         
         # Detect conditions from folder structure
         conditions = set()
-        for f in all_files:
+        for f in phases_files:
             parent = f.parent.name
             if parent in ['DMT', 'EC', 'EO']:
                 conditions.add(parent)
         info['conditions'] = sorted(list(conditions)) if conditions else ['Unknown']
         
         # Check structure
-        if path.is_file():
-            info['structure'] = 'single_file'
-        elif any(path.iterdir()):
-            subdirs = [d for d in path.iterdir() if d.is_dir()]
-            if subdirs:
-                info['structure'] = 'hierarchical'
-            else:
-                info['structure'] = 'flat'
+        subdirs = [d for d in path.iterdir() if d.is_dir()]
+        info['structure'] = 'hierarchical' if subdirs else 'flat'
         
-        # Try to detect bands from a sample file
-        if info['sample_file']:
-            try:
-                import pickle
-                with open(info['sample_file'], 'rb') as f:
-                    data = pickle.load(f)
-                if 'phases_stc' in data:
-                    info['bands'] = list(data['phases_stc'].keys())
-                elif 'phases_eeg' in data:
+        # Analyze sample file for detailed info
+        try:
+            import pickle
+            with open(info['sample_file'], 'rb') as f:
+                data = pickle.load(f)
+            
+            # Check what data is available
+            if 'phases_stc' in data:
+                info['has_stc'] = True
+                info['bands'] = list(data['phases_stc'].keys())
+                # Get number of parcels from first band, first epoch
+                first_band = info['bands'][0]
+                if data['phases_stc'][first_band]:
+                    info['num_nodes_stc'] = data['phases_stc'][first_band][0].shape[0]
+                    info['num_epochs_sample'] = len(data['phases_stc'][first_band])
+            
+            if 'phases_eeg' in data:
+                info['has_eeg'] = True
+                if not info['bands']:
                     info['bands'] = list(data['phases_eeg'].keys())
-            except:
-                pass
+                first_band = info['bands'][0]
+                if data['phases_eeg'][first_band]:
+                    info['num_nodes_eeg'] = data['phases_eeg'][first_band][0].shape[0]
+                    if info['num_epochs_sample'] == 0:
+                        info['num_epochs_sample'] = len(data['phases_eeg'][first_band])
+            
+            # Check what else is in the file
+            available_keys = list(data.keys())
+            if 'syncros_stc' in data or 'syncros_eeg' in data:
+                if 'syncro' not in str(info['data_sources']):
+                    pass  # Already included in phases
+            if 'kuramoto_stc' in data or 'kuramoto_eeg' in data:
+                pass  # Already included in phases
+                
+        except Exception as e:
+            info['error'] = f"Could not analyze sample file: {e}"
         
+        return info
+    
+    # Fallback: check for standalone syncro files
+    if syncro_files:
+        info['type'] = 'graph'
+        info['file_count'] = len(syncro_files)
+        info['sample_file'] = str(syncro_files[0])
+        info['data_sources'].append('syncro (only synchronization matrices)')
+        
+        conditions = set()
+        for f in syncro_files:
+            parent = f.parent.name
+            if parent in ['DMT', 'EC', 'EO']:
+                conditions.add(parent)
+        info['conditions'] = sorted(list(conditions)) if conditions else ['Unknown']
+        
+        return info
+    
+    # Check for order files
+    if order_files:
+        info['type'] = 'order'
+        info['file_count'] = len(order_files)
+        info['sample_file'] = str(order_files[0])
+        info['data_sources'].append('order (Kuramoto order parameter)')
+        info['error'] = "Order files contain pre-computed Kuramoto values, not suitable for VAE training. Use phases-*.pkl files instead."
         return info
     
     # Check for image files
@@ -2004,7 +2058,7 @@ def detect_dataset_type(path: Path) -> dict:
     if image_files:
         info['type'] = 'image'
         info['file_count'] = len(image_files)
-        info['structure'] = 'flat' if not any(path.iterdir() and d.is_dir() for d in path.iterdir()) else 'hierarchical'
+        info['structure'] = 'flat' if not any(d.is_dir() for d in path.iterdir()) else 'hierarchical'
         info['sample_file'] = str(image_files[0])
         return info
     
@@ -2046,11 +2100,25 @@ def create_default_config(dataset_path: str, dataset_info: dict) -> dict:
         'data': {
             'conditions': dataset_info.get('conditions', ['DMT', 'EC', 'EO']),
             'bands': dataset_info.get('bands', ['Delta', 'Theta', 'Alpha', 'Beta', 'Gamma']),
-            'use_stc': False,
+            'use_stc': dataset_info.get('has_stc', False),
             'graph': {
                 'fully_connected': True,
                 'edge_threshold': 0.3,
+                'edge_threshold_percentile': None,
+                'max_edges_per_node': None,
                 'self_loops': False,
+                'directed': False,
+            },
+            'node_features': {
+                'use_phase_stats': True,
+                'use_amplitude_stats': True,
+                'use_temporal_complexity': True,
+                'use_network_label': False,
+            },
+            'graph_features': {
+                'use_kuramoto': True,
+                'use_global_sync': True,
+                'use_topology': True,
             },
             'split': {
                 'train_ratio': 0.7,
@@ -2058,6 +2126,7 @@ def create_default_config(dataset_path: str, dataset_info: dict) -> dict:
                 'test_ratio': 0.15,
                 'stratify': True,
                 'random_state': 42,
+                'group_by_subject': True,
             }
         },
         'model': {
@@ -2067,8 +2136,12 @@ def create_default_config(dataset_path: str, dataset_info: dict) -> dict:
                 'hidden_dim': 64,
                 'num_gat_layers': 3,
                 'num_attention_heads': 4,
+                'cheby_k': 3,
                 'dropout': 0.2,
+                'attention_dropout': 0.1,
                 'use_edge_attr': True,
+                'concat_heads': True,
+                'negative_slope': 0.2,
                 'use_skip_connections': True,
             },
             'latent': {
@@ -2077,6 +2150,7 @@ def create_default_config(dataset_path: str, dataset_info: dict) -> dict:
             'decoder': {
                 'hidden_dims': [256, 128],
                 'reconstruct_edges': True,
+                'activation': 'leaky_relu',
                 'dropout': 0.1,
             },
             'pooling': {
@@ -2109,11 +2183,14 @@ def create_default_config(dataset_path: str, dataset_info: dict) -> dict:
             'optimizer': 'adamw',
             'scheduler': {
                 'type': 'cosine',
+                'patience': 10,
+                'factor': 0.5,
                 'min_lr': 1e-6,
             },
             'early_stopping': {
                 'patience': 20,
                 'min_delta': 0.0001,
+                'monitor': 'val_loss',
             },
             'gradient_clipping': {
                 'enabled': True,
@@ -2124,15 +2201,28 @@ def create_default_config(dataset_path: str, dataset_info: dict) -> dict:
             'level': 'INFO',
             'tensorboard': True,
             'save_frequency': 10,
+            'log_frequency': 1,
+            'tensorboard_extras': {
+                'latent_space': True,
+                'reconstructions': True,
+                'attention_weights': False,
+                'kl_per_dim': True,
+                'gradient_norms': False,
+            }
         },
         'visualization': {
             'plot_training_curves': True,
             'plot_latent_space': True,
+            'plot_reconstructions': True,
+            'num_examples_to_visualize': 10,
+            'latent_method': 'tsne',
         },
         'seed': 42,
-        'device': 'cuda',
-        'num_workers': 4,
-        'pin_memory': True,
+        'deterministic': True,
+        'device': 'cuda',  # Will fallback to CPU if not available
+        'num_workers': 4,  # Use workers with GPU
+        'dataset_workers': 4,
+        'pin_memory': True,  # Enabled for GPU
     }
     return config
 
@@ -2189,17 +2279,72 @@ def model_page():
                         else:
                             ui.label(f"✓ Type: {info['type'].upper()}").style(f'color:{THEME_PRIMARY}; font-size: 0.75rem;')
                             ui.label(f"  Files: {info['file_count']}").style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
-                            ui.label(f"  Structure: {info['structure']}").style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                            
                             if info['conditions']:
                                 ui.label(f"  Conditions: {', '.join(info['conditions'])}").style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
                             if info['bands']:
                                 ui.label(f"  Bands: {', '.join(info['bands'])}").style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                            
+                            # Show data sources
+                            if info['data_sources']:
+                                ui.label(f"  Data: {info['data_sources'][0]}").style(f'color:{THEME_SECONDARY}; font-size: 0.7rem;')
+                            
+                            # Show EEG/STC availability
+                            if info['has_eeg'] or info['has_stc']:
+                                sources = []
+                                if info['has_eeg']:
+                                    sources.append(f"EEG ({info['num_nodes_eeg']} ch)")
+                                if info['has_stc']:
+                                    sources.append(f"STC ({info['num_nodes_stc']} parcels)")
+                                ui.label(f"  Sources: {' | '.join(sources)}").style(f'color:{THEME_PRIMARY}; font-size: 0.7rem;')
+                            
+                            if info['num_epochs_sample'] > 0:
+                                ui.label(f"  Epochs/subject: ~{info['num_epochs_sample']}").style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                            
+                            # Update source selector options
+                            if info['has_eeg'] and info['has_stc']:
+                                data_source_select.options = ['EEG (channels)', 'STC (parcels)']
+                                data_source_select.value = 'STC (parcels)' if info['has_stc'] else 'EEG (channels)'
+                            elif info['has_eeg']:
+                                data_source_select.options = ['EEG (channels)']
+                                data_source_select.value = 'EEG (channels)'
+                            elif info['has_stc']:
+                                data_source_select.options = ['STC (parcels)']
+                                data_source_select.value = 'STC (parcels)'
                             
                             # Create default config
                             MS.config = create_default_config(str(path), info)
                             model_log(f"Dataset detected: {info['type']} ({info['file_count']} files)", 'success')
                 
                 ui.button('Scan Dataset', on_click=scan_dataset, icon='search').props('dense').classes('mt-2').style(f'background:#f472b6; color:black;')
+                
+                # Data source selector (EEG vs STC)
+                ui.separator().classes('my-2')
+                with ui.row().classes('items-center gap-2'):
+                    ui.label('Source:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.75rem; min-width: 50px;')
+                    data_source_select = ui.select(
+                        ['EEG (channels)', 'STC (parcels)'],
+                        value='EEG (channels)'
+                    ).props('dense dark').classes('flex-1')
+                
+                ui.label('EEG: 24 electrodes | STC: ~200 brain parcels').style(f'color:{THEME_TEXT_DIM}; font-size: 0.6rem;')
+                
+                # Band selection
+                ui.separator().classes('my-2')
+                ui.label('Bands to use:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.75rem;')
+                with ui.row().classes('gap-2 flex-wrap'):
+                    band_checks = {}
+                    for band in ['Delta', 'Theta', 'Alpha', 'Beta', 'Gamma']:
+                        band_checks[band] = ui.checkbox(band, value=(band == 'Alpha')).props('dense')
+                
+                ui.label('Tip: Start with 1-2 bands for faster training').style(f'color:{THEME_TEXT_DIM}; font-size: 0.6rem;')
+                
+                # Subsample option
+                with ui.row().classes('items-center gap-2 mt-2'):
+                    ui.label('Subsample:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.75rem; min-width: 70px;')
+                    subsample_slider = ui.slider(min=0.1, max=1.0, step=0.1, value=0.3).props('label-always').classes('flex-1')
+                
+                ui.label('Use 0.1-0.3 for quick tests, 1.0 for full training').style(f'color:{THEME_TEXT_DIM}; font-size: 0.6rem;')
             
             # MODEL CONFIGURATION
             with ui.card().classes('dark-card p-4 w-full'):
@@ -2280,6 +2425,10 @@ def model_page():
                             ui.notify('Please scan a dataset first', type='warning')
                             return
                         
+                        if MS.dataset_info.get('type') == 'order':
+                            ui.notify('Order files not suitable for VAE. Use phases-*.pkl', type='error')
+                            return
+                        
                         # Update config with UI values
                         MS.config['model']['latent']['dim'] = int(latent_dim.value)
                         MS.config['model']['encoder']['hidden_dim'] = int(hidden_dim.value)
@@ -2289,6 +2438,39 @@ def model_page():
                         MS.config['training']['learning_rate'] = float(learning_rate.value)
                         MS.config['loss']['kl']['weight'] = float(kl_weight.value)
                         MS.config['loss']['kl']['annealing']['enabled'] = beta_annealing.value
+                        
+                        # Set data source (EEG vs STC)
+                        use_stc = 'STC' in data_source_select.value
+                        MS.config['data']['use_stc'] = use_stc
+                        model_log(f"Using {'STC (parcels)' if use_stc else 'EEG (channels)'} data", 'info')
+                        
+                        # Set selected bands
+                        selected_bands = [band for band, cb in band_checks.items() if cb.value]
+                        if not selected_bands:
+                            ui.notify('Select at least one band', type='warning')
+                            return
+                        MS.config['data']['bands'] = selected_bands
+                        model_log(f"Bands: {', '.join(selected_bands)}", 'info')
+                        
+                        # Estimate dataset size
+                        n_files = MS.dataset_info.get('file_count', 0)
+                        n_epochs = MS.dataset_info.get('num_epochs_sample', 50)
+                        n_bands = len(selected_bands)
+                        estimated_graphs = n_files * n_epochs * n_bands
+                        subsample = subsample_slider.value
+                        final_estimate = int(estimated_graphs * subsample)
+                        model_log(f"Estimated graphs: ~{final_estimate} (subsample={subsample:.0%})", 'info')
+                        
+                        # Check GPU availability
+                        try:
+                            import torch
+                            if torch.cuda.is_available():
+                                gpu_name = torch.cuda.get_device_name(0)
+                                model_log(f"GPU: {gpu_name}", 'success')
+                            else:
+                                model_log("⚠ No GPU available - training on CPU (slower)", 'warning')
+                        except:
+                            model_log("⚠ Could not detect GPU", 'warning')
                         
                         # Create cache directories
                         AUTOENCODER_CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -2313,12 +2495,15 @@ def model_page():
                         import subprocess
                         cmd = [
                             sys.executable,
+                            '-u',  # Unbuffered output - critical for real-time logs
                             str(AUTOENCODER_DIR / 'train.py'),
-                            '--config', str(config_path)
+                            '--config', str(config_path),
+                            '--subsample', str(subsample_slider.value)
                         ]
                         
                         env = os.environ.copy()
                         env['PYTHONPATH'] = str(AUTOENCODER_DIR.parent)
+                        env['PYTHONUNBUFFERED'] = '1'  # Force unbuffered output
                         
                         try:
                             process = await asyncio.create_subprocess_exec(
