@@ -41,6 +41,8 @@ ELECTRODE_POSITIONS = {
 class State:
     def __init__(self):
         self.eeg_data = None
+        self.eeg_data2 = None  # Second EEG for comparison
+        self.compare_mode = False  # Whether comparison mode is active
         self.selected_channels = []
         self.view_start = 0.0
         self.view_duration = 5.0
@@ -57,11 +59,16 @@ class State:
         self.current_amplitudes = {}
         # UI references
         self.eeg_plot = None
+        self.eeg_plot2 = None  # Second EEG plot
         self.fft_plot = None
+        self.fft_plot2 = None  # Second FFT plot
         self.hilbert_plot = None
+        self.hilbert_plot2 = None  # Second Hilbert plot
         self.brain_plot = None
+        self.brain_plot2 = None  # Second brain plot
         self.time_label = None
         self.info_container = None
+        self.info_container2 = None  # Second info container
         self.channel_container = None
         self.hilbert_select_container = None
 
@@ -201,17 +208,19 @@ PLOT_BG = 'rgba(8,8,8,1)'
 PLOT_GRID = 'rgba(0,255,136,0.08)'
 PLOT_GRID_MINOR = 'rgba(0,255,136,0.03)'
 
-def make_eeg_fig():
+def make_eeg_fig(use_eeg2=False):
+    """Create EEG figure. use_eeg2=True uses S.eeg_data2 instead of S.eeg_data."""
     fig = go.Figure()
+    title_color = '#f472b6' if use_eeg2 else THEME_PRIMARY
     fig.update_layout(
         template='plotly_dark',
         paper_bgcolor='rgba(0,0,0,0)',
         plot_bgcolor=PLOT_BG,
         margin=dict(l=70, r=10, t=10, b=50),
-        height=280,
+        height=250,
         font=dict(family='JetBrains Mono, monospace', size=10, color=THEME_TEXT),
         xaxis=dict(
-            title=dict(text='TIME [s]', font=dict(size=9, color=THEME_PRIMARY)),
+            title=dict(text='TIME [s]', font=dict(size=9, color=title_color)),
             gridcolor=PLOT_GRID,
             zerolinecolor=PLOT_GRID,
             tickfont=dict(size=9, color=THEME_TEXT_DIM),
@@ -219,7 +228,7 @@ def make_eeg_fig():
         ),
         yaxis=dict(
             gridcolor=PLOT_GRID_MINOR,
-            tickfont=dict(size=9, color=THEME_PRIMARY),
+            tickfont=dict(size=9, color=title_color),
             fixedrange=True
         ),
         showlegend=False,
@@ -228,8 +237,10 @@ def make_eeg_fig():
     )
     return fig
 
-def make_fft_fig():
+def make_fft_fig(use_eeg2=False):
+    """Create FFT figure. use_eeg2=True uses S.eeg_data2 instead of S.eeg_data."""
     fig = go.Figure()
+    title_color = '#f472b6' if use_eeg2 else THEME_SECONDARY
     band_colors = ['rgba(0,212,255,0.08)', 'rgba(0,255,136,0.08)', 'rgba(255,204,0,0.08)', 'rgba(255,107,157,0.08)', 'rgba(167,139,250,0.08)']
     for i, (band, (lo, hi)) in enumerate(FREQ_BANDS.items()):
         fig.add_vrect(x0=lo, x1=hi, fillcolor=band_colors[i % len(band_colors)], line_width=0)
@@ -240,17 +251,17 @@ def make_fft_fig():
         paper_bgcolor='rgba(0,0,0,0)',
         plot_bgcolor=PLOT_BG,
         margin=dict(l=60, r=10, t=30, b=50),
-        height=220,
+        height=180,
         font=dict(family='JetBrains Mono, monospace', size=10, color=THEME_TEXT),
         xaxis=dict(
-            title=dict(text='FREQ [Hz]', font=dict(size=9, color=THEME_SECONDARY)),
+            title=dict(text='FREQ [Hz]', font=dict(size=9, color=title_color)),
             gridcolor=PLOT_GRID,
             range=[0, 60],
             fixedrange=True,
             tickfont=dict(size=9, color=THEME_TEXT_DIM)
         ),
         yaxis=dict(
-            title=dict(text='PWR [µV]', font=dict(size=9, color=THEME_SECONDARY)),
+            title=dict(text='PWR [µV]', font=dict(size=9, color=title_color)),
             gridcolor=PLOT_GRID,
             fixedrange=True,
             tickfont=dict(size=9, color=THEME_TEXT_DIM)
@@ -262,7 +273,9 @@ def make_fft_fig():
     )
     return fig
 
-def make_hilbert_fig():
+def make_hilbert_fig(use_eeg2=False):
+    """Create Hilbert figure. use_eeg2=True uses S.eeg_data2 instead of S.eeg_data."""
+    title_color = '#f472b6' if use_eeg2 else THEME_WARN
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True,
                         subplot_titles=('<b>ENVELOPE</b>', '<b>PHASE</b>'),
                         vertical_spacing=0.22)
@@ -271,23 +284,24 @@ def make_hilbert_fig():
         paper_bgcolor='rgba(0,0,0,0)',
         plot_bgcolor=PLOT_BG,
         margin=dict(l=60, r=10, t=35, b=50),
-        height=220,
+        height=180,
         font=dict(family='JetBrains Mono, monospace', size=10, color=THEME_TEXT),
         showlegend=True,
         legend=dict(orientation='h', y=1.15, font=dict(size=8, color=THEME_TEXT_DIM)),
         hovermode='x unified',
         hoverlabel=dict(bgcolor=THEME_CARD, font=dict(family='JetBrains Mono', size=10))
     )
-    fig.update_annotations(font=dict(size=9, color=THEME_WARN, family='JetBrains Mono'))
+    fig.update_annotations(font=dict(size=9, color=title_color, family='JetBrains Mono'))
     fig.update_xaxes(gridcolor=PLOT_GRID, tickfont=dict(size=9, color=THEME_TEXT_DIM), fixedrange=True)
     fig.update_yaxes(gridcolor=PLOT_GRID, tickfont=dict(size=9, color=THEME_TEXT_DIM), fixedrange=True)
     return fig
 
-def make_brain_fig():
+def make_brain_fig(use_eeg2=False):
+    """Create brain topography figure. use_eeg2=True uses S.eeg_data2 instead of S.eeg_data."""
     fig = go.Figure()
     theta = np.linspace(0, 2*np.pi, 100)
-    # Head outline - terminal green with glow effect
-    head_color = 'rgba(0,255,136,0.5)'
+    # Head outline - use different color for EEG 2
+    head_color = 'rgba(244,114,182,0.5)' if use_eeg2 else 'rgba(0,255,136,0.5)'
     fig.add_trace(go.Scatter(x=np.cos(theta), y=np.sin(theta), mode='lines',
                             line=dict(color=head_color, width=2), showlegend=False, hoverinfo='skip'))
     # Nose
@@ -303,13 +317,13 @@ def make_brain_fig():
         paper_bgcolor='rgba(0,0,0,0)',
         plot_bgcolor='#0a0a0a',
         margin=dict(l=5, r=5, t=5, b=5),
-        height=280,
+        height=200,
         font=dict(family='JetBrains Mono, monospace', color=THEME_TEXT),
         xaxis=dict(range=[-1.25, 1.25], showgrid=False, zeroline=False, showticklabels=False, scaleanchor='y', fixedrange=True),
         yaxis=dict(range=[-0.9, 1.2], showgrid=False, zeroline=False, showticklabels=False, fixedrange=True),
         showlegend=False,
         hovermode='closest',
-        hoverlabel=dict(bgcolor=THEME_CARD, font=dict(family='JetBrains Mono', size=10, color=THEME_PRIMARY))
+        hoverlabel=dict(bgcolor=THEME_CARD, font=dict(family='JetBrains Mono', size=10, color='#f472b6' if use_eeg2 else THEME_PRIMARY))
     )
     return fig
 
@@ -454,6 +468,145 @@ def update_all():
     update_fft()
     update_hilbert()
     update_brain()
+    # Update EEG 2 plots if in compare mode
+    if S.compare_mode and S.eeg_data2:
+        update_eeg2()
+        update_fft2()
+        update_hilbert2()
+        update_brain2()
+
+def update_eeg2():
+    """Update EEG 2 plot with same time window and channels as EEG 1."""
+    if not S.eeg_plot2 or not S.eeg_data2 or not S.selected_channels:
+        return
+    try:
+        # Use same channels if they exist in EEG 2
+        eeg2_chs = [ch for ch in S.selected_channels if ch in S.eeg_data2.channel_types]
+        if not eeg2_chs:
+            return
+        data, times, chs = get_channel_data(S.eeg_data2, eeg2_chs, S.view_start, S.view_duration)
+        data = process_data(data, S.eeg_data2.sfreq) * 1e6
+        n = len(chs)
+        
+        norm = np.zeros_like(data)
+        for i in range(n):
+            std = np.std(data[i])
+            norm[i] = data[i] / (std * 3) if std > 0 else data[i]
+        
+        spacing = 2.0 * S.scale_factor
+        colors = ['#f472b6', '#fb7185', '#fda4af', '#fecdd3', '#ffe4e6']  # Pink tones for EEG 2
+        
+        y_min = -spacing
+        y_max = (n) * spacing
+        
+        with S.eeg_plot2:
+            S.eeg_plot2.figure.data = []
+            for i in range(n):
+                off = (n - 1 - i) * spacing
+                S.eeg_plot2.figure.add_trace(go.Scatter(
+                    x=times, y=norm[i] + off, name=chs[i], line=dict(color=colors[i % len(colors)], width=1),
+                    hovertemplate=f'{chs[i]}: %{{customdata:.1f}} µV<extra></extra>', customdata=data[i]
+                ))
+            S.eeg_plot2.figure.update_layout(
+                yaxis=dict(tickmode='array', tickvals=[(n-1-i)*spacing for i in range(n)], ticktext=chs, range=[y_min, y_max], fixedrange=True)
+            )
+            S.eeg_plot2.update()
+    except Exception as e:
+        print(f"EEG2 error: {e}")
+
+def update_fft2():
+    """Update FFT 2 plot."""
+    if not S.fft_plot2 or not S.eeg_data2 or not S.selected_channels:
+        return
+    try:
+        eeg2_chs = [ch for ch in S.selected_channels[:5] if ch in S.eeg_data2.channel_types]
+        if not eeg2_chs:
+            return
+        data, times, chs = get_channel_data(S.eeg_data2, eeg2_chs, S.view_start, S.view_duration)
+        data = process_data(data, S.eeg_data2.sfreq) * 1e6
+        freqs, fft_v = compute_fft(data, S.eeg_data2.sfreq)
+        mask = freqs <= 60
+        freqs, fft_v = freqs[mask], fft_v[:, mask]
+        
+        colors = ['#f472b6', '#fb7185', '#fda4af', '#fecdd3', '#ffe4e6']
+        fills = ['rgba(244,114,182,0.15)', 'rgba(251,113,133,0.15)', 'rgba(253,164,175,0.15)', 'rgba(254,205,211,0.15)', 'rgba(255,228,230,0.15)']
+        
+        with S.fft_plot2:
+            S.fft_plot2.figure.data = []
+            for i, ch in enumerate(chs[:5]):
+                S.fft_plot2.figure.add_trace(go.Scatter(x=freqs, y=fft_v[i], name=ch, line=dict(color=colors[i], width=1.5), fill='tozeroy', fillcolor=fills[i]))
+            S.fft_plot2.update()
+    except Exception as e:
+        print(f"FFT2 error: {e}")
+
+def update_hilbert2():
+    """Update Hilbert 2 plot."""
+    if not S.hilbert_plot2 or not S.eeg_data2 or not S.selected_channels:
+        return
+    ch = S.hilbert_channel if S.hilbert_channel in S.eeg_data2.channel_types else None
+    if not ch:
+        # Try first available channel
+        for c in S.selected_channels:
+            if c in S.eeg_data2.channel_types:
+                ch = c
+                break
+    if not ch:
+        return
+    try:
+        data, times, _ = get_channel_data(S.eeg_data2, [ch], S.view_start, S.view_duration)
+        data = process_data(data, S.eeg_data2.sfreq)[0] * 1e6
+        amp, phase = compute_hilbert(data)
+        
+        with S.hilbert_plot2:
+            S.hilbert_plot2.figure.data = []
+            S.hilbert_plot2.figure.add_trace(go.Scatter(x=times, y=data, name='Signal', line=dict(color='#fb7185', width=1)), row=1, col=1)
+            S.hilbert_plot2.figure.add_trace(go.Scatter(x=times, y=amp, name='Envelope', line=dict(color='#f472b6', width=2)), row=1, col=1)
+            S.hilbert_plot2.figure.add_trace(go.Scatter(x=times, y=-amp, showlegend=False, line=dict(color='#f472b6', width=2)), row=1, col=1)
+            S.hilbert_plot2.figure.add_trace(go.Scatter(x=times, y=phase, name='Phase', line=dict(color='#fda4af', width=1)), row=2, col=1)
+            S.hilbert_plot2.update()
+    except Exception as e:
+        print(f"Hilbert2 error: {e}")
+
+def update_brain2():
+    """Update brain topography 2 plot."""
+    if not S.brain_plot2 or not S.eeg_data2:
+        return
+    try:
+        # Calculate amplitudes for EEG 2
+        eeg2_chs = [ch for ch in S.selected_channels if ch in S.eeg_data2.channel_types]
+        if not eeg2_chs:
+            return
+        data, times, chs = get_channel_data(S.eeg_data2, eeg2_chs, S.view_start, S.view_duration)
+        data = process_data(data, S.eeg_data2.sfreq) * 1e6
+        
+        amps = {ch: np.sqrt(np.mean(data[i]**2)) for i, ch in enumerate(chs)}
+        vals = list(amps.values())
+        min_a, max_a = (min(vals), max(vals)) if vals else (0, 1)
+        rng = max_a - min_a if max_a > min_a else 1
+        
+        sel_x, sel_y, sel_c, sel_t, sel_l = [], [], [], [], []
+        
+        for ch, (x, y) in ELECTRODE_POSITIONS.items():
+            if ch in eeg2_chs:
+                sel_x.append(x); sel_y.append(y); sel_l.append(ch)
+                a = amps.get(ch, 0)
+                sel_c.append((a - min_a) / rng if rng > 0 else 0.5)
+                sel_t.append(f'{ch}<br>{a:.1f} µV')
+        
+        with S.brain_plot2:
+            S.brain_plot2.figure.data = S.brain_plot2.figure.data[:4]
+            if sel_x:
+                pink_scale = [[0, '#831843'], [0.25, '#be185d'], [0.5, '#f472b6'], [0.75, '#fda4af'], [1, '#ffe4e6']]
+                S.brain_plot2.figure.add_trace(go.Scatter(x=sel_x, y=sel_y, mode='markers+text',
+                    marker=dict(size=18, color=sel_c, colorscale=pink_scale, cmin=0, cmax=1,
+                               line=dict(width=2, color='#f472b6'), showscale=True,
+                               colorbar=dict(title=dict(text='µV', font=dict(size=9, color=THEME_TEXT_DIM)),
+                                           len=0.5, thickness=8, x=1.02, tickfont=dict(size=8, color=THEME_TEXT_DIM))),
+                    text=sel_l, textposition='top center', textfont=dict(size=8, color='#f472b6', family='JetBrains Mono'),
+                    hoverinfo='text', hovertext=sel_t, showlegend=False))
+            S.brain_plot2.update()
+    except Exception as e:
+        print(f"Brain2 error: {e}")
 
 # Channel management
 def refresh_channels():
@@ -521,19 +674,26 @@ def refresh_info():
         return
     S.info_container.clear()
     with S.info_container:
+        # EEG 1 info
+        ui.label('EEG 1:').style(f'color:{THEME_PRIMARY}; font-size: 0.7rem; font-weight: bold;')
         if S.eeg_data:
-            ui.label(S.eeg_data.filename).style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.85rem;')
-            with ui.row().classes('gap-1 items-center'):
-                ui.label('sfreq:').style(f'color:{THEME_TEXT_DIM}; font-family: JetBrains Mono; font-size: 0.75rem;')
-                ui.label(f'{S.eeg_data.sfreq:.0f} Hz').style(f'color:{THEME_SECONDARY}; font-family: JetBrains Mono; font-size: 0.75rem;')
-            with ui.row().classes('gap-1 items-center'):
-                ui.label('channels:').style(f'color:{THEME_TEXT_DIM}; font-family: JetBrains Mono; font-size: 0.75rem;')
-                ui.label(str(S.eeg_data.n_channels)).style(f'color:{THEME_SECONDARY}; font-family: JetBrains Mono; font-size: 0.75rem;')
-            with ui.row().classes('gap-1 items-center'):
-                ui.label('duration:').style(f'color:{THEME_TEXT_DIM}; font-family: JetBrains Mono; font-size: 0.75rem;')
-                ui.label(f'{S.eeg_data.duration_sec:.1f}s').style(f'color:{THEME_SECONDARY}; font-family: JetBrains Mono; font-size: 0.75rem;')
+            ui.label(S.eeg_data.filename).style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.75rem;')
+            ui.label(f'{S.eeg_data.sfreq:.0f}Hz | {S.eeg_data.n_channels}ch | {S.eeg_data.duration_sec:.1f}s').style(f'color:{THEME_TEXT_DIM}; font-family: JetBrains Mono; font-size: 0.65rem;')
         else:
-            ui.label('-- no file loaded --').style(f'color:{THEME_TEXT_DIM}; font-family: JetBrains Mono; font-size: 0.8rem;')
+            ui.label('-- not loaded --').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+        
+        ui.separator().classes('my-1')
+        
+        # EEG 2 info
+        ui.label('EEG 2:').style(f'color:#f472b6; font-size: 0.7rem; font-weight: bold;')
+        if S.eeg_data2:
+            ui.label(S.eeg_data2.filename).style(f'color:#f472b6; font-family: JetBrains Mono; font-size: 0.75rem;')
+            ui.label(f'{S.eeg_data2.sfreq:.0f}Hz | {S.eeg_data2.n_channels}ch | {S.eeg_data2.duration_sec:.1f}s').style(f'color:{THEME_TEXT_DIM}; font-family: JetBrains Mono; font-size: 0.65rem;')
+        else:
+            ui.label('-- not loaded --').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+        
+        if S.compare_mode:
+            ui.label('🔄 COMPARE MODE').style(f'color:{THEME_WARN}; font-size: 0.65rem; margin-top: 4px;')
 
 # Navigation
 def nav_start():
@@ -2910,24 +3070,54 @@ def main_content():
             with ui.card().classes('dark-card p-4 w-full'):
                 ui.label('// FILE_BROWSER').classes('terminal-header')
                 
-                async def load_file(fp):
-                    try:
-                        S.eeg_data = await asyncio.get_event_loop().run_in_executor(None, load_eeg_file, Path(fp))
-                        eeg_chs = [ch for ch, t in S.eeg_data.channel_types.items() if t == 'eeg']
-                        S.selected_channels = eeg_chs[:10]
-                        S.hilbert_channel = eeg_chs[0] if eeg_chs else ""
-                        S.view_start = 0
-                        S.epochs = []
-                        S.current_amplitudes = {}
-                        ui.notify(f'Loaded: {S.eeg_data.filename}', type='positive')
+                # EEG slot selector
+                with ui.row().classes('items-center gap-2 mb-2'):
+                    ui.label('Load to:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                    eeg_slot_select = ui.toggle(['EEG 1', 'EEG 2'], value='EEG 1').props('dense')
+                    
+                    def toggle_compare():
+                        S.compare_mode = not S.compare_mode
+                        update_all()
+                        ui.notify(f"Compare mode: {'ON' if S.compare_mode else 'OFF'}", type='info')
+                    
+                    compare_btn = ui.button('Compare', on_click=toggle_compare, icon='compare').props('dense flat size=sm')
+                    
+                    def clear_eeg2():
+                        S.eeg_data2 = None
+                        S.compare_mode = False
+                        update_all()
                         refresh_info()
-                        refresh_channels()
-                        refresh_hilbert_select()
+                        ui.notify('EEG 2 cleared', type='info')
+                    
+                    ui.button('Clear 2', on_click=clear_eeg2, icon='close').props('dense flat size=sm')
+                
+                async def load_file(fp, slot=None):
+                    try:
+                        target_slot = slot or eeg_slot_select.value
+                        loaded = await asyncio.get_event_loop().run_in_executor(None, load_eeg_file, Path(fp))
+                        
+                        if target_slot == 'EEG 2':
+                            S.eeg_data2 = loaded
+                            ui.notify(f'EEG 2: {loaded.filename}', type='positive')
+                            S.compare_mode = True
+                        else:
+                            S.eeg_data = loaded
+                            eeg_chs = [ch for ch, t in loaded.channel_types.items() if t == 'eeg']
+                            S.selected_channels = eeg_chs[:10]
+                            S.hilbert_channel = eeg_chs[0] if eeg_chs else ""
+                            S.view_start = 0
+                            S.epochs = []
+                            S.current_amplitudes = {}
+                            ui.notify(f'EEG 1: {loaded.filename}', type='positive')
+                            refresh_channels()
+                            refresh_hilbert_select()
+                        
+                        refresh_info()
                         update_all()
                     except Exception as e:
                         ui.notify(f'Error: {e}', type='negative')
                 
-                with ui.scroll_area().classes('w-full').style('height: 300px;'):
+                with ui.scroll_area().classes('w-full').style('height: 250px;'):
                     for lbl, files in [('raw/', scan_eeg_directory(EEG_RAW_DIR)), ('clean/', scan_eeg_directory(EEG_CLEAN_DIR))]:
                         if files:
                             ui.label(f'├─ {lbl}').style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mt-3 mb-2')
@@ -2981,48 +3171,71 @@ def main_content():
                         update_all()
                     ui.button('Apply', on_click=apply_filt, icon='check').props('dense')
             
-            # TOP ROW: EEG + BRAIN
-            with ui.row().classes('gap-4 w-full'):
-                with ui.card().classes('dark-card p-3').style('flex: 2;'):
+            # TOP ROW: EEG + BRAIN (with comparison support)
+            with ui.row().classes('gap-3 w-full'):
+                # EEG 1
+                with ui.card().classes('dark-card p-3 flex-1'):
                     with ui.row().classes('items-center justify-between mb-1'):
-                        ui.label('▌EEG_SIGNAL').style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.8rem; letter-spacing: 1px;')
+                        ui.label('▌EEG 1').style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.8rem; letter-spacing: 1px;')
                         with ui.row().classes('gap-1'):
                             ui.button('-', on_click=lambda: (setattr(S, 'scale_factor', max(0.2, S.scale_factor*0.7)), update_eeg())).props('dense flat size=xs')
                             ui.button('1x', on_click=lambda: (setattr(S, 'scale_factor', 1.0), update_eeg())).props('dense flat size=xs')
                             ui.button('+', on_click=lambda: (setattr(S, 'scale_factor', min(5, S.scale_factor*1.4)), update_eeg())).props('dense flat size=xs')
-                    
                     S.eeg_plot = ui.plotly(make_eeg_fig()).classes('w-full')
-                    
-                    with ui.row().classes('items-center justify-center gap-2 mt-2'):
-                        ui.button(icon='skip_previous', on_click=nav_start).props('round dense size=sm')
-                        ui.button(icon='fast_rewind', on_click=nav_back).props('round dense size=sm')
-                        ui.button(icon='play_arrow', on_click=toggle_play).props('round dense size=sm color=red')
-                        ui.button(icon='fast_forward', on_click=nav_fwd).props('round dense size=sm')
-                        ui.button(icon='skip_next', on_click=nav_end).props('round dense size=sm')
-                        ui.separator().props('vertical').classes('mx-2')
-                        ui.button('2s', on_click=lambda: set_win(2)).props('dense size=xs')
-                        ui.button('5s', on_click=lambda: set_win(5)).props('dense size=xs')
-                        ui.button('10s', on_click=lambda: set_win(10)).props('dense size=xs')
-                        ui.button('20s', on_click=lambda: set_win(20)).props('dense size=xs')
-                        ui.separator().props('vertical').classes('mx-2')
-                        S.time_label = ui.label('0:00.0 / 0:00.0').classes('text-sm font-mono opacity-70')
                 
-                with ui.card().classes('dark-card p-3').style('flex: 1; min-width: 320px;'):
-                    ui.label('▌TOPOGRAPHY').style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.8rem; letter-spacing: 1px;').classes('mb-1')
-                    S.brain_plot = ui.plotly(make_brain_fig()).classes('w-full')
+                # EEG 2 (comparison)
+                with ui.card().classes('dark-card p-3 flex-1').bind_visibility_from(S, 'compare_mode'):
+                    ui.label('▌EEG 2').style(f'color:#f472b6; font-family: JetBrains Mono; font-size: 0.8rem; letter-spacing: 1px;').classes('mb-1')
+                    S.eeg_plot2 = ui.plotly(make_eeg_fig(use_eeg2=True)).classes('w-full')
             
-            # BOTTOM ROW: FFT + HILBERT
-            with ui.row().classes('gap-4 w-full'):
+            # Navigation (shared)
+            with ui.card().classes('dark-card p-2'):
+                with ui.row().classes('items-center justify-center gap-2'):
+                    ui.button(icon='skip_previous', on_click=nav_start).props('round dense size=sm')
+                    ui.button(icon='fast_rewind', on_click=nav_back).props('round dense size=sm')
+                    ui.button(icon='play_arrow', on_click=toggle_play).props('round dense size=sm color=red')
+                    ui.button(icon='fast_forward', on_click=nav_fwd).props('round dense size=sm')
+                    ui.button(icon='skip_next', on_click=nav_end).props('round dense size=sm')
+                    ui.separator().props('vertical').classes('mx-2')
+                    ui.button('2s', on_click=lambda: set_win(2)).props('dense size=xs')
+                    ui.button('5s', on_click=lambda: set_win(5)).props('dense size=xs')
+                    ui.button('10s', on_click=lambda: set_win(10)).props('dense size=xs')
+                    ui.button('20s', on_click=lambda: set_win(20)).props('dense size=xs')
+                    ui.separator().props('vertical').classes('mx-2')
+                    S.time_label = ui.label('0:00.0 / 0:00.0').classes('text-sm font-mono opacity-70')
+            
+            # TOPOGRAPHY ROW
+            with ui.row().classes('gap-3 w-full'):
                 with ui.card().classes('dark-card p-3 flex-1'):
-                    ui.label('▌FFT_SPECTRUM').style(f'color:{THEME_SECONDARY}; font-family: JetBrains Mono; font-size: 0.8rem; letter-spacing: 1px;').classes('mb-1')
+                    ui.label('▌TOPO 1').style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-1')
+                    S.brain_plot = ui.plotly(make_brain_fig()).classes('w-full')
+                
+                with ui.card().classes('dark-card p-3 flex-1').bind_visibility_from(S, 'compare_mode'):
+                    ui.label('▌TOPO 2').style(f'color:#f472b6; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-1')
+                    S.brain_plot2 = ui.plotly(make_brain_fig(use_eeg2=True)).classes('w-full')
+            
+            # FFT ROW
+            with ui.row().classes('gap-3 w-full'):
+                with ui.card().classes('dark-card p-3 flex-1'):
+                    ui.label('▌FFT 1').style(f'color:{THEME_SECONDARY}; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-1')
                     S.fft_plot = ui.plotly(make_fft_fig()).classes('w-full')
                 
+                with ui.card().classes('dark-card p-3 flex-1').bind_visibility_from(S, 'compare_mode'):
+                    ui.label('▌FFT 2').style(f'color:#f472b6; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-1')
+                    S.fft_plot2 = ui.plotly(make_fft_fig(use_eeg2=True)).classes('w-full')
+            
+            # HILBERT ROW
+            with ui.row().classes('gap-3 w-full'):
                 with ui.card().classes('dark-card p-3 flex-1'):
                     with ui.row().classes('items-center gap-2 mb-1'):
-                        ui.label('▌HILBERT').style(f'color:{THEME_WARN}; font-family: JetBrains Mono; font-size: 0.8rem; letter-spacing: 1px;')
+                        ui.label('▌HILBERT 1').style(f'color:{THEME_WARN}; font-family: JetBrains Mono; font-size: 0.8rem;')
                         S.hilbert_select_container = ui.row().classes('items-center gap-1')
                         refresh_hilbert_select()
                     S.hilbert_plot = ui.plotly(make_hilbert_fig()).classes('w-full')
+                
+                with ui.card().classes('dark-card p-3 flex-1').bind_visibility_from(S, 'compare_mode'):
+                    ui.label('▌HILBERT 2').style(f'color:#f472b6; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-1')
+                    S.hilbert_plot2 = ui.plotly(make_hilbert_fig(use_eeg2=True)).classes('w-full')
             
             # EPOCHS
             with ui.card().classes('dark-card p-3'):
