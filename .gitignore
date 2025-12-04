@@ -134,3 +134,4 @@ eeg_viewer/.nicegui/
 # Python cache
 **/__pycache__/
 *.pyc
+eeg_viewer/cache/
