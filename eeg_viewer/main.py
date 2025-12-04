@@ -2350,64 +2350,100 @@ def model_page():
             with ui.card().classes('dark-card p-4 w-full'):
                 ui.label('// MODEL CONFIG').classes('terminal-header')
                 
-                with ui.column().classes('gap-2 mt-2'):
+                with ui.column().classes('gap-1 mt-2'):
                     # Model type selector
                     with ui.row().classes('items-center gap-2'):
-                        ui.label('Type:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.75rem; min-width: 80px;')
+                        ui.label('Type:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem; min-width: 70px;')
                         model_type_select = ui.select(
                             ['VAE (Graph)', 'VAE (Image)', 'AE (Graph)'],
                             value='VAE (Graph)'
                         ).props('dense dark').classes('flex-1')
                     
-                    ui.separator().classes('my-2')
+                    ui.separator().classes('my-1')
                     
                     # Architecture params
-                    ui.label('Architecture').style(f'color:{THEME_SECONDARY}; font-size: 0.7rem;')
+                    ui.label('Architecture').style(f'color:{THEME_SECONDARY}; font-size: 0.65rem;')
                     
                     with ui.row().classes('items-center gap-2'):
-                        ui.label('Latent dim:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem; min-width: 80px;')
-                        latent_dim = ui.number(value=64, min=8, max=512, step=8).props('dense').classes('w-20')
+                        ui.label('Latent:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem; min-width: 70px;')
+                        latent_dim = ui.number(value=64, min=8, max=512, step=8).props('dense').classes('w-16')
+                        ui.label('Hidden:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
+                        hidden_dim = ui.number(value=64, min=16, max=256, step=16).props('dense').classes('w-16')
                     
                     with ui.row().classes('items-center gap-2'):
-                        ui.label('Hidden dim:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem; min-width: 80px;')
-                        hidden_dim = ui.number(value=64, min=16, max=256, step=16).props('dense').classes('w-20')
+                        ui.label('GAT layers:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem; min-width: 70px;')
+                        gat_layers = ui.number(value=3, min=1, max=6).props('dense').classes('w-16')
+                        ui.label('Heads:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
+                        attention_heads = ui.number(value=4, min=1, max=8).props('dense').classes('w-16')
                     
                     with ui.row().classes('items-center gap-2'):
-                        ui.label('GAT layers:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem; min-width: 80px;')
-                        gat_layers = ui.number(value=3, min=1, max=6).props('dense').classes('w-20')
+                        ui.label('Dropout:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem; min-width: 70px;')
+                        dropout = ui.number(value=0.2, min=0.0, max=0.5, step=0.05).props('dense').classes('w-16')
+                        ui.label('Attn drop:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
+                        attn_dropout = ui.number(value=0.1, min=0.0, max=0.3, step=0.05).props('dense').classes('w-16')
                     
-                    ui.separator().classes('my-2')
+                    ui.separator().classes('my-1')
                     
                     # Training params
-                    ui.label('Training').style(f'color:{THEME_SECONDARY}; font-size: 0.7rem;')
+                    ui.label('Training').style(f'color:{THEME_SECONDARY}; font-size: 0.65rem;')
                     
                     with ui.row().classes('items-center gap-2'):
-                        ui.label('Epochs:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem; min-width: 80px;')
-                        num_epochs = ui.number(value=100, min=10, max=500, step=10).props('dense').classes('w-20')
+                        ui.label('Epochs:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem; min-width: 70px;')
+                        num_epochs = ui.number(value=100, min=10, max=500, step=10).props('dense').classes('w-16')
+                        ui.label('Batch:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
+                        batch_size = ui.number(value=256, min=16, max=1024, step=16).props('dense').classes('w-16')
                     
                     with ui.row().classes('items-center gap-2'):
-                        ui.label('Batch size:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem; min-width: 80px;')
-                        batch_size = ui.number(value=256, min=16, max=1024, step=16).props('dense').classes('w-20')
-                    
-                    with ui.row().classes('items-center gap-2'):
-                        ui.label('Learn rate:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem; min-width: 80px;')
+                        ui.label('Learn rate:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem; min-width: 70px;')
                         learning_rate = ui.select(
                             ['1e-2', '5e-3', '1e-3', '5e-4', '1e-4'],
                             value='1e-3'
                         ).props('dense dark').classes('w-20')
+                        ui.label('Decay:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
+                        weight_decay = ui.select(
+                            ['0', '1e-5', '1e-4', '1e-3'],
+                            value='1e-5'
+                        ).props('dense dark').classes('w-20')
                     
-                    ui.separator().classes('my-2')
+                    with ui.row().classes('items-center gap-2'):
+                        ui.label('Optimizer:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem; min-width: 70px;')
+                        optimizer_select = ui.select(
+                            ['adamw', 'adam', 'sgd'],
+                            value='adamw'
+                        ).props('dense dark').classes('w-20')
+                        ui.label('Scheduler:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
+                        scheduler_select = ui.select(
+                            ['cosine', 'reduce_on_plateau', 'step', 'none'],
+                            value='cosine'
+                        ).props('dense dark').classes('w-24')
+                    
+                    ui.separator().classes('my-1')
+                    
+                    # Early stopping & regularization
+                    ui.label('Regularization').style(f'color:{THEME_SECONDARY}; font-size: 0.65rem;')
+                    
+                    with ui.row().classes('items-center gap-2'):
+                        ui.label('Patience:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem; min-width: 70px;')
+                        patience = ui.number(value=25, min=5, max=100, step=5).props('dense').classes('w-16')
+                        ui.label('Grad clip:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
+                        grad_clip = ui.number(value=0.5, min=0.0, max=5.0, step=0.1).props('dense').classes('w-16')
+                    
+                    ui.separator().classes('my-1')
                     
                     # Loss params
-                    ui.label('Loss').style(f'color:{THEME_SECONDARY}; font-size: 0.7rem;')
+                    ui.label('Loss').style(f'color:{THEME_SECONDARY}; font-size: 0.65rem;')
                     
                     with ui.row().classes('items-center gap-2'):
-                        ui.label('KL weight:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem; min-width: 80px;')
-                        kl_weight = ui.number(value=0.01, min=0.0, max=1.0, step=0.01).props('dense').classes('w-20')
-                    
-                    with ui.row().classes('items-center gap-2'):
-                        ui.label('β annealing:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem; min-width: 80px;')
+                        ui.label('KL weight:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem; min-width: 70px;')
+                        kl_weight = ui.number(value=0.01, min=0.0, max=1.0, step=0.01).props('dense').classes('w-16')
+                        ui.label('β anneal:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
                         beta_annealing = ui.switch(value=True).props('dense')
+                    
+                    with ui.row().classes('items-center gap-2'):
+                        ui.label('Node wt:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem; min-width: 70px;')
+                        node_weight = ui.number(value=0.3, min=0.0, max=1.0, step=0.1).props('dense').classes('w-16')
+                        ui.label('Edge wt:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
+                        edge_weight = ui.number(value=1.0, min=0.0, max=2.0, step=0.1).props('dense').classes('w-16')
             
             # TRAINING CONTROLS
             with ui.card().classes('dark-card p-4 w-full'):
@@ -2429,15 +2465,30 @@ def model_page():
                             ui.notify('Order files not suitable for VAE. Use phases-*.pkl', type='error')
                             return
                         
-                        # Update config with UI values
+                        # Update config with UI values - Architecture
                         MS.config['model']['latent']['dim'] = int(latent_dim.value)
                         MS.config['model']['encoder']['hidden_dim'] = int(hidden_dim.value)
                         MS.config['model']['encoder']['num_gat_layers'] = int(gat_layers.value)
+                        MS.config['model']['encoder']['num_attention_heads'] = int(attention_heads.value)
+                        MS.config['model']['encoder']['dropout'] = float(dropout.value)
+                        MS.config['model']['encoder']['attention_dropout'] = float(attn_dropout.value)
+                        
+                        # Training params
                         MS.config['training']['num_epochs'] = int(num_epochs.value)
                         MS.config['training']['batch_size'] = int(batch_size.value)
                         MS.config['training']['learning_rate'] = float(learning_rate.value)
+                        MS.config['training']['weight_decay'] = float(weight_decay.value) if weight_decay.value != '0' else 0.0
+                        MS.config['training']['optimizer'] = optimizer_select.value
+                        MS.config['training']['scheduler']['type'] = scheduler_select.value if scheduler_select.value != 'none' else None
+                        MS.config['training']['early_stopping']['patience'] = int(patience.value)
+                        MS.config['training']['gradient_clipping']['max_norm'] = float(grad_clip.value)
+                        MS.config['training']['gradient_clipping']['enabled'] = grad_clip.value > 0
+                        
+                        # Loss params
                         MS.config['loss']['kl']['weight'] = float(kl_weight.value)
                         MS.config['loss']['kl']['annealing']['enabled'] = beta_annealing.value
+                        MS.config['loss']['reconstruction']['node_weight'] = float(node_weight.value)
+                        MS.config['loss']['reconstruction']['edge_weight'] = float(edge_weight.value)
                         
                         # Set data source (EEG vs STC)
                         use_stc = 'STC' in data_source_select.value
@@ -2487,6 +2538,12 @@ def model_page():
                         
                         MS.training = True
                         MS.history = {'train_loss': [], 'val_loss': [], 'recon_loss': [], 'kl_loss': [], 'epoch': []}
+                        
+                        # Clear previous logs and reset plot
+                        if MS.log_container:
+                            MS.log_container.clear()
+                        update_loss_plot()  # Reset the plot with empty data
+                        
                         training_status.text = 'Training...'
                         training_status.style(f'color:{THEME_PRIMARY}; font-size: 0.75rem;')
                         model_log(f"Starting training with config: {config_path}", 'info')
