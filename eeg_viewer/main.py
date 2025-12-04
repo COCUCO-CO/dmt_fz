@@ -2161,6 +2161,16 @@ class AnalysisState:
         self.current_recon = None
         self.current_z = None
         
+        # Fixed axis ranges (computed from dataset)
+        self.axis_ranges = {
+            'node_features': {'min': -5, 'max': 5},
+            'latent': {'x_min': -5, 'x_max': 5, 'y_min': -5, 'y_max': 5},
+            'attention': {'min': 0, 'max': 1},
+            'activations': {'min': -500, 'max': 500},
+            'diff': {'min': 0, 'max': 1}
+        }
+        self.ranges_computed = False
+        
         # UI references
         self.log_container = None
         self.arch_diagram = None
@@ -3360,6 +3370,115 @@ def compute_latent_pca():
     return X_pca, np.array(AS.latent_labels)
 
 
+def compute_dataset_ranges():
+    """
+    Analyze dataset and model to compute fixed axis ranges.
+    Should be called after loading both model and dataset.
+    """
+    import torch
+    from torch_geometric.data import Batch
+    import numpy as np
+    
+    if not AS.dataset or not AS.model:
+        return
+    
+    analysis_log("Computing axis ranges from dataset sample...", 'info')
+    
+    # Sample a subset of the dataset for analysis
+    n_samples = min(100, len(AS.dataset))
+    indices = np.linspace(0, len(AS.dataset)-1, n_samples, dtype=int)
+    
+    all_features = []
+    all_latents = []
+    all_activations = {f'encoder.conv_{i}': [] for i in range(3)}
+    
+    AS.model.eval()
+    with torch.no_grad():
+        for idx in indices:
+            try:
+                sample = AS.dataset[idx]
+                batch = Batch.from_data_list([sample]).to(AS.device)
+                
+                # Get node features
+                all_features.append(batch.x.cpu().numpy())
+                
+                # Forward pass
+                output = AS.model(batch)
+                
+                # Get latent
+                if isinstance(output, dict) and 'mu' in output:
+                    all_latents.append(output['mu'].cpu().numpy())
+                
+                # Get activations
+                for name, act in AS.activations.items():
+                    if name in all_activations:
+                        all_activations[name].append(act.numpy().flatten())
+            except Exception:
+                continue
+    
+    # Compute ranges for node features
+    if all_features:
+        all_feat = np.concatenate(all_features, axis=0)
+        feat_min, feat_max = np.percentile(all_feat, [2, 98])  # Use percentiles to ignore outliers
+        margin = (feat_max - feat_min) * 0.1
+        AS.axis_ranges['node_features'] = {
+            'min': float(feat_min - margin),
+            'max': float(feat_max + margin)
+        }
+        analysis_log(f"Node features range: [{feat_min:.2f}, {feat_max:.2f}]", 'info')
+    
+    # Compute ranges for latent space (will be updated as PCA accumulates)
+    if all_latents:
+        all_lat = np.concatenate(all_latents, axis=0)
+        from sklearn.decomposition import PCA
+        if all_lat.shape[0] >= 10:
+            pca = PCA(n_components=2)
+            lat_pca = pca.fit_transform(all_lat)
+            x_min, x_max = np.percentile(lat_pca[:, 0], [2, 98])
+            y_min, y_max = np.percentile(lat_pca[:, 1], [2, 98])
+            margin_x = (x_max - x_min) * 0.15
+            margin_y = (y_max - y_min) * 0.15
+            AS.axis_ranges['latent'] = {
+                'x_min': float(x_min - margin_x),
+                'x_max': float(x_max + margin_x),
+                'y_min': float(y_min - margin_y),
+                'y_max': float(y_max + margin_y)
+            }
+            analysis_log(f"Latent PCA range: x[{x_min:.1f}, {x_max:.1f}], y[{y_min:.1f}, {y_max:.1f}]", 'info')
+    
+    # Compute ranges for activations
+    for name, acts in all_activations.items():
+        if acts:
+            all_act = np.concatenate(acts)
+            act_min, act_max = np.percentile(all_act, [2, 98])
+            margin = (act_max - act_min) * 0.1
+            if 'activations_per_layer' not in AS.axis_ranges:
+                AS.axis_ranges['activations_per_layer'] = {}
+            AS.axis_ranges['activations_per_layer'][name] = {
+                'min': float(act_min - margin),
+                'max': float(act_max + margin)
+            }
+    
+    # Global activation range
+    if all_activations:
+        all_acts = []
+        for acts in all_activations.values():
+            if acts:
+                all_acts.extend(acts)
+        if all_acts:
+            all_act = np.concatenate(all_acts)
+            act_min, act_max = np.percentile(all_act, [2, 98])
+            margin = (act_max - act_min) * 0.1
+            AS.axis_ranges['activations'] = {
+                'min': float(act_min - margin),
+                'max': float(act_max + margin)
+            }
+            analysis_log(f"Activations range: [{act_min:.1f}, {act_max:.1f}]", 'info')
+    
+    AS.ranges_computed = True
+    analysis_log("✓ Axis ranges computed", 'success')
+
+
 @ui.page('/analysis')
 def analysis_page():
     """Model Analysis Page - Visualize trained model internals."""
@@ -3407,6 +3526,10 @@ def analysis_page():
                             ui.label(f"  Val Loss: {info['val_loss']:.4f}" if isinstance(info['val_loss'], float) else f"  Val Loss: {info['val_loss']}").style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
                             ui.label(f"  Device: {AS.device}").style(f'color:{THEME_SECONDARY}; font-size: 0.7rem;')
                         analysis_log(f"Model loaded: {path.name}", 'success')
+                        
+                        # Compute axis ranges if dataset is loaded
+                        if AS.dataset is not None:
+                            compute_dataset_ranges()
                     except Exception as e:
                         ui.notify(f'Error: {e}', type='negative')
                         analysis_log(f"Error loading model: {e}", 'error')
@@ -3506,6 +3629,10 @@ def analysis_page():
                             if progress_slider:
                                 progress_slider.set_value(0)
                                 progress_slider._props['max'] = max(1, AS.total_samples - 1)
+                            
+                            # Compute axis ranges if model is loaded
+                            if AS.model is not None:
+                                compute_dataset_ranges()
                         else:
                             ui.notify(f'Dataset not found at {cache_path}', type='warning')
                             analysis_log(f"Dataset not found: {cache_path}", 'warning')
@@ -3631,6 +3758,9 @@ def analysis_page():
                                     feat_means = act.mean(dim=0).numpy() if hasattr(act, 'mean') else act.mean(axis=0)
                                     fig.add_trace(go.Bar(y=feat_means[:32], marker_color=THEME_PRIMARY, showlegend=False), row=1, col=i+1)
                         
+                        # Use fixed axis ranges
+                        y_range = [AS.axis_ranges['activations']['min'], AS.axis_ranges['activations']['max']]
+                        
                         fig.update_layout(
                             template='plotly_dark',
                             paper_bgcolor='rgba(8,8,8,1)',
@@ -3639,6 +3769,9 @@ def analysis_page():
                             margin=dict(l=30, r=10, t=30, b=20),
                             font=dict(family='JetBrains Mono', size=9, color=THEME_TEXT)
                         )
+                        # Fix y-axis for all subplots
+                        for i in range(n_layers):
+                            fig.update_yaxes(range=y_range, row=1, col=i+1)
                         return fig
                     
                     encoder_plot = ui.plotly(make_encoder_fig()).classes('w-full').style('height: 200px;')
@@ -3674,14 +3807,19 @@ def analysis_page():
                                     name='Current'
                                 ))
                         
+                        # Use fixed axis ranges
+                        lat_range = AS.axis_ranges['latent']
+                        
                         fig.update_layout(
                             template='plotly_dark',
                             paper_bgcolor='rgba(8,8,8,1)',
                             plot_bgcolor='rgba(8,8,8,1)',
                             height=200,
                             margin=dict(l=30, r=10, t=10, b=30),
-                            xaxis=dict(title='PC1', gridcolor='rgba(0,255,136,0.1)'),
-                            yaxis=dict(title='PC2', gridcolor='rgba(0,255,136,0.1)'),
+                            xaxis=dict(title='PC1', gridcolor='rgba(0,255,136,0.1)', 
+                                      range=[lat_range['x_min'], lat_range['x_max']]),
+                            yaxis=dict(title='PC2', gridcolor='rgba(0,255,136,0.1)',
+                                      range=[lat_range['y_min'], lat_range['y_max']]),
                             legend=dict(orientation='h', y=-0.2, font=dict(size=8)),
                             font=dict(family='JetBrains Mono', size=9, color=THEME_TEXT)
                         )
@@ -3700,18 +3838,23 @@ def analysis_page():
                     """Create attention heatmap visualization."""
                     fig = go.Figure()
                     
+                    # Get fixed number of nodes from dataset
+                    n_nodes = AS.model_params.get('num_nodes', 24) if AS.model_params else 24
+                    
                     # Try to get attention from current sample
                     if AS.current_sample is not None and hasattr(AS.current_sample, 'x'):
-                        n_nodes = min(24, AS.current_sample.x.shape[0])
+                        actual_nodes = min(n_nodes, AS.current_sample.x.shape[0])
                         # Create synthetic attention matrix for visualization
                         # In reality, this would come from the GAT layer
-                        attn_matrix = np.random.rand(n_nodes, n_nodes) * 0.5
+                        attn_matrix = np.random.rand(actual_nodes, actual_nodes) * 0.5
                         np.fill_diagonal(attn_matrix, 1.0)
                         
                         fig.add_trace(go.Heatmap(
                             z=attn_matrix,
                             colorscale='Viridis',
                             showscale=True,
+                            zmin=0,
+                            zmax=1,
                             colorbar=dict(title='α', len=0.8)
                         ))
                     
@@ -3721,8 +3864,8 @@ def analysis_page():
                         plot_bgcolor='rgba(8,8,8,1)',
                         height=180,
                         margin=dict(l=30, r=50, t=10, b=30),
-                        xaxis=dict(title='Target Node', gridcolor='rgba(255,204,0,0.1)'),
-                        yaxis=dict(title='Source Node', gridcolor='rgba(255,204,0,0.1)'),
+                        xaxis=dict(title='Target Node', gridcolor='rgba(255,204,0,0.1)', range=[-0.5, n_nodes-0.5]),
+                        yaxis=dict(title='Source Node', gridcolor='rgba(255,204,0,0.1)', range=[-0.5, n_nodes-0.5]),
                         font=dict(family='JetBrains Mono', size=9, color=THEME_TEXT)
                     )
                     return fig
@@ -3739,9 +3882,16 @@ def analysis_page():
                     
                     def make_original_fig():
                         fig = go.Figure()
+                        feat_range = AS.axis_ranges['node_features']
                         if AS.current_sample is not None and hasattr(AS.current_sample, 'x'):
                             x = AS.current_sample.x.cpu().numpy()
-                            fig.add_trace(go.Heatmap(z=x[:24, :10].T, colorscale='Viridis', showscale=False))
+                            fig.add_trace(go.Heatmap(
+                                z=x[:24, :].T, 
+                                colorscale='Viridis', 
+                                showscale=False,
+                                zmin=feat_range['min'],
+                                zmax=feat_range['max']
+                            ))
                         fig.update_layout(
                             template='plotly_dark',
                             paper_bgcolor='rgba(8,8,8,1)',
@@ -3763,9 +3913,16 @@ def analysis_page():
                     
                     def make_recon_fig():
                         fig = go.Figure()
+                        feat_range = AS.axis_ranges['node_features']
                         if AS.current_recon is not None and 'x_recon' in AS.current_recon:
                             x_recon = AS.current_recon['x_recon'].cpu().numpy()
-                            fig.add_trace(go.Heatmap(z=x_recon[:24, :10].T, colorscale='Viridis', showscale=False))
+                            fig.add_trace(go.Heatmap(
+                                z=x_recon[:24, :].T, 
+                                colorscale='Viridis', 
+                                showscale=False,
+                                zmin=feat_range['min'],
+                                zmax=feat_range['max']
+                            ))
                         fig.update_layout(
                             template='plotly_dark',
                             paper_bgcolor='rgba(8,8,8,1)',
@@ -3787,13 +3944,21 @@ def analysis_page():
                     
                     def make_diff_fig():
                         fig = go.Figure()
+                        feat_range = AS.axis_ranges['node_features']
+                        diff_max = (feat_range['max'] - feat_range['min']) * 0.5  # Max expected diff
                         if AS.current_sample is not None and AS.current_recon is not None:
                             if hasattr(AS.current_sample, 'x') and 'x_recon' in AS.current_recon:
                                 x = AS.current_sample.x.cpu().numpy()
                                 x_recon = AS.current_recon['x_recon'].cpu().numpy()
                                 diff = np.abs(x - x_recon)
-                                fig.add_trace(go.Heatmap(z=diff[:24, :10].T, colorscale='Reds', showscale=True,
-                                                        colorbar=dict(title='|Δ|', len=0.8)))
+                                fig.add_trace(go.Heatmap(
+                                    z=diff[:24, :].T, 
+                                    colorscale='Reds', 
+                                    showscale=True,
+                                    zmin=0,
+                                    zmax=diff_max,
+                                    colorbar=dict(title='|Δ|', len=0.8)
+                                ))
                         fig.update_layout(
                             template='plotly_dark',
                             paper_bgcolor='rgba(8,8,8,1)',
