@@ -138,12 +138,47 @@ Examples:
     return parser.parse_args()
 
 
+def _convert_svg_to_png_rsvg(args):
+    """Convert SVG to PNG using rsvg-convert (fastest option)."""
+    import subprocess
+    svg_path, png_path = args
+    result = subprocess.run(
+        ['rsvg-convert', '-o', str(png_path), str(svg_path)],
+        capture_output=True, text=True
+    )
+    return result.returncode == 0
+
+
+def _convert_svg_to_png_cairosvg(args):
+    """Convert SVG to PNG using cairosvg (module-level function for multiprocessing)."""
+    import cairosvg
+    svg_path, png_path = args
+    try:
+        cairosvg.svg2png(url=str(svg_path), write_to=str(png_path), scale=1.0)
+        return True
+    except Exception:
+        return False
+
+
+def _convert_svg_to_png_inkscape(args):
+    """Convert SVG to PNG using inkscape (module-level function for multiprocessing)."""
+    import subprocess
+    svg_path, png_path = args
+    result = subprocess.run(
+        ['inkscape', str(svg_path), '-o', str(png_path)],
+        capture_output=True, text=True
+    )
+    return result.returncode == 0
+
+
 def create_video_from_frames(source_folder="advanced", fps=30, output_file=None, 
                               subject="S01", condition="DMT", band="Alpha"):
-    """Create a video from existing PNG frames in a folder using ffmpeg."""
+    """Create a video from existing PNG or SVG frames in a folder using ffmpeg."""
     import subprocess
     from pathlib import Path
     import sys
+    import tempfile
+    import shutil
     
     sys.path.insert(0, str(Path(__file__).parent.parent / "pipeline"))
     from paths import VISUALIZATIONS_DIR, ensure_dir
@@ -174,14 +209,100 @@ def create_video_from_frames(source_folder="advanced", fps=30, output_file=None,
         except ValueError:
             return 0
     
+    # Try PNG first, then SVG
     png_files = sorted(frames_dir.glob("*.png"), key=get_sort_key)
+    svg_files = sorted(frames_dir.glob("*.svg"), key=get_sort_key)
     
-    if not png_files:
-        print(f"[ERROR] No PNG files found in {frames_dir}")
+    temp_dir = None
+    use_temp = False
+    
+    if png_files:
+        frame_files = png_files
+        working_dir = frames_dir
+        print(f"[FRAMES→VIDEO] Found {len(frame_files)} PNG frames")
+    elif svg_files:
+        print(f"[FRAMES→VIDEO] Found {len(svg_files)} SVG frames")
+        print(f"[FRAMES→VIDEO] Converting SVG to PNG in parallel...")
+        
+        # Create temp directory for converted PNGs
+        temp_dir = Path(tempfile.mkdtemp())
+        use_temp = True
+        working_dir = temp_dir
+        
+        # Try converters in order of speed: rsvg-convert > cairosvg > inkscape
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        from multiprocessing import cpu_count
+        
+        tasks = [(svg_file, temp_dir / f"{svg_file.stem}.png") for svg_file in svg_files]
+        n_workers = min(cpu_count(), 32)  # More workers for I/O bound tasks
+        
+        # Check which converter is available
+        converter_func = None
+        converter_name = None
+        
+        # 1. Try rsvg-convert (fastest)
+        try:
+            test_result = subprocess.run(['rsvg-convert', '--version'], capture_output=True)
+            if test_result.returncode == 0:
+                converter_func = _convert_svg_to_png_rsvg
+                converter_name = "rsvg-convert"
+        except FileNotFoundError:
+            pass
+        
+        # 2. Try cairosvg
+        if converter_func is None:
+            try:
+                import cairosvg  # noqa: F401
+                converter_func = _convert_svg_to_png_cairosvg
+                converter_name = "cairosvg"
+            except ImportError:
+                pass
+        
+        # 3. Fallback to inkscape
+        if converter_func is None:
+            try:
+                test_result = subprocess.run(['inkscape', '--version'], capture_output=True)
+                if test_result.returncode == 0:
+                    converter_func = _convert_svg_to_png_inkscape
+                    converter_name = "inkscape"
+                    n_workers = min(cpu_count(), 8)  # Less workers for heavier inkscape
+            except FileNotFoundError:
+                pass
+        
+        if converter_func is None:
+            print(f"[ERROR] No SVG converter found. Install one of: librsvg2-bin, cairosvg, inkscape")
+            if temp_dir:
+                shutil.rmtree(temp_dir)
+            return None
+        
+        print(f"[FRAMES→VIDEO] Using {n_workers} workers ({converter_name})...")
+        
+        completed = 0
+        failed = 0
+        with ThreadPoolExecutor(max_workers=n_workers) as executor:
+            futures = {executor.submit(converter_func, task): task for task in tasks}
+            for future in as_completed(futures):
+                if future.result():
+                    completed += 1
+                else:
+                    failed += 1
+                # Progress every 100 frames
+                if (completed + failed) % 100 == 0:
+                    print(f"[FRAMES→VIDEO] Progress: {completed + failed}/{len(tasks)} ({completed} ok, {failed} failed)")
+        
+        if failed > 0:
+            print(f"[ERROR] {failed} conversions failed")
+            if temp_dir:
+                shutil.rmtree(temp_dir)
+            return None
+        
+        print(f"[FRAMES→VIDEO] ✓ Converted {len(svg_files)} frames")
+        frame_files = sorted(temp_dir.glob("*.png"), key=get_sort_key)
+    else:
+        print(f"[ERROR] No PNG or SVG files found in {frames_dir}")
         return None
     
-    print(f"[FRAMES→VIDEO] Found {len(png_files)} frames in {frames_dir}")
-    print(f"[FRAMES→VIDEO] FPS: {fps}, Duration: ~{len(png_files)/fps:.1f}s")
+    print(f"[FRAMES→VIDEO] FPS: {fps}, Duration: ~{len(frame_files)/fps:.1f}s")
     
     if output_file is None:
         output_file = f"{subject}_{condition}_{band}_{source_folder}_{fps}fps.mp4"
@@ -189,10 +310,10 @@ def create_video_from_frames(source_folder="advanced", fps=30, output_file=None,
     output_path = output_dir / output_file
     
     # Create file list for ffmpeg
-    list_file = frames_dir / "frames_list.txt"
+    list_file = working_dir / "frames_list.txt"
     with open(list_file, 'w') as f:
-        for png in png_files:
-            f.write(f"file '{png.name}'\n")
+        for frame in frame_files:
+            f.write(f"file '{frame.name}'\n")
             f.write(f"duration {1/fps}\n")
     
     cmd = [
@@ -205,6 +326,11 @@ def create_video_from_frames(source_folder="advanced", fps=30, output_file=None,
     print(f"[FRAMES→VIDEO] Running ffmpeg...")
     result = subprocess.run(cmd, capture_output=True, text=True)
     list_file.unlink()
+    
+    # Clean up temp directory if used
+    if use_temp and temp_dir and temp_dir.exists():
+        shutil.rmtree(temp_dir)
+        print(f"[FRAMES→VIDEO] Cleaned up temporary files")
     
     if result.returncode == 0:
         file_size = output_path.stat().st_size / 1e6

@@ -198,37 +198,51 @@ def get_node_colors_by_sync(syncro_mat, base_colors, sync_values):
     return colors
 
 
-def draw_gradient_edges(ax, pos, syncro_mat, threshold_pct=80, max_edges=150):
-    """Draw edges with gradient colors based on connection strength."""
+def draw_gradient_edges(ax, pos, syncro_mat, threshold_pct=80, max_edges=150, show_all=True):
+    """Draw edges with gradient colors based on connection strength.
+    
+    Parameters:
+    -----------
+    show_all : bool
+        If True, show ALL connections with weak ones attenuated (transparent).
+        If False, use threshold to filter out weak connections.
+    """
     pos = np.asarray(pos)
     n_nodes = min(syncro_mat.shape[0], len(pos))
     syncro_mat = syncro_mat[:n_nodes, :n_nodes]
-    threshold = np.percentile(syncro_mat, threshold_pct)
     
     edges, weights = [], []
     for i in range(n_nodes):
         for j in range(i + 1, n_nodes):
-            if syncro_mat[i, j] > threshold:
+            if syncro_mat[i, j] > 0:  # Include all non-zero connections
                 edges.append((i, j))
                 weights.append(syncro_mat[i, j])
     if not edges:
         return
     
-    sorted_idx = np.argsort(weights)[::-1][:max_edges]
-    edges = [edges[i] for i in sorted_idx]
-    weights = np.array([weights[i] for i in sorted_idx])
+    weights = np.array(weights)
     weights_norm = (weights - weights.min()) / (weights.max() - weights.min() + 1e-8)
     
-    segments, colors, linewidths = [], [], []
+    # Sort by weight (weakest first so strongest are drawn on top)
+    sorted_idx = np.argsort(weights)
+    edges = [edges[i] for i in sorted_idx]
+    weights_norm = weights_norm[sorted_idx]
+    
+    segments, colors, linewidths, alphas = [], [], [], []
     cmap = plt.cm.plasma
     for (i, j), w in zip(edges, weights_norm):
         segments.append([pos[i], pos[j]])
         colors.append(cmap(w))
-        linewidths.append(0.5 + 3 * w)
+        # Linewidth: thin for weak, thick for strong
+        linewidths.append(0.3 + 2.5 * w)
+        # Alpha: very transparent for weak (0.01), opaque for strong (0.8)
+        alphas.append(0.01 + 0.79 * (w ** 3))  # Cubed to attenuate weak connections more aggressively
     
     if segments:
-        lc = LineCollection(segments, colors=colors, linewidths=linewidths, alpha=0.6, zorder=1)
-        ax.add_collection(lc)
+        # Draw each segment individually to allow per-edge alpha
+        for seg, col, lw, alpha in zip(segments, colors, linewidths, alphas):
+            ax.plot([seg[0][0], seg[1][0]], [seg[0][1], seg[1][1]], 
+                   color=col, linewidth=lw, alpha=alpha, zorder=1)
 
 
 def draw_glow_nodes(ax, pos, colors, sizes, sync_values):
@@ -283,7 +297,7 @@ def draw_phase_ring(ax, phases, colors, kuramoto_val, show_legend=True):
                transform=ax.transAxes, ha='center', va='top', fontsize=9, color='#666666', style='italic')
 
 
-def plot_advanced(epoch, fmt="png", quality="high", only_points=False, samples=[0, 200, 400, 600, 799]):
+def plot_advanced(epoch, fmt="png", quality="high", only_points=True, samples=[0, 200, 400, 600, 799]):
     """Generate high-quality frames with modern visualization techniques.
     
     Parameters:
@@ -305,6 +319,14 @@ def plot_advanced(epoch, fmt="png", quality="high", only_points=False, samples=[
     eeg_syncro_mat = plot_utils.subject_syncro["syncros_eeg"][plot_utils.band][0][epoch].copy()
     stc_syncro_mat = plot_utils.subject_syncro["syncros_stc"][plot_utils.band][0][epoch].copy()
     
+    # Calculate coherence (mean) and metastability (std) for EEG and STC
+    eeg_kuramoto_means = np.asarray(plot_utils.eeg_kuramoto_mat).mean(axis=1)
+    stc_kuramoto_means = np.asarray(plot_utils.stc_kuramoto_mat).mean(axis=1)
+    eeg_coherence = np.nanmean(eeg_kuramoto_means)  # Global mean (coherence)
+    eeg_metastability = np.nanstd(eeg_kuramoto_means)  # Global std (metastability)
+    stc_coherence = np.nanmean(stc_kuramoto_means)
+    stc_metastability = np.nanstd(stc_kuramoto_means)
+    
     for sample in samples:
         fig = plt.figure(figsize=(24*scale, 22*scale), facecolor='white')
         fig.patch.set_facecolor('white')
@@ -320,22 +342,40 @@ def plot_advanced(epoch, fmt="png", quality="high", only_points=False, samples=[
         y_eeg = np.array([avr_eeg.pop(0) if i not in plot_utils.rej else np.nan for i in range(full_epochs_count)])
         valid_mask = ~np.isnan(y_eeg)
         
-        # Line and/or scatter (no fill)
-        if not only_points:
-            ax_eeg_timeline.plot(x_timeline, y_eeg, color='#cc0000', linewidth=1.5)
-        ax_eeg_timeline.scatter(x_timeline[valid_mask], y_eeg[valid_mask], s=20, color='#cc0000', zorder=5)
+        # Metastability band (std interval) - draw first so it's behind points
+        ax_eeg_timeline.fill_between(
+            [0, full_epochs_count], 
+            eeg_coherence - eeg_metastability, 
+            eeg_coherence + eeg_metastability,
+            color='#3366cc', alpha=0.15, zorder=1, label=f'Metastability (σ={eeg_metastability:.3f})'
+        )
+        
+        # Coherence line (mean) - dashed
+        ax_eeg_timeline.axhline(y=eeg_coherence, color='#3366cc', linewidth=2, linestyle='--', 
+                                zorder=2, label=f'Coherence (μ={eeg_coherence:.3f})')
+        
+        # Bad epochs as filled gray spans (draw before points)
+        for i in plot_utils.rej:
+            ax_eeg_timeline.axvspan(i, i + 1, color='grey', alpha=0.2, linewidth=0, zorder=0)
+        
+        # Only scatter points (no connecting lines) - 40% smaller
+        ax_eeg_timeline.scatter(x_timeline[valid_mask], y_eeg[valid_mask], s=12, color='#cc0000', zorder=5)
         
         right_epochs = np.argwhere(valid_mask).flatten()
         if epoch < len(right_epochs):
             ax_eeg_timeline.axvline(x=right_epochs[epoch] + 0.5, color='black', linewidth=2, linestyle='--')
-        for i in plot_utils.rej:
-            ax_eeg_timeline.axvline(x=i+0.5, color='gray', alpha=0.3, linewidth=1)
         
         ax_eeg_timeline.set_xlim(0, full_epochs_count)
-        ax_eeg_timeline.set_ylim(0, None)
+        # Calculate Y limits to use full vertical space with small margin
+        y_eeg_valid = y_eeg[valid_mask]
+        eeg_y_min = min(y_eeg_valid.min(), eeg_coherence - eeg_metastability)
+        eeg_y_max = max(y_eeg_valid.max(), eeg_coherence + eeg_metastability)
+        eeg_y_margin = (eeg_y_max - eeg_y_min) * 0.05
+        ax_eeg_timeline.set_ylim(eeg_y_min - eeg_y_margin, eeg_y_max + eeg_y_margin)
         ax_eeg_timeline.set_ylabel('Kuramoto Order', color='black', fontsize=10)
         ax_eeg_timeline.tick_params(colors='black', labelsize=8)
         ax_eeg_timeline.set_title('EEG Synchronization', color='black', fontsize=12, fontweight='bold')
+        ax_eeg_timeline.legend(loc='upper right', fontsize=8, framealpha=0.9)
         for spine in ax_eeg_timeline.spines.values():
             spine.set_color('#cccccc')
         
@@ -354,7 +394,8 @@ def plot_advanced(epoch, fmt="png", quality="high", only_points=False, samples=[
         eeg_syncro_limited = eeg_syncro_mat[:n_eeg, :n_eeg]
         eeg_sync_values = eeg_syncro_limited.mean(axis=1)
         eeg_node_colors = get_node_colors_by_sync(eeg_syncro_limited, [(1.0, 0.42, 0.42)] * n_eeg, eeg_sync_values)
-        eeg_sizes = 200 + 600 * (eeg_sync_values - eeg_sync_values.min()) / (eeg_sync_values.max() - eeg_sync_values.min() + 1e-8)
+        # Uniform node sizes for EEG graph
+        eeg_sizes = np.full(n_eeg, 500)  # All nodes same size
         
         draw_gradient_edges(ax_eeg_graph, eeg_pos_array[:n_eeg], eeg_syncro_limited, threshold_pct=plot_utils.eeg_threshold)
         draw_glow_nodes(ax_eeg_graph, eeg_pos_array[:n_eeg], eeg_node_colors, eeg_sizes, eeg_sync_values)
@@ -378,19 +419,39 @@ def plot_advanced(epoch, fmt="png", quality="high", only_points=False, samples=[
         ax_stc_timeline.set_facecolor('white')
         avr_stc = np.asarray(plot_utils.stc_kuramoto_mat).mean(axis=1).tolist()
         y_stc = np.array([avr_stc.pop(0) if i not in plot_utils.rej else np.nan for i in range(full_epochs_count)])
-        # Line and/or scatter (no fill)
-        if not only_points:
-            ax_stc_timeline.plot(x_timeline, y_stc, color='#009688', linewidth=1.5)
-        ax_stc_timeline.scatter(x_timeline[valid_mask], y_stc[valid_mask], s=20, color='#009688', zorder=5)
+        
+        # Metastability band (std interval) - draw first so it's behind points
+        ax_stc_timeline.fill_between(
+            [0, full_epochs_count], 
+            stc_coherence - stc_metastability, 
+            stc_coherence + stc_metastability,
+            color='#3366cc', alpha=0.15, zorder=1, label=f'Metastability (σ={stc_metastability:.3f})'
+        )
+        
+        # Coherence line (mean) - dashed
+        ax_stc_timeline.axhline(y=stc_coherence, color='#3366cc', linewidth=2, linestyle='--', 
+                                zorder=2, label=f'Coherence (μ={stc_coherence:.3f})')
+        
+        # Bad epochs as filled gray spans (draw before points)
+        for i in plot_utils.rej:
+            ax_stc_timeline.axvspan(i, i + 1, color='grey', alpha=0.2, linewidth=0, zorder=0)
+        
+        # Only scatter points (no connecting lines) - 40% smaller
+        ax_stc_timeline.scatter(x_timeline[valid_mask], y_stc[valid_mask], s=12, color='#009688', zorder=5)
+        
         if epoch < len(right_epochs):
             ax_stc_timeline.axvline(x=right_epochs[epoch] + 0.5, color='black', linewidth=2, linestyle='--')
-        for i in plot_utils.rej:
-            ax_stc_timeline.axvline(x=i+0.5, color='gray', alpha=0.3, linewidth=1)
         ax_stc_timeline.set_xlim(0, full_epochs_count)
-        ax_stc_timeline.set_ylim(0, None)
+        # Calculate Y limits to use full vertical space with small margin
+        y_stc_valid = y_stc[valid_mask]
+        stc_y_min = min(y_stc_valid.min(), stc_coherence - stc_metastability)
+        stc_y_max = max(y_stc_valid.max(), stc_coherence + stc_metastability)
+        stc_y_margin = (stc_y_max - stc_y_min) * 0.05
+        ax_stc_timeline.set_ylim(stc_y_min - stc_y_margin, stc_y_max + stc_y_margin)
         ax_stc_timeline.set_ylabel('Kuramoto Order', color='black', fontsize=10)
         ax_stc_timeline.tick_params(colors='black', labelsize=8)
         ax_stc_timeline.set_title('Source Space Synchronization', color='black', fontsize=12, fontweight='bold')
+        ax_stc_timeline.legend(loc='upper right', fontsize=8, framealpha=0.9)
         for spine in ax_stc_timeline.spines.values():
             spine.set_color('#cccccc')
         
@@ -408,9 +469,13 @@ def plot_advanced(epoch, fmt="png", quality="high", only_points=False, samples=[
         stc_syncro_limited = stc_syncro_mat[:n_stc, :n_stc]
         stc_sync_values = stc_syncro_limited.mean(axis=1)
         stc_node_colors_dynamic = get_node_colors_by_sync(stc_syncro_limited, node_colors[:n_stc], stc_sync_values)
-        stc_sizes = 80 + 200 * (stc_sync_values - stc_sync_values.min()) / (stc_sync_values.max() - stc_sync_values.min() + 1e-8)
+        # Uniform node sizes for STC graph
+        stc_sizes = np.full(n_stc, 120)  # All nodes same size
         draw_gradient_edges(ax_stc_graph, stc_coords_2d[:n_stc], stc_syncro_limited, threshold_pct=plot_utils.stc_threshold, max_edges=200)
         draw_glow_nodes(ax_stc_graph, stc_coords_2d[:n_stc], stc_node_colors_dynamic, stc_sizes, stc_sync_values)
+        # Add node numbers like in original visualization
+        for i in range(n_stc):
+            ax_stc_graph.annotate(str(i), stc_coords_2d[i], ha='center', va='center', fontsize=5, color='black', fontweight='bold', zorder=10)
         ax_stc_graph.set_xlim(stc_coords_2d[:n_stc, 0].min() - 0.01, stc_coords_2d[:n_stc, 0].max() + 0.01)
         ax_stc_graph.set_ylim(stc_coords_2d[:n_stc, 1].min() - 0.01, stc_coords_2d[:n_stc, 1].max() + 0.01)
         ax_stc_graph.set_aspect('equal')
