@@ -3382,6 +3382,7 @@ def register_image_activation_hooks(model):
     import torch.nn as nn
     AS.activations = {}
     AS.attention_weights = {}
+    AS.layer_info = {'encoder': [], 'decoder': []}  # Store layer info for UI
     
     def get_activation(name):
         def hook(module, input, output):
@@ -3391,28 +3392,48 @@ def register_image_activation_hooks(model):
                 AS.activations[name] = output.detach().cpu()
         return hook
     
+    # Register hooks on stem
+    if hasattr(model, 'stem'):
+        model.stem.register_forward_hook(get_activation('stem'))
+    
     # Register hooks on encoder layers
     if hasattr(model, 'encoder_layers'):
         for i, layer in enumerate(model.encoder_layers):
             layer.register_forward_hook(get_activation(f'encoder.layer_{i}'))
+            # Get output channels info
+            out_ch = None
+            for m in layer.modules():
+                if hasattr(m, 'out_channels'):
+                    out_ch = m.out_channels
+                    break
+            AS.layer_info['encoder'].append({'name': f'Layer {i}', 'channels': out_ch or 'N/A'})
     elif hasattr(model, 'encoder'):
-        if hasattr(model.encoder, 'stage1'):
-            model.encoder.stage1.register_forward_hook(get_activation('encoder.stage1'))
-        if hasattr(model.encoder, 'stage2'):
-            model.encoder.stage2.register_forward_hook(get_activation('encoder.stage2'))
-        if hasattr(model.encoder, 'stage3'):
-            model.encoder.stage3.register_forward_hook(get_activation('encoder.stage3'))
+        # Fallback for other architectures
+        for name, child in model.encoder.named_children():
+            if 'stage' in name or 'layer' in name:
+                child.register_forward_hook(get_activation(f'encoder.{name}'))
+                AS.layer_info['encoder'].append({'name': name, 'channels': 'N/A'})
     
     # Register hooks on decoder layers  
     if hasattr(model, 'decoder_layers'):
         for i, layer in enumerate(model.decoder_layers):
             layer.register_forward_hook(get_activation(f'decoder.layer_{i}'))
+            out_ch = None
+            for m in layer.modules():
+                if hasattr(m, 'out_channels'):
+                    out_ch = m.out_channels
+                    break
+            AS.layer_info['decoder'].append({'name': f'Layer {i}', 'channels': out_ch or 'N/A'})
     
     # Register hook on latent
     if hasattr(model, 'fc_mu'):
         model.fc_mu.register_forward_hook(get_activation('latent_mu'))
     if hasattr(model, 'fc_logvar'):
         model.fc_logvar.register_forward_hook(get_activation('latent_logvar'))
+    
+    # Register hook on output
+    if hasattr(model, 'output'):
+        model.output.register_forward_hook(get_activation('output'))
 
 
 def register_activation_hooks(model):
@@ -4237,148 +4258,239 @@ def analysis_page():
                 kuramoto_plot = ui.plotly(make_kuramoto_fig()).classes('w-full').style('height: 120px;')
                 AS.activation_plots['kuramoto'] = kuramoto_plot
             
-            # ROW 2: ENCODER + LATENT + DECODER (heatmaps)
+            # ROW 2: ENCODER + DECODER ACTIVATIONS
             with ui.row().classes('gap-3 w-full'):
                 
-                # ENCODER ACTIVATIONS (as heatmap)
+                # ENCODER ACTIVATIONS
                 with ui.card().classes('dark-card p-3 flex-1'):
-                    ui.label('▌ENCODER (layers 1→3)').style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.75rem;').classes('mb-1')
+                    with ui.row().classes('items-center gap-2 mb-2'):
+                        ui.label('▌ENCODER').style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.75rem;')
+                        encoder_layer_select = ui.select([], value=None).props('dense dark').classes('w-24').style('font-size: 0.7rem;')
+                        encoder_channel_select = ui.select([], value=None).props('dense dark').classes('w-20').style('font-size: 0.7rem;')
+                    
+                    def update_encoder_selectors():
+                        """Update encoder layer/channel selectors based on available activations."""
+                        layers = [k for k in AS.activations.keys() if k.startswith('encoder.') or k == 'stem']
+                        if layers:
+                            encoder_layer_select.options = layers
+                            if encoder_layer_select.value not in layers:
+                                encoder_layer_select.value = layers[0]
+                            # Update channel selector
+                            if encoder_layer_select.value and encoder_layer_select.value in AS.activations:
+                                act = AS.activations[encoder_layer_select.value]
+                                if len(act.shape) >= 2:
+                                    n_channels = act.shape[1] if len(act.shape) == 4 else act.shape[0]
+                                    ch_options = [f'Ch {i}' for i in range(min(n_channels, 64))]
+                                    encoder_channel_select.options = ch_options
+                                    if not encoder_channel_select.value or encoder_channel_select.value not in ch_options:
+                                        encoder_channel_select.value = ch_options[0] if ch_options else None
                     
                     def make_encoder_fig():
-                        """Create encoder activation heatmap."""
+                        """Create encoder activation visualization."""
                         fig = go.Figure()
                         
-                        act_range = AS.axis_ranges['activations']
+                        layer_name = encoder_layer_select.value
+                        channel_str = encoder_channel_select.value
                         
-                        # Stack activations from all encoder layers vertically
-                        all_acts = []
-                        layer_labels = []
-                        
-                        for i in range(3):
-                            layer_name = f'encoder.conv_{i}'
-                            if layer_name in AS.activations:
-                                act = AS.activations[layer_name]
-                                if len(act.shape) > 1:
-                                    # (nodes, features) -> take first 32 features
-                                    act_np = act.cpu().numpy() if hasattr(act, 'cpu') else act
-                                    all_acts.append(act_np[:, :min(32, act_np.shape[1])])
-                                    layer_labels.append(f'L{i+1}')
-                        
-                        if all_acts:
-                            # Combine into single heatmap (layers stacked)
-                            combined = np.vstack(all_acts)
+                        if layer_name and layer_name in AS.activations and channel_str:
+                            act = AS.activations[layer_name]
+                            channel_idx = int(channel_str.split(' ')[1]) if channel_str else 0
+                            
+                            # Handle different activation shapes
+                            if len(act.shape) == 4:  # [B, C, H, W]
+                                act_2d = act[0, channel_idx].numpy()
+                            elif len(act.shape) == 3:  # [C, H, W]
+                                act_2d = act[channel_idx].numpy()
+                            elif len(act.shape) == 2:  # [H, W] or [B, features]
+                                act_2d = act[0].numpy() if act.shape[0] == 1 else act.numpy()
+                            else:
+                                act_2d = act.numpy().flatten().reshape(-1, 1)
+                            
                             fig.add_trace(go.Heatmap(
-                                z=combined.T,
+                                z=act_2d,
                                 colorscale='Viridis',
-                                zmin=act_range['min'],
-                                zmax=act_range['max'],
-                                showscale=False
+                                showscale=True,
+                                colorbar=dict(len=0.8, thickness=10)
                             ))
+                        else:
+                            fig.add_annotation(text="No activations", x=0.5, y=0.5, showarrow=False,
+                                             font=dict(color=THEME_TEXT_DIM))
                         
                         fig.update_layout(
                             template='plotly_dark',
                             paper_bgcolor='rgba(8,8,8,1)',
                             plot_bgcolor='rgba(8,8,8,1)',
-                            height=150,
-                            margin=dict(l=30, r=10, t=5, b=25),
-                            xaxis=dict(title='Nodes'),
-                            yaxis=dict(title='Feat'),
+                            height=180,
+                            margin=dict(l=10, r=40, t=5, b=10),
+                            xaxis=dict(showticklabels=False, showgrid=False),
+                            yaxis=dict(showticklabels=False, showgrid=False, scaleanchor='x'),
                             font=dict(family='JetBrains Mono', size=8, color=THEME_TEXT)
                         )
                         return fig
                     
-                    encoder_plot = ui.plotly(make_encoder_fig()).classes('w-full').style('height: 150px;')
+                    encoder_plot = ui.plotly(make_encoder_fig()).classes('w-full').style('height: 180px;')
                     AS.activation_plots['encoder'] = encoder_plot
-                
-                # LATENT SPACE PCA
-                with ui.card().classes('dark-card p-3').style('width: 280px;'):
-                    ui.label('▌LATENT (μ, σ)').style(f'color:{THEME_SECONDARY}; font-family: JetBrains Mono; font-size: 0.75rem;').classes('mb-1')
                     
-                    def make_latent_fig():
-                        """Create latent space PCA visualization."""
-                        fig = go.Figure()
-                        
-                        X_pca, labels = compute_latent_pca()
-                        if X_pca is not None:
-                            colors = ['#00ff88', '#f472b6', '#00d4ff']
-                            for label in np.unique(labels):
-                                mask = labels == label
-                                fig.add_trace(go.Scatter(
-                                    x=X_pca[mask, 0], y=X_pca[mask, 1],
-                                    mode='markers',
-                                    marker=dict(size=5, color=colors[int(label) % len(colors)], opacity=0.6),
-                                    name=f'C{int(label)}'
-                                ))
-                            if len(X_pca) > 0:
-                                fig.add_trace(go.Scatter(
-                                    x=[X_pca[-1, 0]], y=[X_pca[-1, 1]],
-                                    mode='markers',
-                                    marker=dict(size=12, color=THEME_WARN, symbol='star'),
-                                    name='Now'
-                                ))
-                        
-                        lat_range = AS.axis_ranges['latent']
-                        fig.update_layout(
-                            template='plotly_dark',
-                            paper_bgcolor='rgba(8,8,8,1)',
-                            plot_bgcolor='rgba(8,8,8,1)',
-                            height=150,
-                            margin=dict(l=25, r=5, t=5, b=25),
-                            xaxis=dict(title='PC1', gridcolor='rgba(0,255,136,0.1)', 
-                                      range=[lat_range['x_min'], lat_range['x_max']]),
-                            yaxis=dict(title='PC2', gridcolor='rgba(0,255,136,0.1)',
-                                      range=[lat_range['y_min'], lat_range['y_max']]),
-                            legend=dict(orientation='h', y=1.1, font=dict(size=7)),
-                            font=dict(family='JetBrains Mono', size=8, color=THEME_TEXT)
-                        )
-                        return fig
+                    def on_encoder_layer_change(e):
+                        update_encoder_selectors()
+                        encoder_plot.figure = make_encoder_fig()
+                        encoder_plot.update()
                     
-                    latent_plot = ui.plotly(make_latent_fig()).classes('w-full').style('height: 150px;')
-                    AS.latent_plot = latent_plot
+                    def on_encoder_channel_change(e):
+                        encoder_plot.figure = make_encoder_fig()
+                        encoder_plot.update()
+                    
+                    encoder_layer_select.on('update:model-value', on_encoder_layer_change)
+                    encoder_channel_select.on('update:model-value', on_encoder_channel_change)
                 
-                # DECODER ACTIVATIONS (as heatmap)
+                # DECODER ACTIVATIONS
                 with ui.card().classes('dark-card p-3 flex-1'):
-                    ui.label('▌DECODER (layers 3→1)').style(f'color:#f472b6; font-family: JetBrains Mono; font-size: 0.75rem;').classes('mb-1')
+                    with ui.row().classes('items-center gap-2 mb-2'):
+                        ui.label('▌DECODER').style(f'color:#f472b6; font-family: JetBrains Mono; font-size: 0.75rem;')
+                        decoder_layer_select = ui.select([], value=None).props('dense dark').classes('w-24').style('font-size: 0.7rem;')
+                        decoder_channel_select = ui.select([], value=None).props('dense dark').classes('w-20').style('font-size: 0.7rem;')
+                    
+                    def update_decoder_selectors():
+                        """Update decoder layer/channel selectors based on available activations."""
+                        layers = [k for k in AS.activations.keys() if k.startswith('decoder.') or k == 'output']
+                        if layers:
+                            decoder_layer_select.options = layers
+                            if decoder_layer_select.value not in layers:
+                                decoder_layer_select.value = layers[0]
+                            # Update channel selector
+                            if decoder_layer_select.value and decoder_layer_select.value in AS.activations:
+                                act = AS.activations[decoder_layer_select.value]
+                                if len(act.shape) >= 2:
+                                    n_channels = act.shape[1] if len(act.shape) == 4 else act.shape[0]
+                                    ch_options = [f'Ch {i}' for i in range(min(n_channels, 64))]
+                                    decoder_channel_select.options = ch_options
+                                    if not decoder_channel_select.value or decoder_channel_select.value not in ch_options:
+                                        decoder_channel_select.value = ch_options[0] if ch_options else None
                     
                     def make_decoder_fig():
-                        """Create decoder activation heatmap."""
+                        """Create decoder activation visualization."""
                         fig = go.Figure()
-                        act_range = AS.axis_ranges['activations']
                         
-                        # Stack decoder activations (if available)
-                        all_acts = []
-                        for i in range(3):
-                            layer_name = f'decoder.conv_{i}'
-                            if layer_name in AS.activations:
-                                act = AS.activations[layer_name]
-                                if len(act.shape) > 1:
-                                    act_np = act.cpu().numpy() if hasattr(act, 'cpu') else act
-                                    all_acts.append(act_np[:, :min(32, act_np.shape[1])])
+                        layer_name = decoder_layer_select.value
+                        channel_str = decoder_channel_select.value
                         
-                        if all_acts:
-                            combined = np.vstack(all_acts)
+                        if layer_name and layer_name in AS.activations and channel_str:
+                            act = AS.activations[layer_name]
+                            channel_idx = int(channel_str.split(' ')[1]) if channel_str else 0
+                            
+                            # Handle different activation shapes
+                            if len(act.shape) == 4:  # [B, C, H, W]
+                                act_2d = act[0, channel_idx].numpy()
+                            elif len(act.shape) == 3:  # [C, H, W]
+                                act_2d = act[channel_idx].numpy()
+                            elif len(act.shape) == 2:
+                                act_2d = act[0].numpy() if act.shape[0] == 1 else act.numpy()
+                            else:
+                                act_2d = act.numpy().flatten().reshape(-1, 1)
+                            
                             fig.add_trace(go.Heatmap(
-                                z=combined.T,
+                                z=act_2d,
                                 colorscale='Magma',
-                                zmin=act_range['min'],
-                                zmax=act_range['max'],
-                                showscale=False
+                                showscale=True,
+                                colorbar=dict(len=0.8, thickness=10)
                             ))
+                        else:
+                            fig.add_annotation(text="No activations", x=0.5, y=0.5, showarrow=False,
+                                             font=dict(color=THEME_TEXT_DIM))
                         
                         fig.update_layout(
                             template='plotly_dark',
                             paper_bgcolor='rgba(8,8,8,1)',
                             plot_bgcolor='rgba(8,8,8,1)',
-                            height=150,
-                            margin=dict(l=30, r=10, t=5, b=25),
-                            xaxis=dict(title='Nodes'),
-                            yaxis=dict(title='Feat'),
+                            height=180,
+                            margin=dict(l=10, r=40, t=5, b=10),
+                            xaxis=dict(showticklabels=False, showgrid=False),
+                            yaxis=dict(showticklabels=False, showgrid=False, scaleanchor='x'),
                             font=dict(family='JetBrains Mono', size=8, color=THEME_TEXT)
                         )
                         return fig
                     
-                    decoder_plot = ui.plotly(make_decoder_fig()).classes('w-full').style('height: 150px;')
+                    decoder_plot = ui.plotly(make_decoder_fig()).classes('w-full').style('height: 180px;')
                     AS.activation_plots['decoder'] = decoder_plot
+                    
+                    def on_decoder_layer_change(e):
+                        update_decoder_selectors()
+                        decoder_plot.figure = make_decoder_fig()
+                        decoder_plot.update()
+                    
+                    def on_decoder_channel_change(e):
+                        decoder_plot.figure = make_decoder_fig()
+                        decoder_plot.update()
+                    
+                    decoder_layer_select.on('update:model-value', on_decoder_layer_change)
+                    decoder_channel_select.on('update:model-value', on_decoder_channel_change)
+            
+            # ROW 3: LATENT SPACE (full width, larger)
+            with ui.card().classes('dark-card p-3 w-full'):
+                with ui.row().classes('items-center gap-4 mb-2'):
+                    ui.label('▌LATENT SPACE (PCA)').style(f'color:{THEME_SECONDARY}; font-family: JetBrains Mono; font-size: 0.8rem;')
+                    ui.label('').bind_text_from(AS, 'latent_codes', lambda x: f'{len(x)} samples').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                
+                def make_latent_fig():
+                    """Create latent space PCA visualization."""
+                    fig = go.Figure()
+                    
+                    X_pca, labels = compute_latent_pca()
+                    if X_pca is not None and len(X_pca) > 0:
+                        # Use more colors for more classes
+                        n_classes = len(np.unique(labels))
+                        if n_classes <= 10:
+                            colors = ['#00ff88', '#f472b6', '#00d4ff', '#ffcc00', '#a78bfa', 
+                                     '#00ffcc', '#ff9f43', '#74b9ff', '#55efc4', '#fd79a8']
+                        else:
+                            # Use colorscale for many classes
+                            import plotly.express as px
+                            colors = px.colors.qualitative.Alphabet[:n_classes]
+                        
+                        for label in np.unique(labels):
+                            mask = labels == label
+                            label_name = AS.class_names[int(label)] if int(label) < len(AS.class_names) else f'C{int(label)}'
+                            fig.add_trace(go.Scatter(
+                                x=X_pca[mask, 0], y=X_pca[mask, 1],
+                                mode='markers',
+                                marker=dict(size=6, color=colors[int(label) % len(colors)], opacity=0.7),
+                                name=label_name
+                            ))
+                        
+                        # Current point - bright yellow circle instead of star
+                        if len(X_pca) > 0:
+                            fig.add_trace(go.Scatter(
+                                x=[X_pca[-1, 0]], y=[X_pca[-1, 1]],
+                                mode='markers',
+                                marker=dict(size=14, color='#ffff00', opacity=1, 
+                                           line=dict(width=2, color='#000000')),
+                                name='Current',
+                                showlegend=False
+                            ))
+                    else:
+                        fig.add_annotation(text="Process samples to visualize latent space", 
+                                         x=0.5, y=0.5, showarrow=False,
+                                         font=dict(color=THEME_TEXT_DIM, size=12))
+                    
+                    lat_range = AS.axis_ranges['latent']
+                    fig.update_layout(
+                        template='plotly_dark',
+                        paper_bgcolor='rgba(8,8,8,1)',
+                        plot_bgcolor='rgba(8,8,8,1)',
+                        height=300,
+                        margin=dict(l=40, r=20, t=10, b=40),
+                        xaxis=dict(title='PC1', gridcolor='rgba(0,255,136,0.1)', 
+                                  range=[lat_range['x_min'], lat_range['x_max']]),
+                        yaxis=dict(title='PC2', gridcolor='rgba(0,255,136,0.1)',
+                                  range=[lat_range['y_min'], lat_range['y_max']]),
+                        legend=dict(orientation='h', y=-0.15, x=0.5, xanchor='center', 
+                                   font=dict(size=9), bgcolor='rgba(0,0,0,0.5)'),
+                        font=dict(family='JetBrains Mono', size=10, color=THEME_TEXT)
+                    )
+                    return fig
+                
+                latent_plot = ui.plotly(make_latent_fig()).classes('w-full').style('height: 300px;')
+                AS.latent_plot = latent_plot
             
             # ROW 3: ATTENTION WEIGHTS (per layer)
             with ui.card().classes('dark-card p-3 w-full'):
@@ -4698,22 +4810,26 @@ def analysis_page():
                     analysis_log(f"Kuramoto plot error: {e}", 'warning')
                 
                 try:
+                    # Update encoder selectors and plot
+                    update_encoder_selectors()
                     encoder_plot.figure = make_encoder_fig()
                     encoder_plot.update()
                 except Exception as e:
                     analysis_log(f"Encoder plot error: {e}", 'warning')
                 
                 try:
-                    latent_plot.figure = make_latent_fig()
-                    latent_plot.update()
-                except Exception as e:
-                    analysis_log(f"Latent plot error: {e}", 'warning')
-                
-                try:
+                    # Update decoder selectors and plot
+                    update_decoder_selectors()
                     decoder_plot.figure = make_decoder_fig()
                     decoder_plot.update()
                 except Exception as e:
                     analysis_log(f"Decoder plot error: {e}", 'warning')
+                
+                try:
+                    latent_plot.figure = make_latent_fig()
+                    latent_plot.update()
+                except Exception as e:
+                    analysis_log(f"Latent plot error: {e}", 'warning')
                 
                 try:
                     attention_plot.figure = make_attention_fig()
