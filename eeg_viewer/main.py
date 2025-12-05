@@ -2137,6 +2137,7 @@ class AnalysisState:
         self.model_config = {}
         self.model_params = {}
         self.device = 'cpu'
+        self.model_type = 'graph'  # 'graph' or 'image'
         
         # Dataset
         self.dataset = None
@@ -2144,6 +2145,8 @@ class AnalysisState:
         self.current_split = 'test'  # train, val, test
         self.current_idx = 0
         self.total_samples = 0
+        self.dataset_type = 'graph'  # 'graph' or 'image'
+        self.class_names = []  # For image datasets with classes
         
         # Playback
         self.playing = False
@@ -2160,6 +2163,7 @@ class AnalysisState:
         self.current_sample = None
         self.current_recon = None
         self.current_z = None
+        self.current_label = None  # For image classification
         
         # Fixed axis ranges (computed from dataset)
         self.axis_ranges = {
@@ -2167,9 +2171,15 @@ class AnalysisState:
             'latent': {'x_min': -5, 'x_max': 5, 'y_min': -5, 'y_max': 5},
             'attention': {'min': 0, 'max': 1},
             'activations': {'min': -500, 'max': 500},
-            'diff': {'min': 0, 'max': 1}
+            'diff': {'min': 0, 'max': 1},
+            'kuramoto': {'min': 0, 'max': 1}
         }
         self.ranges_computed = False
+        
+        # Kuramoto tracking (for graph models)
+        self.kuramoto_history = []  # (idx, kuramoto_mean) for each processed sample
+        self.kuramoto_avg = 0.5  # Average across test set
+        self.kuramoto_std = 0.1  # Std (metastability proxy)
         
         # UI references
         self.log_container = None
@@ -2510,7 +2520,7 @@ def model_page():
         
         # Status indicator
         with ui.row().classes('items-center gap-2 ml-4'):
-            MS.status_indicator = ui.html('<div></div>').classes(f'status-{MS.status}')
+            MS.status_indicator = ui.html('<div></div>', sanitize=False).classes(f'status-{MS.status}')
             status_labels = {'idle': 'IDLE', 'training': 'TRAINING...', 'completed': 'COMPLETED', 'error': 'ERROR'}
             status_colors = {'idle': THEME_TEXT_DIM, 'training': '#f59e0b', 'completed': '#10b981', 'error': '#ef4444'}
             ui.label(status_labels.get(MS.status, 'IDLE')).style(f'color:{status_colors.get(MS.status, THEME_TEXT_DIM)}; font-size: 0.7rem; font-family: JetBrains Mono;').bind_text_from(MS, 'status', lambda s: {'idle': 'IDLE', 'training': 'TRAINING...', 'completed': 'COMPLETED', 'error': 'ERROR'}.get(s, 'IDLE'))
@@ -3188,94 +3198,221 @@ def analysis_log(msg: str, msg_type: str = 'info'):
 
 
 def load_trained_model(model_path: Path):
-    """Load a trained VAE model from checkpoint."""
+    """Load a trained VAE model from checkpoint. Supports both graph and image models."""
     import torch
+    import pickle
+    import sys
+    
     try:
-        checkpoint = torch.load(model_path, map_location='cpu', weights_only=False)
-        config = checkpoint.get('config', {})
+        # For external models, add the project root to sys.path
+        # This handles models that were saved with project-specific module references
+        # Search upward from model path to find project root (containing 'src' folder)
+        current = model_path.parent
+        for _ in range(5):  # Search up to 5 levels
+            if (current / 'src').exists():
+                if str(current) not in sys.path:
+                    sys.path.insert(0, str(current))
+                    analysis_log(f"Added {current} to Python path", 'info')
+                break
+            parent = current.parent
+            if parent == current:  # Reached root
+                break
+            current = parent
         
-        # Get model parameters from checkpoint
-        model_params = checkpoint.get('model_params', {})
+        # Try to load as pickle first (for image models with full_model)
+        is_pickle = False
+        checkpoint = None
         
-        # If no model_params in checkpoint, try to infer from dataset or config
-        if not model_params:
-            # Try to load a sample from dataset cache to get dimensions
-            dataset_cache = AUTOENCODER_CACHE_DIR / 'dataset_cache'
-            import pickle
+        if model_path.suffix == '.pkl':
             try:
-                # Try both .pt and .pkl files
-                for pattern in ['*.pt', '*.pkl']:
-                    for cache_file in dataset_cache.glob(pattern):
-                        try:
-                            if cache_file.suffix == '.pkl':
-                                with open(cache_file, 'rb') as f:
-                                    data = pickle.load(f)
-                            else:
-                                data = torch.load(cache_file, weights_only=False)
-                            
-                            # Handle dict with train/val/test splits
-                            if isinstance(data, dict) and 'train' in data:
-                                data = data['train']
-                            
-                            sample = data[0] if isinstance(data, list) and len(data) > 0 else data
-                            if hasattr(sample, 'x'):
-                                model_params = {
-                                    'num_node_features': sample.x.shape[1],
-                                    'num_edge_features': sample.edge_attr.shape[1] if hasattr(sample, 'edge_attr') and sample.edge_attr is not None else 1,
-                                    'num_graph_features': sample.graph_attr.shape[0] if hasattr(sample, 'graph_attr') and sample.graph_attr is not None else 3,
-                                    'num_nodes': sample.num_nodes
-                                }
-                                break
-                        except Exception:
-                            continue
-                    if model_params:
-                        break
+                with open(model_path, 'rb') as f:
+                    checkpoint = pickle.load(f)
+                is_pickle = True
             except Exception:
                 pass
         
-        # Use values from model_params or defaults
-        num_node_features = model_params.get('num_node_features', 68)
-        num_edge_features = model_params.get('num_edge_features', 1)
-        num_graph_features = model_params.get('num_graph_features', 3)
-        num_nodes = model_params.get('num_nodes', 68)
+        if checkpoint is None:
+            checkpoint = torch.load(model_path, map_location='cpu', weights_only=False)
         
-        # Import model creation function
-        import sys
-        if str(AUTOENCODER_DIR) not in sys.path:
-            sys.path.insert(0, str(AUTOENCODER_DIR))
-        from models import create_vae_from_config
-        
-        model = create_vae_from_config(
-            config,
-            num_node_features=num_node_features,
-            num_edge_features=num_edge_features,
-            num_graph_features=num_graph_features,
-            num_nodes=num_nodes
-        )
-        model.load_state_dict(checkpoint['model_state_dict'])
-        
-        # Check for GPU
-        device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        model = model.to(device)
-        model.eval()
-        
-        AS.model = model
-        AS.model_config = config
-        AS.model_path = str(model_path)
-        AS.device = device
-        AS.model_params = model_params
-        
-        # Register hooks for activation extraction
-        register_activation_hooks(model)
-        
-        return {
-            'epoch': checkpoint.get('epoch', '?'),
-            'val_loss': checkpoint.get('val_loss', '?'),
-            'config': config,
-            'model_params': model_params
-        }
+        # Detect model type: image model has 'full_model' key, graph model has 'model_state_dict'
+        if 'full_model' in checkpoint:
+            # Image-based VAE (convolutional)
+            return load_image_model(checkpoint, model_path)
+        else:
+            # Graph-based VAE
+            return load_graph_model(checkpoint, model_path)
+            
     except Exception as e:
         raise Exception(f"Failed to load model: {e}")
+
+
+def load_image_model(checkpoint, model_path: Path):
+    """Load an image-based convolutional VAE model."""
+    import torch
+    import sys
+    
+    # The model is stored directly in the checkpoint
+    model = checkpoint['full_model']
+    
+    # Check for GPU
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    model = model.to(device)
+    model.eval()
+    
+    # Extract model info
+    model_config = checkpoint.get('model_config', {})
+    model_params = {
+        'latent_dim': checkpoint.get('latent_dim', model_config.get('latent_dim', 256)),
+        'input_size': checkpoint.get('input_size', model_config.get('input_size', 512)),
+        'num_classes': checkpoint.get('num_classes', model_config.get('num_classes', 17)),
+        'model_type': checkpoint.get('model_type', 'image_vae'),
+    }
+    
+    AS.model = model
+    AS.model_config = model_config
+    AS.model_path = str(model_path)
+    AS.device = device
+    AS.model_params = model_params
+    AS.model_type = 'image'
+    
+    # Register hooks for activation extraction (image model)
+    register_image_activation_hooks(model)
+    
+    return {
+        'epoch': checkpoint.get('epoch', '?'),
+        'val_loss': checkpoint.get('best_val_loss', '?'),
+        'config': model_config,
+        'model_params': model_params,
+        'model_type': 'image'
+    }
+
+
+def load_graph_model(checkpoint, model_path: Path):
+    """Load a graph-based VAE model."""
+    import torch
+    import pickle
+    import sys
+    
+    config = checkpoint.get('config', {})
+    
+    # Get model parameters from checkpoint
+    model_params = checkpoint.get('model_params', {})
+    
+    # If no model_params in checkpoint, try to infer from dataset or config
+    if not model_params:
+        # Try to load a sample from dataset cache to get dimensions
+        dataset_cache = AUTOENCODER_CACHE_DIR / 'dataset_cache'
+        try:
+            # Try both .pt and .pkl files
+            for pattern in ['*.pt', '*.pkl']:
+                for cache_file in dataset_cache.glob(pattern):
+                    try:
+                        if cache_file.suffix == '.pkl':
+                            with open(cache_file, 'rb') as f:
+                                data = pickle.load(f)
+                        else:
+                            data = torch.load(cache_file, weights_only=False)
+                        
+                        # Handle dict with train/val/test splits
+                        if isinstance(data, dict) and 'train' in data:
+                            data = data['train']
+                        
+                        sample = data[0] if isinstance(data, list) and len(data) > 0 else data
+                        if hasattr(sample, 'x'):
+                            model_params = {
+                                'num_node_features': sample.x.shape[1],
+                                'num_edge_features': sample.edge_attr.shape[1] if hasattr(sample, 'edge_attr') and sample.edge_attr is not None else 1,
+                                'num_graph_features': sample.graph_attr.shape[0] if hasattr(sample, 'graph_attr') and sample.graph_attr is not None else 3,
+                                'num_nodes': sample.num_nodes
+                            }
+                            break
+                    except Exception:
+                        continue
+                if model_params:
+                    break
+        except Exception:
+            pass
+    
+    # Use values from model_params or defaults
+    num_node_features = model_params.get('num_node_features', 68)
+    num_edge_features = model_params.get('num_edge_features', 1)
+    num_graph_features = model_params.get('num_graph_features', 3)
+    num_nodes = model_params.get('num_nodes', 68)
+    
+    # Import model creation function
+    if str(AUTOENCODER_DIR) not in sys.path:
+        sys.path.insert(0, str(AUTOENCODER_DIR))
+    from models import create_vae_from_config
+    
+    model = create_vae_from_config(
+        config,
+        num_node_features=num_node_features,
+        num_edge_features=num_edge_features,
+        num_graph_features=num_graph_features,
+        num_nodes=num_nodes
+    )
+    model.load_state_dict(checkpoint['model_state_dict'])
+    
+    # Check for GPU
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    model = model.to(device)
+    model.eval()
+    
+    AS.model = model
+    AS.model_config = config
+    AS.model_path = str(model_path)
+    AS.device = device
+    AS.model_params = model_params
+    AS.model_type = 'graph'
+    
+    # Register hooks for activation extraction
+    register_activation_hooks(model)
+    
+    return {
+        'epoch': checkpoint.get('epoch', '?'),
+        'val_loss': checkpoint.get('val_loss', '?'),
+        'config': config,
+        'model_params': model_params,
+        'model_type': 'graph'
+    }
+
+
+def register_image_activation_hooks(model):
+    """Register forward hooks to capture activations for image models."""
+    import torch.nn as nn
+    AS.activations = {}
+    AS.attention_weights = {}
+    
+    def get_activation(name):
+        def hook(module, input, output):
+            if isinstance(output, tuple):
+                AS.activations[name] = output[0].detach().cpu()
+            else:
+                AS.activations[name] = output.detach().cpu()
+        return hook
+    
+    # Register hooks on encoder layers
+    if hasattr(model, 'encoder_layers'):
+        for i, layer in enumerate(model.encoder_layers):
+            layer.register_forward_hook(get_activation(f'encoder.layer_{i}'))
+    elif hasattr(model, 'encoder'):
+        if hasattr(model.encoder, 'stage1'):
+            model.encoder.stage1.register_forward_hook(get_activation('encoder.stage1'))
+        if hasattr(model.encoder, 'stage2'):
+            model.encoder.stage2.register_forward_hook(get_activation('encoder.stage2'))
+        if hasattr(model.encoder, 'stage3'):
+            model.encoder.stage3.register_forward_hook(get_activation('encoder.stage3'))
+    
+    # Register hooks on decoder layers  
+    if hasattr(model, 'decoder_layers'):
+        for i, layer in enumerate(model.decoder_layers):
+            layer.register_forward_hook(get_activation(f'decoder.layer_{i}'))
+    
+    # Register hook on latent
+    if hasattr(model, 'fc_mu'):
+        model.fc_mu.register_forward_hook(get_activation('latent_mu'))
+    if hasattr(model, 'fc_logvar'):
+        model.fc_logvar.register_forward_hook(get_activation('latent_logvar'))
 
 
 def register_activation_hooks(model):
@@ -3301,8 +3438,20 @@ def register_activation_hooks(model):
     
     # Register hooks on encoder layers
     if hasattr(model, 'encoder'):
-        for i, layer in enumerate(model.encoder.conv_layers if hasattr(model.encoder, 'conv_layers') else []):
-            layer.register_forward_hook(get_activation(f'encoder.conv_{i}'))
+        conv_layers = getattr(model.encoder, 'conv_layers', None)
+        if conv_layers is not None:
+            for i, layer in enumerate(conv_layers):
+                layer.register_forward_hook(get_activation(f'encoder.conv_{i}'))
+    
+    # Register hooks on decoder layers
+    if hasattr(model, 'decoder'):
+        conv_layers = getattr(model.decoder, 'conv_layers', None)
+        if conv_layers is not None:
+            for i, layer in enumerate(conv_layers):
+                layer.register_forward_hook(get_activation(f'decoder.conv_{i}'))
+        elif hasattr(model.decoder, 'layers'):
+            for i, layer in enumerate(model.decoder.layers):
+                layer.register_forward_hook(get_activation(f'decoder.conv_{i}'))
     
     # Register hook on latent
     if hasattr(model, 'fc_mu'):
@@ -3314,7 +3463,6 @@ def register_activation_hooks(model):
 def process_sample(sample, store_latent=True):
     """Process a single sample through the model and extract activations."""
     import torch
-    from torch_geometric.data import Batch
     
     if AS.model is None:
         analysis_log("No model loaded", 'warning')
@@ -3323,36 +3471,97 @@ def process_sample(sample, store_latent=True):
     try:
         AS.model.eval()
         with torch.no_grad():
-            # Create a batch from single sample (required by PyG)
-            if not isinstance(sample, Batch):
-                batch = Batch.from_data_list([sample])
+            if AS.model_type == 'image':
+                return process_image_sample(sample, store_latent)
             else:
-                batch = sample
-            
-            batch = batch.to(AS.device)
-            output = AS.model(batch)
-            
-            AS.current_sample = batch
-            AS.current_recon = output
-            AS.current_z = output.get('mu', None) if isinstance(output, dict) else None
-            
-            if store_latent and AS.current_z is not None:
-                z_np = AS.current_z.cpu().numpy().flatten()
-                AS.latent_codes.append(z_np)
-                # Get label from sample
-                label = batch.y[0].item() if hasattr(batch, 'y') and batch.y is not None else 0
-                AS.latent_labels.append(label)
-                # Keep only last 500 for PCA
-                if len(AS.latent_codes) > 500:
-                    AS.latent_codes = AS.latent_codes[-500:]
-                    AS.latent_labels = AS.latent_labels[-500:]
-            
-            return output
+                return process_graph_sample(sample, store_latent)
     except Exception as e:
         analysis_log(f"Error in process_sample: {e}", 'error')
         import traceback
         analysis_log(traceback.format_exc(), 'error')
         return None
+
+
+def process_image_sample(sample, store_latent=True):
+    """Process an image sample through the model."""
+    import torch
+    
+    # sample is a tuple (image_tensor, label) or just image_tensor
+    if isinstance(sample, tuple):
+        image, label = sample
+        AS.current_label = label.item() if hasattr(label, 'item') else label
+    else:
+        image = sample
+        AS.current_label = None
+    
+    # Ensure batch dimension
+    if image.dim() == 3:
+        image = image.unsqueeze(0)
+    
+    image = image.to(AS.device)
+    
+    # Forward pass
+    output = AS.model(image)
+    
+    AS.current_sample = image
+    AS.current_recon = output
+    AS.current_z = output.get('mu', None) if isinstance(output, dict) else None
+    
+    if store_latent and AS.current_z is not None:
+        z_np = AS.current_z.cpu().numpy().flatten()
+        AS.latent_codes.append(z_np)
+        label = AS.current_label if AS.current_label is not None else 0
+        AS.latent_labels.append(label)
+        # Keep only last 500 for PCA
+        if len(AS.latent_codes) > 500:
+            AS.latent_codes = AS.latent_codes[-500:]
+            AS.latent_labels = AS.latent_labels[-500:]
+    
+    return output
+
+
+def process_graph_sample(sample, store_latent=True):
+    """Process a graph sample through the model."""
+    import torch
+    from torch_geometric.data import Batch
+    
+    # Create a batch from single sample (required by PyG)
+    if not isinstance(sample, Batch):
+        batch = Batch.from_data_list([sample])
+    else:
+        batch = sample
+    
+    batch = batch.to(AS.device)
+    
+    # Forward pass with activation storage ENABLED to capture GAT attention
+    output = AS.model(batch, store_activations=True)
+    
+    AS.current_sample = batch
+    AS.current_recon = output
+    AS.current_z = output.get('mu', None) if isinstance(output, dict) else None
+    
+    # Extract REAL attention weights from encoder
+    if hasattr(AS.model, 'encoder') and hasattr(AS.model.encoder, 'get_all_attention_weights'):
+        AS.attention_weights = AS.model.encoder.get_all_attention_weights()
+    
+    # Extract layer activations
+    if hasattr(AS.model, 'encoder') and hasattr(AS.model.encoder, 'get_layer_activations'):
+        layer_acts = AS.model.encoder.get_layer_activations()
+        for key, val in layer_acts.items():
+            AS.activations[f'encoder.{key}'] = val
+    
+    if store_latent and AS.current_z is not None:
+        z_np = AS.current_z.cpu().numpy().flatten()
+        AS.latent_codes.append(z_np)
+        # Get label from sample
+        label = batch.y[0].item() if hasattr(batch, 'y') and batch.y is not None else 0
+        AS.latent_labels.append(label)
+        # Keep only last 500 for PCA
+        if len(AS.latent_codes) > 500:
+            AS.latent_codes = AS.latent_codes[-500:]
+            AS.latent_labels = AS.latent_labels[-500:]
+    
+    return output
 
 
 def compute_latent_pca():
@@ -3370,6 +3579,179 @@ def compute_latent_pca():
     return X_pca, np.array(AS.latent_labels)
 
 
+def load_hdf5_image_dataset(h5_path, split, dataset_info_container, progress_slider):
+    """Load an image dataset from HDF5 file using lazy loading."""
+    import h5py
+    import torch
+    import numpy as np
+    
+    try:
+        # First, just read metadata without loading all data
+        with h5py.File(h5_path, 'r') as f:
+            total_samples = len(f['labels'])
+            resolution = f.attrs.get('resolution', 512)
+            labels_all = f['labels'][:]
+            
+            # Get group names if available
+            if 'group_names' in f:
+                AS.class_names = [n.decode() if isinstance(n, bytes) else n for n in f['group_names'][:]]
+            else:
+                AS.class_names = [str(i) for i in range(len(np.unique(labels_all)))]
+        
+        # Check for splits file
+        indices = None
+        splits_path = h5_path.parent / 'splits.npz'
+        if splits_path.exists():
+            splits = np.load(splits_path)
+            if split in splits:
+                indices = splits[split]
+                analysis_log(f"Using '{split}' split: {len(indices)} samples", 'info')
+        
+        # Create lazy-loading wrapper for HDF5
+        class HDF5DatasetWrapper:
+            """Lazy-loading wrapper for HDF5 image dataset."""
+            def __init__(self, h5_path, indices=None):
+                self.h5_path = str(h5_path)
+                self.indices = indices
+                self._file = None
+                self._labels = labels_all[indices] if indices is not None else labels_all
+                
+            def _open(self):
+                if self._file is None:
+                    self._file = h5py.File(self.h5_path, 'r')
+                return self._file
+            
+            def __len__(self):
+                return len(self.indices) if self.indices is not None else len(self._labels)
+            
+            def __getitem__(self, idx):
+                f = self._open()
+                real_idx = self.indices[idx] if self.indices is not None else idx
+                # Load single image on demand
+                pattern = f['patterns'][real_idx]  # [H, W, 3]
+                label = self._labels[idx]
+                # Convert to tensor [3, H, W]
+                tensor = torch.from_numpy(pattern.astype(np.float32)).permute(2, 0, 1)
+                return tensor, int(label)
+            
+            def __del__(self):
+                if self._file is not None:
+                    try:
+                        self._file.close()
+                    except:
+                        pass
+        
+        AS.dataset = HDF5DatasetWrapper(h5_path, indices)
+        AS.dataset_type = 'image'
+        AS.total_samples = len(AS.dataset)
+        AS.current_idx = 0
+        AS.dataset_path = str(h5_path)
+        
+        # Clear latent history
+        AS.latent_codes = []
+        AS.latent_labels = []
+        
+        dataset_info_container.clear()
+        with dataset_info_container:
+            ui.label(f"✓ Image dataset loaded").style(f'color:{THEME_PRIMARY}; font-size: 0.75rem;')
+            ui.label(f"  Split: {split}").style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+            ui.label(f"  Samples: {AS.total_samples}").style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+            ui.label(f"  Size: {resolution}×{resolution} RGB").style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+            ui.label(f"  Classes: {len(AS.class_names)}").style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+        
+        analysis_log(f"HDF5 dataset loaded: {AS.total_samples} images (lazy loading)", 'success')
+        
+        if progress_slider:
+            progress_slider.set_value(0)
+            progress_slider._props['max'] = max(1, AS.total_samples - 1)
+        
+        return True
+    except Exception as e:
+        analysis_log(f"Error loading HDF5: {e}", 'error')
+        import traceback
+        analysis_log(traceback.format_exc(), 'error')
+        return False
+
+
+def load_image_folder_dataset(images_dir, split, base_path, dataset_info_container, progress_slider):
+    """Load an image dataset from folder structure (class_name/image.png)."""
+    import torch
+    import numpy as np
+    from PIL import Image
+    
+    try:
+        # Find all class directories
+        class_dirs = sorted([d for d in images_dir.iterdir() if d.is_dir()])
+        AS.class_names = [d.name for d in class_dirs]
+        
+        # Collect all images
+        samples = []
+        for class_idx, class_dir in enumerate(class_dirs):
+            for img_path in sorted(class_dir.glob('*.png')) + sorted(class_dir.glob('*.jpg')):
+                samples.append((str(img_path), class_idx))
+        
+        # Check for splits file
+        splits_path = base_path / 'splits.npz'
+        if splits_path.exists():
+            splits = np.load(splits_path)
+            if split in splits:
+                indices = splits[split]
+                samples = [samples[i] for i in indices if i < len(samples)]
+                analysis_log(f"Using '{split}' split: {len(samples)} samples", 'info')
+        
+        # Create lazy-loading dataset
+        class ImageDatasetWrapper:
+            def __init__(self, samples, class_names):
+                self.samples = samples
+                self.class_names = class_names
+            
+            def __len__(self):
+                return len(self.samples)
+            
+            def __getitem__(self, idx):
+                img_path, label = self.samples[idx]
+                img = Image.open(img_path).convert('RGB')
+                img_np = np.array(img, dtype=np.float32) / 255.0
+                # [H, W, 3] -> [3, H, W]
+                tensor = torch.from_numpy(img_np).permute(2, 0, 1)
+                return tensor, label
+        
+        AS.dataset = ImageDatasetWrapper(samples, AS.class_names)
+        AS.dataset_type = 'image'
+        AS.total_samples = len(AS.dataset)
+        AS.current_idx = 0
+        AS.dataset_path = str(images_dir)
+        
+        # Clear latent history
+        AS.latent_codes = []
+        AS.latent_labels = []
+        
+        # Get sample info
+        sample_img, _ = AS.dataset[0]
+        resolution = sample_img.shape[-1]
+        
+        dataset_info_container.clear()
+        with dataset_info_container:
+            ui.label(f"✓ Image folder loaded").style(f'color:{THEME_PRIMARY}; font-size: 0.75rem;')
+            ui.label(f"  Split: {split}").style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+            ui.label(f"  Samples: {AS.total_samples}").style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+            ui.label(f"  Size: {resolution}×{resolution} RGB").style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+            ui.label(f"  Classes: {len(AS.class_names)}").style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+        
+        analysis_log(f"Image folder loaded: {AS.total_samples} images, {len(AS.class_names)} classes", 'success')
+        
+        if progress_slider:
+            progress_slider.set_value(0)
+            progress_slider._props['max'] = max(1, AS.total_samples - 1)
+        
+        return True
+    except Exception as e:
+        analysis_log(f"Error loading image folder: {e}", 'error')
+        import traceback
+        analysis_log(traceback.format_exc(), 'error')
+        return False
+
+
 def compute_dataset_ranges():
     """
     Analyze dataset and model to compute fixed axis ranges.
@@ -3383,6 +3765,21 @@ def compute_dataset_ranges():
         return
     
     analysis_log("Computing axis ranges from dataset sample...", 'info')
+    
+    # Compute Kuramoto statistics from entire dataset
+    all_kuramoto = []
+    for sample in AS.dataset:
+        if hasattr(sample, 'graph_attr') and sample.graph_attr is not None and len(sample.graph_attr) > 0:
+            k_val = sample.graph_attr[0].item() if hasattr(sample.graph_attr[0], 'item') else float(sample.graph_attr[0])
+            all_kuramoto.append(k_val)
+    
+    if all_kuramoto:
+        AS.kuramoto_avg = float(np.mean(all_kuramoto))
+        AS.kuramoto_std = float(np.std(all_kuramoto))
+        analysis_log(f"Kuramoto: avg={AS.kuramoto_avg:.3f}, std={AS.kuramoto_std:.3f} (metastability)", 'info')
+    
+    # Clear kuramoto history for fresh start
+    AS.kuramoto_history = []
     
     # Sample a subset of the dataset for analysis
     n_samples = min(100, len(AS.dataset))
@@ -3402,8 +3799,8 @@ def compute_dataset_ranges():
                 # Get node features
                 all_features.append(batch.x.cpu().numpy())
                 
-                # Forward pass
-                output = AS.model(batch)
+                # Forward pass with activations
+                output = AS.model(batch, store_activations=True)
                 
                 # Get latent
                 if isinstance(output, dict) and 'mu' in output:
@@ -3511,17 +3908,27 @@ def analysis_page():
                 
                 model_info_container = ui.column().classes('w-full mt-2 gap-1')
                 
-                def load_model():
+                async def load_model():
                     try:
                         path = Path(model_path_input.value.strip())
                         if not path.exists():
                             ui.notify(f'Model not found: {path}', type='negative')
                             return
                         
-                        info = load_trained_model(path)
+                        # Show loading indicator
+                        model_info_container.clear()
+                        with model_info_container:
+                            ui.label(f"⏳ Loading model...").style(f'color:{THEME_WARN}; font-size: 0.75rem;')
+                            ui.label(f"  This may take a moment").style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                        
+                        # Load model in background thread to avoid blocking UI
+                        loop = asyncio.get_event_loop()
+                        info = await loop.run_in_executor(None, load_trained_model, path)
+                        
                         model_info_container.clear()
                         with model_info_container:
                             ui.label(f"✓ Model loaded").style(f'color:{THEME_PRIMARY}; font-size: 0.75rem;')
+                            ui.label(f"  Type: {info.get('model_type', 'graph')}").style(f'color:{THEME_SECONDARY}; font-size: 0.7rem;')
                             ui.label(f"  Epoch: {info['epoch']}").style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
                             ui.label(f"  Val Loss: {info['val_loss']:.4f}" if isinstance(info['val_loss'], float) else f"  Val Loss: {info['val_loss']}").style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
                             ui.label(f"  Device: {AS.device}").style(f'color:{THEME_SECONDARY}; font-size: 0.7rem;')
@@ -3531,8 +3938,13 @@ def analysis_page():
                         if AS.dataset is not None:
                             compute_dataset_ranges()
                     except Exception as e:
+                        model_info_container.clear()
+                        with model_info_container:
+                            ui.label(f"✗ Error loading model").style(f'color:{THEME_ERROR}; font-size: 0.75rem;')
                         ui.notify(f'Error: {e}', type='negative')
                         analysis_log(f"Error loading model: {e}", 'error')
+                        import traceback
+                        analysis_log(traceback.format_exc(), 'error')
                 
                 ui.button('Load Model', on_click=load_model, icon='upload').props('dense').classes('mt-2').style(f'background:{THEME_WARN}; color:black;')
             
@@ -3554,86 +3966,111 @@ def analysis_page():
                 def load_dataset():
                     import torch
                     import pickle
+                    import h5py
+                    import numpy as np
                     try:
                         cache_path = Path(dataset_path_input.value.strip())
                         split = split_select.value
-                        cache_file = None
                         
-                        # Check if path is a file directly
-                        if cache_path.is_file():
-                            cache_file = cache_path
-                        else:
-                            # It's a directory, search for dataset files
-                            possible_files = [
-                                cache_path / f'{split}_dataset.pt',
-                                cache_path / 'processed_dataset.pt',
-                                cache_path / f'{split}_dataset.pkl',
-                                cache_path / 'processed_dataset.pkl',
-                            ]
-                            for f in possible_files:
-                                if f.exists():
-                                    cache_file = f
-                                    break
+                        # Detect dataset type
+                        dataset_loaded = False
+                        
+                        # Check for HDF5 image dataset
+                        h5_files = list(cache_path.glob('*.h5')) if cache_path.is_dir() else []
+                        if cache_path.suffix == '.h5' or h5_files:
+                            h5_path = cache_path if cache_path.suffix == '.h5' else h5_files[0]
+                            dataset_loaded = load_hdf5_image_dataset(h5_path, split, dataset_info_container, progress_slider)
+                        
+                        # Check for image folder dataset
+                        if not dataset_loaded and cache_path.is_dir():
+                            images_dir = cache_path / 'images' if (cache_path / 'images').exists() else cache_path
+                            subdirs = [d for d in images_dir.iterdir() if d.is_dir()]
+                            has_images = any(list(d.glob('*.png'))[:1] or list(d.glob('*.jpg'))[:1] for d in subdirs[:3])
+                            if has_images:
+                                dataset_loaded = load_image_folder_dataset(images_dir, split, cache_path, dataset_info_container, progress_slider)
+                        
+                        # Fallback to graph dataset loading
+                        if not dataset_loaded:
+                            cache_file = None
                             
-                            # If still not found, search for any dataset file
-                            if not cache_file:
-                                for pattern in ['dataset*.pkl', 'dataset*.pt', '*.pkl', '*.pt']:
-                                    files = list(cache_path.glob(pattern))
-                                    if files:
-                                        cache_file = files[0]
+                            # Check if path is a file directly
+                            if cache_path.is_file():
+                                cache_file = cache_path
+                            else:
+                                # It's a directory, search for dataset files
+                                possible_files = [
+                                    cache_path / f'{split}_dataset.pt',
+                                    cache_path / 'processed_dataset.pt',
+                                    cache_path / f'{split}_dataset.pkl',
+                                    cache_path / 'processed_dataset.pkl',
+                                ]
+                                for f in possible_files:
+                                    if f.exists():
+                                        cache_file = f
                                         break
+                                
+                                # If still not found, search for any dataset file
+                                if not cache_file:
+                                    for pattern in ['dataset*.pkl', 'dataset*.pt', '*.pkl', '*.pt']:
+                                        files = list(cache_path.glob(pattern))
+                                        if files:
+                                            cache_file = files[0]
+                                            break
+                            
+                            if cache_file and cache_file.exists():
+                                # Load based on file extension
+                                if cache_file.suffix == '.pkl':
+                                    with open(cache_file, 'rb') as f:
+                                        data = pickle.load(f)
+                                else:
+                                    data = torch.load(cache_file, weights_only=False)
+                                
+                                # Handle dict with train/val/test splits
+                                if isinstance(data, dict) and split in data:
+                                    graphs = data[split]
+                                    analysis_log(f"Using '{split}' split from dataset", 'info')
+                                elif isinstance(data, dict) and 'train' in data:
+                                    # Default to train if requested split not found
+                                    available = list(data.keys())
+                                    graphs = data.get(split, data['train'])
+                                    analysis_log(f"Available splits: {available}, using '{split}'", 'info')
+                                elif isinstance(data, list):
+                                    graphs = data
+                                elif hasattr(data, '__len__'):
+                                    graphs = list(data)
+                                else:
+                                    graphs = [data]
+                                
+                                AS.dataset = graphs
+                                AS.dataset_type = 'graph'
+                                AS.total_samples = len(AS.dataset)
+                                AS.current_idx = 0
+                                AS.dataset_path = str(cache_file)
+                                
+                                # Clear latent history for fresh PCA
+                                AS.latent_codes = []
+                                AS.latent_labels = []
+                                
+                                dataset_info_container.clear()
+                                with dataset_info_container:
+                                    ui.label(f"✓ Graph dataset loaded").style(f'color:{THEME_PRIMARY}; font-size: 0.75rem;')
+                                    ui.label(f"  Split: {split}").style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                                    ui.label(f"  Samples: {AS.total_samples}").style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                                    if AS.dataset and hasattr(AS.dataset[0], 'x'):
+                                        sample = AS.dataset[0]
+                                        ui.label(f"  Nodes: {sample.x.shape[0]}, Features: {sample.x.shape[1]}").style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                                
+                                analysis_log(f"Dataset loaded: {AS.total_samples} samples from {cache_file.name}", 'success')
+                                if progress_slider:
+                                    progress_slider.set_value(0)
+                                    progress_slider._props['max'] = max(1, AS.total_samples - 1)
+                                
+                                # Compute axis ranges if model is loaded
+                                if AS.model is not None:
+                                    compute_dataset_ranges()
+                                dataset_loaded = True
                         
-                        if cache_file and cache_file.exists():
-                            # Load based on file extension
-                            if cache_file.suffix == '.pkl':
-                                with open(cache_file, 'rb') as f:
-                                    data = pickle.load(f)
-                            else:
-                                data = torch.load(cache_file, weights_only=False)
-                            
-                            # Handle dict with train/val/test splits
-                            if isinstance(data, dict) and split in data:
-                                graphs = data[split]
-                                analysis_log(f"Using '{split}' split from dataset", 'info')
-                            elif isinstance(data, dict) and 'train' in data:
-                                # Default to train if requested split not found
-                                available = list(data.keys())
-                                graphs = data.get(split, data['train'])
-                                analysis_log(f"Available splits: {available}, using '{split}'", 'info')
-                            elif isinstance(data, list):
-                                graphs = data
-                            elif hasattr(data, '__len__'):
-                                graphs = list(data)
-                            else:
-                                graphs = [data]
-                            
-                            AS.dataset = graphs
-                            AS.total_samples = len(AS.dataset)
-                            AS.current_idx = 0
-                            AS.dataset_path = str(cache_file)
-                            
-                            # Clear latent history for fresh PCA
-                            AS.latent_codes = []
-                            AS.latent_labels = []
-                            
-                            dataset_info_container.clear()
-                            with dataset_info_container:
-                                ui.label(f"✓ Dataset loaded").style(f'color:{THEME_PRIMARY}; font-size: 0.75rem;')
-                                ui.label(f"  Split: {split}").style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
-                                ui.label(f"  Samples: {AS.total_samples}").style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
-                                if AS.dataset and hasattr(AS.dataset[0], 'x'):
-                                    sample = AS.dataset[0]
-                                    ui.label(f"  Nodes: {sample.x.shape[0]}, Features: {sample.x.shape[1]}").style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
-                            
-                            analysis_log(f"Dataset loaded: {AS.total_samples} samples from {cache_file.name}", 'success')
-                            if progress_slider:
-                                progress_slider.set_value(0)
-                                progress_slider._props['max'] = max(1, AS.total_samples - 1)
-                            
-                            # Compute axis ranges if model is loaded
-                            if AS.model is not None:
-                                compute_dataset_ranges()
-                        else:
+                        if not dataset_loaded:
                             ui.notify(f'Dataset not found at {cache_path}', type='warning')
                             analysis_log(f"Dataset not found: {cache_path}", 'warning')
                     except Exception as e:
@@ -3730,56 +4167,132 @@ def analysis_page():
         # RIGHT PANEL: Visualizations
         with ui.column().classes('flex-1 gap-3').style('min-height: 0; overflow-y: auto;'):
             
-            # TOP ROW: Architecture + Latent Space
+            # ROW 1: KURAMOTO ORDER PARAMETER (progress bar style)
+            with ui.card().classes('dark-card p-3 w-full'):
+                ui.label('▌KURAMOTO ORDER PARAMETER').style(f'color:{THEME_WARN}; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-2')
+                
+                def make_kuramoto_fig():
+                    """Create Kuramoto order parameter visualization."""
+                    fig = go.Figure()
+                    
+                    n_total = AS.total_samples if AS.total_samples > 0 else 100
+                    
+                    # Metastability band (std around mean)
+                    if AS.kuramoto_avg > 0:
+                        fig.add_trace(go.Scatter(
+                            x=list(range(n_total)) + list(range(n_total-1, -1, -1)),
+                            y=[AS.kuramoto_avg + AS.kuramoto_std] * n_total + [AS.kuramoto_avg - AS.kuramoto_std] * n_total,
+                            fill='toself',
+                            fillcolor='rgba(100, 150, 200, 0.2)',
+                            line=dict(width=0),
+                            name='Metastability',
+                            showlegend=True
+                        ))
+                    
+                    # Average line (dashed)
+                    fig.add_trace(go.Scatter(
+                        x=[0, n_total-1],
+                        y=[AS.kuramoto_avg, AS.kuramoto_avg],
+                        mode='lines',
+                        line=dict(color='rgba(150, 200, 255, 0.7)', width=2, dash='dash'),
+                        name=f'Avg: {AS.kuramoto_avg:.3f}'
+                    ))
+                    
+                    # Scatter points for processed samples
+                    if AS.kuramoto_history:
+                        indices, values = zip(*AS.kuramoto_history)
+                        # Color by label
+                        colors = [['#00ff88', '#f472b6', '#00d4ff'][AS.latent_labels[i] % 3] if i < len(AS.latent_labels) else THEME_PRIMARY for i in range(len(indices))]
+                        fig.add_trace(go.Scatter(
+                            x=indices,
+                            y=values,
+                            mode='markers',
+                            marker=dict(size=5, color=colors, opacity=0.8),
+                            name='Samples'
+                        ))
+                        
+                        # Current point highlighted
+                        if len(indices) > 0:
+                            fig.add_trace(go.Scatter(
+                                x=[indices[-1]],
+                                y=[values[-1]],
+                                mode='markers',
+                                marker=dict(size=12, color=THEME_WARN, symbol='star', line=dict(width=2, color='white')),
+                                name='Current'
+                            ))
+                    
+                    fig.update_layout(
+                        template='plotly_dark',
+                        paper_bgcolor='rgba(8,8,8,1)',
+                        plot_bgcolor='rgba(8,8,8,1)',
+                        height=120,
+                        margin=dict(l=40, r=10, t=5, b=30),
+                        xaxis=dict(title='Sample Index', range=[0, n_total], gridcolor='rgba(255,204,0,0.1)'),
+                        yaxis=dict(title='r', range=[0, 1], gridcolor='rgba(255,204,0,0.1)'),
+                        legend=dict(orientation='h', y=1.15, font=dict(size=8)),
+                        font=dict(family='JetBrains Mono', size=9, color=THEME_TEXT)
+                    )
+                    return fig
+                
+                kuramoto_plot = ui.plotly(make_kuramoto_fig()).classes('w-full').style('height: 120px;')
+                AS.activation_plots['kuramoto'] = kuramoto_plot
+            
+            # ROW 2: ENCODER + LATENT + DECODER (heatmaps)
             with ui.row().classes('gap-3 w-full'):
                 
-                # ENCODER ACTIVATIONS
+                # ENCODER ACTIVATIONS (as heatmap)
                 with ui.card().classes('dark-card p-3 flex-1'):
-                    ui.label('▌ENCODER ACTIVATIONS').style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-2')
-                    
-                    encoder_plot_container = ui.column().classes('w-full')
+                    ui.label('▌ENCODER (layers 1→3)').style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.75rem;').classes('mb-1')
                     
                     def make_encoder_fig():
-                        """Create encoder activation visualization."""
-                        from plotly.subplots import make_subplots
+                        """Create encoder activation heatmap."""
+                        fig = go.Figure()
                         
-                        # Get number of layers
-                        n_layers = len([k for k in AS.activations.keys() if 'conv' in k]) or 3
+                        act_range = AS.axis_ranges['activations']
                         
-                        fig = make_subplots(rows=1, cols=n_layers, 
-                                           subplot_titles=[f'Layer {i+1}' for i in range(n_layers)])
+                        # Stack activations from all encoder layers vertically
+                        all_acts = []
+                        layer_labels = []
                         
-                        for i in range(n_layers):
+                        for i in range(3):
                             layer_name = f'encoder.conv_{i}'
                             if layer_name in AS.activations:
                                 act = AS.activations[layer_name]
-                                # Take mean across nodes, show feature distribution
                                 if len(act.shape) > 1:
-                                    feat_means = act.mean(dim=0).numpy() if hasattr(act, 'mean') else act.mean(axis=0)
-                                    fig.add_trace(go.Bar(y=feat_means[:32], marker_color=THEME_PRIMARY, showlegend=False), row=1, col=i+1)
+                                    # (nodes, features) -> take first 32 features
+                                    act_np = act.cpu().numpy() if hasattr(act, 'cpu') else act
+                                    all_acts.append(act_np[:, :min(32, act_np.shape[1])])
+                                    layer_labels.append(f'L{i+1}')
                         
-                        # Use fixed axis ranges
-                        y_range = [AS.axis_ranges['activations']['min'], AS.axis_ranges['activations']['max']]
+                        if all_acts:
+                            # Combine into single heatmap (layers stacked)
+                            combined = np.vstack(all_acts)
+                            fig.add_trace(go.Heatmap(
+                                z=combined.T,
+                                colorscale='Viridis',
+                                zmin=act_range['min'],
+                                zmax=act_range['max'],
+                                showscale=False
+                            ))
                         
                         fig.update_layout(
                             template='plotly_dark',
                             paper_bgcolor='rgba(8,8,8,1)',
                             plot_bgcolor='rgba(8,8,8,1)',
-                            height=200,
-                            margin=dict(l=30, r=10, t=30, b=20),
-                            font=dict(family='JetBrains Mono', size=9, color=THEME_TEXT)
+                            height=150,
+                            margin=dict(l=30, r=10, t=5, b=25),
+                            xaxis=dict(title='Nodes'),
+                            yaxis=dict(title='Feat'),
+                            font=dict(family='JetBrains Mono', size=8, color=THEME_TEXT)
                         )
-                        # Fix y-axis for all subplots
-                        for i in range(n_layers):
-                            fig.update_yaxes(range=y_range, row=1, col=i+1)
                         return fig
                     
-                    encoder_plot = ui.plotly(make_encoder_fig()).classes('w-full').style('height: 200px;')
+                    encoder_plot = ui.plotly(make_encoder_fig()).classes('w-full').style('height: 150px;')
                     AS.activation_plots['encoder'] = encoder_plot
                 
                 # LATENT SPACE PCA
-                with ui.card().classes('dark-card p-3').style('width: 300px;'):
-                    ui.label('▌LATENT SPACE (PCA)').style(f'color:{THEME_SECONDARY}; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-2')
+                with ui.card().classes('dark-card p-3').style('width: 280px;'):
+                    ui.label('▌LATENT (μ, σ)').style(f'color:{THEME_SECONDARY}; font-family: JetBrains Mono; font-size: 0.75rem;').classes('mb-1')
                     
                     def make_latent_fig():
                         """Create latent space PCA visualization."""
@@ -3787,87 +4300,160 @@ def analysis_page():
                         
                         X_pca, labels = compute_latent_pca()
                         if X_pca is not None:
-                            # Color by label
                             colors = ['#00ff88', '#f472b6', '#00d4ff']
                             for label in np.unique(labels):
                                 mask = labels == label
                                 fig.add_trace(go.Scatter(
                                     x=X_pca[mask, 0], y=X_pca[mask, 1],
                                     mode='markers',
-                                    marker=dict(size=6, color=colors[int(label) % len(colors)], opacity=0.6),
-                                    name=f'Class {int(label)}'
+                                    marker=dict(size=5, color=colors[int(label) % len(colors)], opacity=0.6),
+                                    name=f'C{int(label)}'
                                 ))
-                            
-                            # Highlight current point
                             if len(X_pca) > 0:
                                 fig.add_trace(go.Scatter(
                                     x=[X_pca[-1, 0]], y=[X_pca[-1, 1]],
                                     mode='markers',
-                                    marker=dict(size=15, color=THEME_WARN, symbol='star', line=dict(width=2, color='white')),
-                                    name='Current'
+                                    marker=dict(size=12, color=THEME_WARN, symbol='star'),
+                                    name='Now'
                                 ))
                         
-                        # Use fixed axis ranges
                         lat_range = AS.axis_ranges['latent']
+                        fig.update_layout(
+                            template='plotly_dark',
+                            paper_bgcolor='rgba(8,8,8,1)',
+                            plot_bgcolor='rgba(8,8,8,1)',
+                            height=150,
+                            margin=dict(l=25, r=5, t=5, b=25),
+                            xaxis=dict(title='PC1', gridcolor='rgba(0,255,136,0.1)', 
+                                      range=[lat_range['x_min'], lat_range['x_max']]),
+                            yaxis=dict(title='PC2', gridcolor='rgba(0,255,136,0.1)',
+                                      range=[lat_range['y_min'], lat_range['y_max']]),
+                            legend=dict(orientation='h', y=1.1, font=dict(size=7)),
+                            font=dict(family='JetBrains Mono', size=8, color=THEME_TEXT)
+                        )
+                        return fig
+                    
+                    latent_plot = ui.plotly(make_latent_fig()).classes('w-full').style('height: 150px;')
+                    AS.latent_plot = latent_plot
+                
+                # DECODER ACTIVATIONS (as heatmap)
+                with ui.card().classes('dark-card p-3 flex-1'):
+                    ui.label('▌DECODER (layers 3→1)').style(f'color:#f472b6; font-family: JetBrains Mono; font-size: 0.75rem;').classes('mb-1')
+                    
+                    def make_decoder_fig():
+                        """Create decoder activation heatmap."""
+                        fig = go.Figure()
+                        act_range = AS.axis_ranges['activations']
+                        
+                        # Stack decoder activations (if available)
+                        all_acts = []
+                        for i in range(3):
+                            layer_name = f'decoder.conv_{i}'
+                            if layer_name in AS.activations:
+                                act = AS.activations[layer_name]
+                                if len(act.shape) > 1:
+                                    act_np = act.cpu().numpy() if hasattr(act, 'cpu') else act
+                                    all_acts.append(act_np[:, :min(32, act_np.shape[1])])
+                        
+                        if all_acts:
+                            combined = np.vstack(all_acts)
+                            fig.add_trace(go.Heatmap(
+                                z=combined.T,
+                                colorscale='Magma',
+                                zmin=act_range['min'],
+                                zmax=act_range['max'],
+                                showscale=False
+                            ))
                         
                         fig.update_layout(
                             template='plotly_dark',
                             paper_bgcolor='rgba(8,8,8,1)',
                             plot_bgcolor='rgba(8,8,8,1)',
-                            height=200,
-                            margin=dict(l=30, r=10, t=10, b=30),
-                            xaxis=dict(title='PC1', gridcolor='rgba(0,255,136,0.1)', 
-                                      range=[lat_range['x_min'], lat_range['x_max']]),
-                            yaxis=dict(title='PC2', gridcolor='rgba(0,255,136,0.1)',
-                                      range=[lat_range['y_min'], lat_range['y_max']]),
-                            legend=dict(orientation='h', y=-0.2, font=dict(size=8)),
-                            font=dict(family='JetBrains Mono', size=9, color=THEME_TEXT)
+                            height=150,
+                            margin=dict(l=30, r=10, t=5, b=25),
+                            xaxis=dict(title='Nodes'),
+                            yaxis=dict(title='Feat'),
+                            font=dict(family='JetBrains Mono', size=8, color=THEME_TEXT)
                         )
                         return fig
                     
-                    latent_plot = ui.plotly(make_latent_fig()).classes('w-full').style('height: 200px;')
-                    AS.latent_plot = latent_plot
+                    decoder_plot = ui.plotly(make_decoder_fig()).classes('w-full').style('height: 150px;')
+                    AS.activation_plots['decoder'] = decoder_plot
             
-            # MIDDLE ROW: Attention Weights
+            # ROW 3: ATTENTION WEIGHTS (per layer)
             with ui.card().classes('dark-card p-3 w-full'):
-                ui.label('▌ATTENTION WEIGHTS').style(f'color:{THEME_WARN}; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-2')
-                
-                attention_plot_container = ui.column().classes('w-full')
+                ui.label('▌ATTENTION WEIGHTS (GAT layers)').style(f'color:{THEME_WARN}; font-family: JetBrains Mono; font-size: 0.75rem;').classes('mb-1')
                 
                 def make_attention_fig():
-                    """Create attention heatmap visualization."""
-                    fig = go.Figure()
+                    """Create attention heatmap visualization using REAL GAT attention weights."""
+                    from plotly.subplots import make_subplots
                     
-                    # Get fixed number of nodes from dataset
                     n_nodes = AS.model_params.get('num_nodes', 24) if AS.model_params else 24
                     
-                    # Try to get attention from current sample
-                    if AS.current_sample is not None and hasattr(AS.current_sample, 'x'):
-                        actual_nodes = min(n_nodes, AS.current_sample.x.shape[0])
-                        # Create synthetic attention matrix for visualization
-                        # In reality, this would come from the GAT layer
-                        attn_matrix = np.random.rand(actual_nodes, actual_nodes) * 0.5
-                        np.fill_diagonal(attn_matrix, 1.0)
-                        
-                        fig.add_trace(go.Heatmap(
-                            z=attn_matrix,
-                            colorscale='Viridis',
-                            showscale=True,
-                            zmin=0,
-                            zmax=1,
-                            colorbar=dict(title='α', len=0.8)
-                        ))
+                    # Check how many layers have attention
+                    n_layers = len(AS.attention_weights) if AS.attention_weights else 0
+                    
+                    if n_layers == 0:
+                        # Fallback: no attention data yet
+                        fig = go.Figure()
+                        fig.add_annotation(text="No attention data", x=0.5, y=0.5, showarrow=False)
+                        fig.update_layout(
+                            template='plotly_dark',
+                            paper_bgcolor='rgba(8,8,8,1)',
+                            plot_bgcolor='rgba(8,8,8,1)',
+                            height=150,
+                            margin=dict(l=10, r=10, t=10, b=10)
+                        )
+                        return fig
+                    
+                    # Create subplot for each layer
+                    fig = make_subplots(rows=1, cols=n_layers, 
+                                       subplot_titles=[f'Layer {i+1}' for i in range(n_layers)])
+                    
+                    for i, (layer_name, att_data) in enumerate(AS.attention_weights.items()):
+                        if 'attention' in att_data and 'edge_index' in att_data:
+                            edge_index = att_data['edge_index'].numpy()
+                            alpha = att_data['attention'].numpy()
+                            
+                            # Build attention matrix from sparse edge data
+                            # alpha shape: (num_edges, num_heads) - average across heads
+                            if len(alpha.shape) > 1:
+                                alpha_avg = alpha.mean(axis=1)
+                            else:
+                                alpha_avg = alpha
+                            
+                            # Create dense attention matrix
+                            actual_nodes = min(n_nodes, int(edge_index.max()) + 1) if edge_index.size > 0 else n_nodes
+                            attn_matrix = np.zeros((actual_nodes, actual_nodes))
+                            
+                            for e_idx in range(edge_index.shape[1]):
+                                src, tgt = edge_index[0, e_idx], edge_index[1, e_idx]
+                                if src < actual_nodes and tgt < actual_nodes:
+                                    attn_matrix[src, tgt] = alpha_avg[e_idx] if e_idx < len(alpha_avg) else 0
+                            
+                            fig.add_trace(go.Heatmap(
+                                z=attn_matrix,
+                                colorscale='Viridis',
+                                showscale=(i == n_layers - 1),  # Only show colorbar on last
+                                zmin=0,
+                                zmax=1,
+                                colorbar=dict(title='α', len=0.8) if i == n_layers - 1 else None
+                            ), row=1, col=i+1)
                     
                     fig.update_layout(
                         template='plotly_dark',
                         paper_bgcolor='rgba(8,8,8,1)',
                         plot_bgcolor='rgba(8,8,8,1)',
-                        height=180,
-                        margin=dict(l=30, r=50, t=10, b=30),
-                        xaxis=dict(title='Target Node', gridcolor='rgba(255,204,0,0.1)', range=[-0.5, n_nodes-0.5]),
-                        yaxis=dict(title='Source Node', gridcolor='rgba(255,204,0,0.1)', range=[-0.5, n_nodes-0.5]),
-                        font=dict(family='JetBrains Mono', size=9, color=THEME_TEXT)
+                        height=150,
+                        margin=dict(l=30, r=50, t=25, b=25),
+                        font=dict(family='JetBrains Mono', size=8, color=THEME_TEXT)
                     )
+                    
+                    # Update axes for all subplots
+                    for i in range(n_layers):
+                        fig.update_xaxes(title_text='Target' if i == 0 else '', row=1, col=i+1)
+                        fig.update_yaxes(title_text='Source' if i == 0 else '', row=1, col=i+1)
+                    
                     return fig
                 
                 attention_plot = ui.plotly(make_attention_fig()).classes('w-full').style('height: 180px;')
@@ -3882,8 +4468,28 @@ def analysis_page():
                     
                     def make_original_fig():
                         fig = go.Figure()
-                        feat_range = AS.axis_ranges['node_features']
-                        if AS.current_sample is not None and hasattr(AS.current_sample, 'x'):
+                        
+                        if AS.model_type == 'image' and AS.current_sample is not None:
+                            # Image model: show RGB image
+                            img = AS.current_sample.cpu().numpy()
+                            if img.ndim == 4:
+                                img = img[0]  # Remove batch dim
+                            # [C, H, W] -> [H, W, C]
+                            if img.shape[0] == 3:
+                                img = np.transpose(img, (1, 2, 0))
+                            # Clip to [0, 1] for display
+                            img = np.clip(img, 0, 1)
+                            # Resize for faster display if too large
+                            display_size = min(256, img.shape[0])
+                            if img.shape[0] > display_size:
+                                from scipy.ndimage import zoom
+                                scale = display_size / img.shape[0]
+                                img = zoom(img, (scale, scale, 1), order=1)
+                            fig.add_trace(go.Image(z=(img * 255).astype(np.uint8)))
+                            fig.update_layout(height=200)
+                        elif AS.current_sample is not None and hasattr(AS.current_sample, 'x'):
+                            # Graph model: show heatmap
+                            feat_range = AS.axis_ranges['node_features']
                             x = AS.current_sample.x.cpu().numpy()
                             fig.add_trace(go.Heatmap(
                                 z=x[:24, :].T, 
@@ -3892,19 +4498,20 @@ def analysis_page():
                                 zmin=feat_range['min'],
                                 zmax=feat_range['max']
                             ))
+                        
                         fig.update_layout(
                             template='plotly_dark',
                             paper_bgcolor='rgba(8,8,8,1)',
                             plot_bgcolor='rgba(8,8,8,1)',
-                            height=150,
-                            margin=dict(l=30, r=10, t=10, b=30),
-                            xaxis=dict(title='Nodes'),
-                            yaxis=dict(title='Features'),
+                            height=200 if AS.model_type == 'image' else 150,
+                            margin=dict(l=10, r=10, t=10, b=10) if AS.model_type == 'image' else dict(l=30, r=10, t=10, b=30),
+                            xaxis=dict(showticklabels=False, showgrid=False) if AS.model_type == 'image' else dict(title='Nodes'),
+                            yaxis=dict(showticklabels=False, showgrid=False) if AS.model_type == 'image' else dict(title='Features'),
                             font=dict(family='JetBrains Mono', size=9, color=THEME_TEXT)
                         )
                         return fig
                     
-                    original_plot = ui.plotly(make_original_fig()).classes('w-full').style('height: 150px;')
+                    original_plot = ui.plotly(make_original_fig()).classes('w-full').style('height: 200px;')
                     AS.activation_plots['original'] = original_plot
                 
                 # RECONSTRUCTED
@@ -3913,8 +4520,29 @@ def analysis_page():
                     
                     def make_recon_fig():
                         fig = go.Figure()
-                        feat_range = AS.axis_ranges['node_features']
-                        if AS.current_recon is not None and 'x_recon' in AS.current_recon:
+                        
+                        if AS.model_type == 'image' and AS.current_recon is not None:
+                            # Image model: show RGB reconstruction
+                            recon_key = 'reconstruction' if 'reconstruction' in AS.current_recon else 'x_recon'
+                            if recon_key in AS.current_recon:
+                                img = AS.current_recon[recon_key].cpu().numpy()
+                                if img.ndim == 4:
+                                    img = img[0]  # Remove batch dim
+                                # [C, H, W] -> [H, W, C]
+                                if img.shape[0] == 3:
+                                    img = np.transpose(img, (1, 2, 0))
+                                img = np.clip(img, 0, 1)
+                                # Resize for display
+                                display_size = min(256, img.shape[0])
+                                if img.shape[0] > display_size:
+                                    from scipy.ndimage import zoom
+                                    scale = display_size / img.shape[0]
+                                    img = zoom(img, (scale, scale, 1), order=1)
+                                fig.add_trace(go.Image(z=(img * 255).astype(np.uint8)))
+                                fig.update_layout(height=200)
+                        elif AS.current_recon is not None and 'x_recon' in AS.current_recon:
+                            # Graph model: show heatmap
+                            feat_range = AS.axis_ranges['node_features']
                             x_recon = AS.current_recon['x_recon'].cpu().numpy()
                             fig.add_trace(go.Heatmap(
                                 z=x_recon[:24, :].T, 
@@ -3923,19 +4551,20 @@ def analysis_page():
                                 zmin=feat_range['min'],
                                 zmax=feat_range['max']
                             ))
+                        
                         fig.update_layout(
                             template='plotly_dark',
                             paper_bgcolor='rgba(8,8,8,1)',
                             plot_bgcolor='rgba(8,8,8,1)',
-                            height=150,
-                            margin=dict(l=30, r=10, t=10, b=30),
-                            xaxis=dict(title='Nodes'),
-                            yaxis=dict(title='Features'),
+                            height=200 if AS.model_type == 'image' else 150,
+                            margin=dict(l=10, r=10, t=10, b=10) if AS.model_type == 'image' else dict(l=30, r=10, t=10, b=30),
+                            xaxis=dict(showticklabels=False, showgrid=False) if AS.model_type == 'image' else dict(title='Nodes'),
+                            yaxis=dict(showticklabels=False, showgrid=False) if AS.model_type == 'image' else dict(title='Features'),
                             font=dict(family='JetBrains Mono', size=9, color=THEME_TEXT)
                         )
                         return fig
                     
-                    recon_plot = ui.plotly(make_recon_fig()).classes('w-full').style('height: 150px;')
+                    recon_plot = ui.plotly(make_recon_fig()).classes('w-full').style('height: 200px;')
                     AS.recon_plot = recon_plot
                 
                 # DIFFERENCE
@@ -3944,10 +4573,39 @@ def analysis_page():
                     
                     def make_diff_fig():
                         fig = go.Figure()
-                        feat_range = AS.axis_ranges['node_features']
-                        diff_max = (feat_range['max'] - feat_range['min']) * 0.5  # Max expected diff
-                        if AS.current_sample is not None and AS.current_recon is not None:
+                        
+                        if AS.model_type == 'image' and AS.current_sample is not None and AS.current_recon is not None:
+                            # Image model: show difference image
+                            recon_key = 'reconstruction' if 'reconstruction' in AS.current_recon else 'x_recon'
+                            if recon_key in AS.current_recon:
+                                orig = AS.current_sample.cpu().numpy()
+                                recon = AS.current_recon[recon_key].cpu().numpy()
+                                if orig.ndim == 4:
+                                    orig = orig[0]
+                                if recon.ndim == 4:
+                                    recon = recon[0]
+                                # Compute absolute difference
+                                diff = np.abs(orig - recon)
+                                # [C, H, W] -> [H, W, C]
+                                if diff.shape[0] == 3:
+                                    diff = np.transpose(diff, (1, 2, 0))
+                                # Amplify for visibility and convert to grayscale-ish
+                                diff_gray = np.mean(diff, axis=2)
+                                diff_display = np.stack([diff_gray, diff_gray * 0.3, diff_gray * 0.3], axis=2)
+                                diff_display = np.clip(diff_display * 3, 0, 1)  # Amplify
+                                # Resize
+                                display_size = min(256, diff_display.shape[0])
+                                if diff_display.shape[0] > display_size:
+                                    from scipy.ndimage import zoom
+                                    scale = display_size / diff_display.shape[0]
+                                    diff_display = zoom(diff_display, (scale, scale, 1), order=1)
+                                fig.add_trace(go.Image(z=(diff_display * 255).astype(np.uint8)))
+                                fig.update_layout(height=200)
+                        elif AS.current_sample is not None and AS.current_recon is not None:
+                            # Graph model
                             if hasattr(AS.current_sample, 'x') and 'x_recon' in AS.current_recon:
+                                feat_range = AS.axis_ranges['node_features']
+                                diff_max = (feat_range['max'] - feat_range['min']) * 0.5
                                 x = AS.current_sample.x.cpu().numpy()
                                 x_recon = AS.current_recon['x_recon'].cpu().numpy()
                                 diff = np.abs(x - x_recon)
@@ -3959,19 +4617,20 @@ def analysis_page():
                                     zmax=diff_max,
                                     colorbar=dict(title='|Δ|', len=0.8)
                                 ))
+                        
                         fig.update_layout(
                             template='plotly_dark',
                             paper_bgcolor='rgba(8,8,8,1)',
                             plot_bgcolor='rgba(8,8,8,1)',
-                            height=150,
-                            margin=dict(l=30, r=50, t=10, b=30),
-                            xaxis=dict(title='Nodes'),
-                            yaxis=dict(title='Features'),
+                            height=200 if AS.model_type == 'image' else 150,
+                            margin=dict(l=10, r=10, t=10, b=10) if AS.model_type == 'image' else dict(l=30, r=50, t=10, b=30),
+                            xaxis=dict(showticklabels=False, showgrid=False) if AS.model_type == 'image' else dict(title='Nodes'),
+                            yaxis=dict(showticklabels=False, showgrid=False) if AS.model_type == 'image' else dict(title='Features'),
                             font=dict(family='JetBrains Mono', size=9, color=THEME_TEXT)
                         )
                         return fig
                     
-                    diff_plot = ui.plotly(make_diff_fig()).classes('w-full').style('height: 150px;')
+                    diff_plot = ui.plotly(make_diff_fig()).classes('w-full').style('height: 200px;')
                     AS.activation_plots['diff'] = diff_plot
         
         # Process sample and update all plots
@@ -3991,24 +4650,53 @@ def analysis_page():
                     analysis_log(f"Failed to process sample {AS.current_idx}", 'error')
                     return
                 
-                # Update sample info
+                # Update sample info based on model type
                 if AS.sample_info_container:
                     AS.sample_info_container.clear()
                     with AS.sample_info_container:
                         ui.label(f'Index: {AS.current_idx}').style(f'color:{THEME_PRIMARY}; font-size: 0.7rem;')
-                        if hasattr(sample, 'y') and sample.y is not None:
-                            lbl = sample.y.item() if hasattr(sample.y, "item") else sample.y
-                            ui.label(f'Label: {lbl}').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
-                        if hasattr(sample, 'x'):
-                            ui.label(f'Nodes: {sample.x.shape[0]}').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
-                            ui.label(f'Features: {sample.x.shape[1]}').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
-                        if AS.current_z is not None:
-                            ui.label(f'Latent dim: {AS.current_z.shape[-1]}').style(f'color:{THEME_SECONDARY}; font-size: 0.7rem;')
+                        
+                        if AS.model_type == 'image':
+                            # Image model info
+                            if AS.current_label is not None:
+                                lbl = AS.current_label
+                                class_name = AS.class_names[lbl] if lbl < len(AS.class_names) else str(lbl)
+                                ui.label(f'Class: {class_name} ({lbl})').style(f'color:{THEME_SECONDARY}; font-size: 0.7rem;')
+                            if AS.current_sample is not None:
+                                shape = AS.current_sample.shape
+                                if len(shape) == 4:
+                                    ui.label(f'Size: {shape[2]}×{shape[3]} RGB').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                                elif len(shape) == 3:
+                                    ui.label(f'Size: {shape[1]}×{shape[2]} RGB').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                            # Show classification prediction if available
+                            if result is not None and 'class_logits' in result:
+                                import torch
+                                pred = torch.argmax(result['class_logits'], dim=-1).item()
+                                pred_name = AS.class_names[pred] if pred < len(AS.class_names) else str(pred)
+                                ui.label(f'Predicted: {pred_name}').style(f'color:{THEME_WARN}; font-size: 0.7rem;')
+                        else:
+                            # Graph model info
+                            if hasattr(sample, 'y') and sample.y is not None:
+                                lbl = sample.y.item() if hasattr(sample.y, "item") else sample.y
+                                ui.label(f'Label: {lbl}').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                            if hasattr(sample, 'x'):
+                                ui.label(f'Nodes: {sample.x.shape[0]}, Feat: {sample.x.shape[1]}').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                            if hasattr(sample, 'graph_attr') and sample.graph_attr is not None:
+                                k_mean = sample.graph_attr[0].item() if hasattr(sample.graph_attr[0], 'item') else sample.graph_attr[0]
+                                ui.label(f'Kuramoto: {k_mean:.3f}').style(f'color:{THEME_WARN}; font-size: 0.7rem;')
+                                # Track Kuramoto
+                                AS.kuramoto_history.append((AS.current_idx, k_mean))
                 
                 # Update sample label
                 sample_label.set_text(f'Sample: {AS.current_idx + 1} / {AS.total_samples}')
                 
                 # Update all plots
+                try:
+                    kuramoto_plot.figure = make_kuramoto_fig()
+                    kuramoto_plot.update()
+                except Exception as e:
+                    analysis_log(f"Kuramoto plot error: {e}", 'warning')
+                
                 try:
                     encoder_plot.figure = make_encoder_fig()
                     encoder_plot.update()
@@ -4020,6 +4708,12 @@ def analysis_page():
                     latent_plot.update()
                 except Exception as e:
                     analysis_log(f"Latent plot error: {e}", 'warning')
+                
+                try:
+                    decoder_plot.figure = make_decoder_fig()
+                    decoder_plot.update()
+                except Exception as e:
+                    analysis_log(f"Decoder plot error: {e}", 'warning')
                 
                 try:
                     attention_plot.figure = make_attention_fig()
