@@ -22,6 +22,7 @@ from config import (
     THEME_WARN, THEME_ERROR, THEME_TEXT, THEME_TEXT_DIM, SIGNAL_COLORS
 )
 from eeg_loader import load_eeg_file, get_channel_data, scan_eeg_directory, EEGData
+from cleaning.cleaner_page import cleaner_page
 
 # Electrode positions (10-20 system)
 ELECTRODE_POSITIONS = {
@@ -924,6 +925,13 @@ async def run_pipeline_step(script_name, args_list, step_name, output_dir=None, 
         PS.current_process = None
 
 
+@ui.page('/cleaner')
+def cleaner_page_route():
+    """EEG Cleaning Pipeline page."""
+    ui.add_head_html(f'<style>{STYLE}</style>')
+    cleaner_page()
+
+
 @ui.page('/pipeline')
 def pipeline_page():
     ui.add_head_html(f'<style>{STYLE}</style>')
@@ -935,6 +943,7 @@ def pipeline_page():
         ui.label('v1.0').classes('text-xs ml-2').style(f'color: {THEME_TEXT_DIM}; font-family: JetBrains Mono;')
         with ui.row().classes('ml-auto gap-2'):
             ui.button('VIEWER', on_click=lambda: ui.navigate.to('/')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
+            ui.button('CLEANER', on_click=lambda: ui.navigate.to('/cleaner')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
             ui.button('PIPELINE', on_click=lambda: ui.navigate.to('/pipeline')).props('flat dense').style(f'color:{THEME_PRIMARY};')
             ui.button('MODEL', on_click=lambda: ui.navigate.to('/model')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
             ui.button('ANALYSIS', on_click=lambda: ui.navigate.to('/analysis')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
@@ -2527,6 +2536,7 @@ def model_page():
         
         with ui.row().classes('ml-auto gap-2'):
             ui.button('VIEWER', on_click=lambda: ui.navigate.to('/')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
+            ui.button('CLEANER', on_click=lambda: ui.navigate.to('/cleaner')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
             ui.button('PIPELINE', on_click=lambda: ui.navigate.to('/pipeline')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
             ui.button('MODEL', on_click=lambda: ui.navigate.to('/model')).props('flat dense').style(f'color:#f472b6;')
             ui.button('ANALYSIS', on_click=lambda: ui.navigate.to('/analysis')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
@@ -3909,6 +3919,7 @@ def analysis_page():
         ui.label('// ANALYSIS').classes('text-sm ml-3').style(f'color:{THEME_WARN}; font-family: JetBrains Mono;')
         with ui.row().classes('ml-auto gap-2'):
             ui.button('VIEWER', on_click=lambda: ui.navigate.to('/')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
+            ui.button('CLEANER', on_click=lambda: ui.navigate.to('/cleaner')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
             ui.button('PIPELINE', on_click=lambda: ui.navigate.to('/pipeline')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
             ui.button('MODEL', on_click=lambda: ui.navigate.to('/model')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
             ui.button('ANALYSIS', on_click=lambda: ui.navigate.to('/analysis')).props('flat dense').style(f'color:{THEME_WARN};')
@@ -4872,6 +4883,7 @@ def main_with_nav():
         ui.label('v1.0').classes('text-xs ml-2').style(f'color: {THEME_TEXT_DIM}; font-family: JetBrains Mono;')
         with ui.row().classes('ml-auto gap-2'):
             ui.button('VIEWER', on_click=lambda: ui.navigate.to('/')).props('flat dense').style(f'color:{THEME_PRIMARY};')
+            ui.button('CLEANER', on_click=lambda: ui.navigate.to('/cleaner')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
             ui.button('PIPELINE', on_click=lambda: ui.navigate.to('/pipeline')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
             ui.button('MODEL', on_click=lambda: ui.navigate.to('/model')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
             ui.button('ANALYSIS', on_click=lambda: ui.navigate.to('/analysis')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
@@ -5074,6 +5086,8 @@ def main_content():
 if __name__ in {"__main__", "__mp_main__"}:
     print("EEG VIEWER - http://localhost:8080")
     print("  - Viewer:   http://localhost:8080/")
+    print("  - Cleaner:  http://localhost:8080/cleaner")
     print("  - Pipeline: http://localhost:8080/pipeline")
     print("  - Model:    http://localhost:8080/model")
+    print("  - Analysis: http://localhost:8080/analysis")
     ui.run(title='EEG Viewer', port=8080, reload=False, show=False, dark=True)
