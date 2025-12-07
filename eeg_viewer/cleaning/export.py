@@ -16,6 +16,21 @@ import mne
 from .state import CleaningState
 
 
+def _convert_numpy_types(obj):
+    """Convert numpy types to native Python types for JSON serialization."""
+    if isinstance(obj, np.integer):
+        return int(obj)
+    elif isinstance(obj, np.floating):
+        return float(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif isinstance(obj, dict):
+        return {_convert_numpy_types(k): _convert_numpy_types(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        return [_convert_numpy_types(item) for item in obj]
+    return obj
+
+
 class ExportFormat(Enum):
     """Supported export formats."""
     FIF = "fif"      # MNE native format
@@ -115,13 +130,14 @@ def export_epochs(epochs: mne.Epochs,
     outputs = {}
     
     for fmt in formats:
-        output_path = output_dir / f"{base_name}{fmt.extension}"
-        
         if fmt == ExportFormat.FIF:
+            # Use MNE naming convention for epochs: _epo.fif
+            output_path = output_dir / f"{base_name}_epo.fif"
             epochs.save(output_path, overwrite=True, verbose=False)
             outputs['fif'] = output_path
         
         elif fmt == ExportFormat.NPY:
+            output_path = output_dir / f"{base_name}{fmt.extension}"
             # Save as numpy array
             data = epochs.get_data()
             np.save(output_path, data)
@@ -133,6 +149,7 @@ def export_epochs(epochs: mne.Epochs,
             outputs['times'] = times_path
         
         elif fmt == ExportFormat.SET:
+            output_path = output_dir / f"{base_name}{fmt.extension}"
             epochs.export(output_path, overwrite=True, verbose=False)
             outputs['set'] = output_path
     
@@ -182,6 +199,9 @@ def export_preprocessing_log(state: CleaningState,
     
     # Add export info
     log['export_timestamp'] = datetime.now().isoformat()
+    
+    # Convert numpy types to native Python types
+    log = _convert_numpy_types(log)
     
     with open(output_path, 'w') as f:
         json.dump(log, f, indent=2, default=str)

@@ -278,3 +278,61 @@ class TestGetRejectionStats:
         assert stats['n_rejected'] == 25
         assert stats['rejection_rate_percent'] == 25.0
 
+
+class TestEpochConsistency:
+    """Tests for epoch creation consistency - epochs should not accumulate."""
+    
+    def test_recreate_epochs_same_count(self, synthetic_raw):
+        """Test that recreating epochs with same duration gives same count."""
+        result1 = create_epochs(synthetic_raw, duration=2.0)
+        result2 = create_epochs(synthetic_raw, duration=2.0)
+        result3 = create_epochs(synthetic_raw, duration=2.0)
+        
+        # All should have exactly the same number of epochs
+        assert result1.n_total == result2.n_total == result3.n_total
+    
+    def test_recreate_after_different_duration(self, synthetic_raw):
+        """Test that changing duration then changing back gives same count."""
+        # Create with 2s
+        result_2s_first = create_epochs(synthetic_raw, duration=2.0)
+        
+        # Create with 1s (different)
+        result_1s = create_epochs(synthetic_raw, duration=1.0)
+        
+        # Create with 2s again - should match first 2s result
+        result_2s_second = create_epochs(synthetic_raw, duration=2.0)
+        
+        assert result_2s_first.n_total == result_2s_second.n_total
+        # 1s epochs should have more epochs than 2s
+        assert result_1s.n_total > result_2s_first.n_total
+    
+    def test_epochs_independent_of_previous_calls(self, synthetic_raw):
+        """Test that epoch counts are computed fresh each time, not accumulated."""
+        # Calculate expected number for 2s epochs
+        sfreq = synthetic_raw.info['sfreq']
+        total_time = synthetic_raw.n_times / sfreq
+        expected_2s = int((total_time - 2.0) / 2.0) + 1  # Approximate
+        
+        # Call create_epochs multiple times
+        for _ in range(5):
+            result = create_epochs(synthetic_raw, duration=2.0)
+            # Should never be double the expected amount
+            assert result.n_total < expected_2s * 2, \
+                f"Epochs seem to be accumulating: got {result.n_total}, expected ~{expected_2s}"
+    
+    def test_epoch_count_formula(self, synthetic_raw):
+        """Test that epoch count follows expected formula."""
+        duration = 2.0
+        overlap = 0.0
+        
+        result = create_epochs(synthetic_raw, duration=duration, overlap=overlap)
+        
+        sfreq = synthetic_raw.info['sfreq']
+        total_time = synthetic_raw.n_times / sfreq
+        step = duration - overlap
+        expected = int((total_time - duration) / step) + 1
+        
+        # Allow for rounding differences
+        assert abs(result.n_total - expected) <= 1, \
+            f"Expected ~{expected} epochs, got {result.n_total}"
+

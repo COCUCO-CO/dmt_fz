@@ -520,6 +520,17 @@ def cleaner_page():
                         if PS.reversed_steps:
                             steps_str = ', '.join([s.short_name for s in PS.reversed_steps])
                             ui.chip(f'⟲ {steps_str}', color='warning').props('dense').classes('ml-2').style('font-size: 0.65rem;')
+                        
+                        # Show current epoch indicator for EPOCHS and later steps
+                        steps_with_epochs = [CleaningStep.EPOCHS, CleaningStep.REJECT, CleaningStep.VISUALIZE, CleaningStep.EXPORT]
+                        if PS.cleaning.current_step in steps_with_epochs and PS.epoch_result is not None:
+                            epoch_dur = PS.cleaning.epoch_duration or 2.0
+                            current_epoch = int(PS.view_start / epoch_dur) if epoch_dur > 0 else 0
+                            max_epoch = PS.epoch_result.n_total - 1
+                            is_rejected = current_epoch in PS.epoch_result.rejected_indices
+                            status = '❌' if is_rejected else '✓'
+                            color = 'negative' if is_rejected else 'primary'
+                            ui.chip(f'Epoch {current_epoch}/{max_epoch} {status}', color=color).props('dense').classes('ml-2').style('font-size: 0.65rem;')
                 
                 PS.main_plot = ui.plotly({}).classes('w-full').style('height: 420px;')
                 update_main_plot()
@@ -1987,10 +1998,17 @@ async def create_epochs_async(duration: float, overlap: float):
     if not PS.cleaning.is_loaded:
         return
     try:
+        # Get input from previous step (ICA's output) - always create epochs from the same base
+        raw_for_epochs = get_step_input(CleaningStep.EPOCHS)
+        
         loop = asyncio.get_event_loop()
-        PS.epoch_result = await loop.run_in_executor(None, lambda: create_epochs(PS.cleaning.raw, duration, overlap))
+        PS.epoch_result = await loop.run_in_executor(None, lambda: create_epochs(raw_for_epochs, duration, overlap))
         PS.cleaning.epoch_duration = duration
         PS.cleaning.epochs_total = PS.epoch_result.n_total
+        
+        # Save this step's output
+        PS.save_step_raw(CleaningStep.EPOCHS)
+        
         render_step_controls()
         render_info()
         safe_notify(f'Created {PS.epoch_result.n_total} epochs', type='positive')
@@ -2236,6 +2254,19 @@ def toggle_reverse_eeg():
                 for old_idx, reasons in old_reasons.items():
                     new_idx = n_epochs - 1 - old_idx
                     PS.epoch_result.rejection_reasons[new_idx] = reasons
+                
+                # Keep n_rejected and n_good consistent
+                PS.epoch_result.n_rejected = len(PS.epoch_result.rejected_indices)
+                PS.epoch_result.n_good = PS.epoch_result.n_total - PS.epoch_result.n_rejected
+        
+        # Navigate to where the rejected epochs now are (end of signal if they were at start)
+        if PS.epoch_result and PS.epoch_result.rejected_indices:
+            epoch_dur = PS.cleaning.epoch_duration or 2.0
+            # Go to show the first rejected epoch after reversal
+            first_rej = PS.epoch_result.rejected_indices[0]
+            target_time = first_rej * epoch_dur
+            # Center the view on this epoch
+            PS.view_start = max(0, target_time - PS.view_duration / 2)
         
         refresh_all()
     except Exception as e:
