@@ -296,10 +296,9 @@ def plot_kuramoto_order(kuramoto_epochs, ax, epoch, color, rej, shade_reject=Tru
     """Plot Kuramoto order parameter timeline across epochs."""
     num_epochs = len(kuramoto_epochs)
     
-    full_epochs = len(rej) + num_epochs
-    x_s = [x + 0.5 for x in range(full_epochs)]
-    avr = np.asarray(kuramoto_epochs).mean(axis=1).tolist()
-    y_s = [avr.pop(0) if i not in rej else np.nan for i in range(full_epochs)]
+    x_s = [x + 0.5 for x in range(num_epochs)]
+    avr = np.asarray(kuramoto_epochs).mean(axis=1)
+    y_s = np.array([np.nan if i in rej else avr[i] for i in range(num_epochs)])
     right_epochs = np.argwhere(~np.isnan(y_s))
     
     ax.plot(x_s, y_s, color=color)

@@ -129,3 +129,9 @@ echo -e "Next steps:"
 echo -e "  1. View TensorBoard: tensorboard --logdir=runs/"
 echo -e "  2. Run clustering: python ../pipeline/clustering.py --input activations/vae_activations_mu.pkl"
 
+
+
+
+
+
+

@@ -1,0 +1,136 @@
+# ============================================================================
+# VAE Configuration - DMT ONLY, DELTA BAND
+# Best hyperparameters from Alpha search applied
+# ============================================================================
+
+# Paths
+paths:
+  phases_dir: "/media/storage_hdd/dmt_fz/fwd-inv-stc"
+  output_dir: "/media/storage_hdd/dmt_fz/machine_learning/autoencoder/output_dmt_delta"
+  dataset_cache: "/media/storage_hdd/dmt_fz/machine_learning/clf/data/cache"
+  checkpoints: "/media/storage_hdd/dmt_fz/machine_learning/autoencoder/output_dmt_delta/checkpoints"
+  tensorboard: "/media/storage_hdd/dmt_fz/machine_learning/autoencoder/output_dmt_delta/runs"
+
+# Data configuration - DMT ONLY, Delta band
+data:
+  conditions: ["DMT"]  # ONLY DMT
+  bands: ["Delta"]     # Delta band (0.5-4 Hz) - deep states
+  use_stc: false       # 24 EEG channels
+  
+  graph:
+    fully_connected: true
+    edge_threshold: 0.3
+    self_loops: false
+    directed: false
+  
+  node_features:
+    use_phase_stats: true
+    use_amplitude_stats: true
+    use_temporal_complexity: true
+    use_network_label: true
+  
+  graph_features:
+    use_kuramoto: true
+    use_global_sync: true
+    use_topology: true
+  
+  split:
+    train_ratio: 0.7
+    val_ratio: 0.15
+    test_ratio: 0.15
+    stratify: false
+    random_state: 42
+    group_by_subject: true  # No data leakage
+
+# Model configuration - BEST from Alpha search
+model:
+  name: "BrainStateVAE"
+  
+  encoder:
+    conv_type: "gatv2"
+    hidden_dim: 64
+    num_gat_layers: 3          # Best: 3 layers
+    num_attention_heads: 4
+    cheby_k: 3
+    dropout: 0.2
+    attention_dropout: 0.1
+    use_edge_attr: true
+    concat_heads: true
+    negative_slope: 0.2
+    use_skip_connections: true
+  
+  latent:
+    dim: 16                    # Best: 16 dims
+  
+  decoder:
+    hidden_dims: [128, 64]     # Medium config
+    use_graph_conv: false      # Best: no graph conv
+    conv_type: "gatv2"
+    dropout: 0.1
+    reconstruct_edges: false   # Best: no edge reconstruction
+    activation: "leaky_relu"
+  
+  pooling:
+    method: "mean"             # Best: mean pooling
+
+# Loss configuration - BEST from Alpha search
+loss:
+  reconstruction:
+    node_weight: 0.3           # Best
+    edge_weight: 0.0           # No edge reconstruction
+    type: "mse"
+  
+  kl:
+    weight: 0.001              # Best
+    annealing:
+      enabled: true
+      start: 0.0
+      end: 0.05
+      epochs: 20               # Best
+      type: "cosine"           # Best
+  
+  free_bits: 0.25              # Best
+
+# Training configuration
+training:
+  num_epochs: 500
+  batch_size: 128              # Best
+  learning_rate: 0.002         # Best
+  weight_decay: 0.00001
+  optimizer: "adamw"
+  
+  scheduler:
+    type: "cosine"
+    patience: 10
+    factor: 0.5
+    min_lr: 0.000001
+  
+  early_stopping:
+    patience: 50
+    min_delta: 0.0001
+    monitor: "val_loss"
+  
+  gradient_clipping:
+    enabled: true
+    max_norm: 0.5
+
+# Logging
+logging:
+  level: "INFO"
+  tensorboard: true
+  save_frequency: 10
+  log_frequency: 1
+
+visualization:
+  plot_training_curves: true
+  plot_latent_space: true
+  plot_reconstructions: true
+  latent_method: "umap"
+
+# Hardware
+seed: 42
+deterministic: true
+device: "cuda"
+num_workers: 4
+dataset_workers: 4
+pin_memory: true

@@ -180,3 +180,9 @@ Los archivos `vae_activations_*.pkl` tienen la estructura:
 
 Esto es idéntico a `eigen_all.pkl` pero con activaciones GAT en lugar de eigenvalores.
 
+
+
+
+
+
+

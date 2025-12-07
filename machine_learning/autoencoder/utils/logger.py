@@ -92,3 +92,9 @@ def log_vae_metrics(logger: logging.Logger,
         f"KL: {kl_loss:.4f} | β: {beta:.4f}"
     )
 
+
+
+
+
+
+

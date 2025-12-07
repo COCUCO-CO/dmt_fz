@@ -1,0 +1,87 @@
+# ============================================================================
+# Phase Analysis Configuration
+# Direct clustering of synchronization matrices + Kuramoto analysis
+# ============================================================================
+
+# Data paths
+paths:
+  phases_dir: "/media/storage_hdd/dmt_fz/fwd-inv-stc"
+  output_dir: "/media/storage_hdd/dmt_fz/machine_learning/phase_analysis/output"
+
+# Data selection
+data:
+  conditions: ["DMT", "EC", "EO"]
+  bands: ["Delta", "Theta", "Alpha", "Beta", "Gamma"]
+  use_stc: false  # false = EEG electrodes (24), true = source space (102)
+  
+  # Subject filtering (null = all subjects)
+  subjects: null
+  
+  # Subsample for faster testing (null = all epochs)
+  max_epochs_per_file: null
+
+# Synchronization matrix computation
+sync:
+  method: "plv"  # Phase Locking Value
+  normalize: true
+
+# Clustering configuration
+clustering:
+  # Dimensionality reduction
+  reduction:
+    method: "umap"  # umap, tsne, pca
+    n_components: 2  # For visualization
+    n_components_clustering: 10  # For clustering (higher dim)
+    
+    # UMAP parameters
+    umap:
+      n_neighbors: 30
+      min_dist: 0.1
+      metric: "euclidean"
+    
+    # t-SNE parameters
+    tsne:
+      perplexity: 30
+      learning_rate: 200
+  
+  # Clustering algorithm
+  algorithm: "hdbscan"  # hdbscan, kmeans, gmm
+  
+  # HDBSCAN parameters
+  hdbscan:
+    min_cluster_size: 50
+    min_samples: 10
+    cluster_selection_epsilon: 0.0
+  
+  # K-Means parameters (if using kmeans)
+  kmeans:
+    n_clusters: 5
+    n_init: 10
+  
+  # GMM parameters (if using gmm)
+  gmm:
+    n_components: 5
+    covariance_type: "full"
+
+# Kuramoto analysis
+kuramoto:
+  # Sliding window for temporal analysis
+  window_size: 10  # epochs
+  window_stride: 5
+
+# Visualization
+visualization:
+  figsize: [12, 10]
+  dpi: 150
+  cmap_clusters: "tab10"
+  cmap_conditions: {"DMT": "#E74C3C", "EC": "#3498DB", "EO": "#2ECC71"}
+  alpha: 0.6
+
+# Processing
+n_workers: 8
+random_seed: 42
+
+
+
+
+

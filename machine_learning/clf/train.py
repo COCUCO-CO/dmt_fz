@@ -207,8 +207,14 @@ def evaluate(model: nn.Module,
     return avg_loss, accuracy, np.array(all_preds), np.array(all_labels)
 
 
-def main(config_path: str, force_rebuild: bool = False):
-    """Main training function."""
+def main(config_path: str, force_rebuild: bool = False, resume: bool = False):
+    """Main training function.
+    
+    Args:
+        config_path: Path to configuration file
+        force_rebuild: Force rebuild dataset even if cache exists
+        resume: Resume training from best checkpoint
+    """
     
     # Load configuration
     with open(config_path, 'r') as f:
@@ -357,6 +363,28 @@ def main(config_path: str, force_rebuild: bool = False):
         logger.info(f"TensorBoard logging to: {tensorboard_dir}")
     
     # ========================================================================
+    # RESUME FROM CHECKPOINT (if requested)
+    # ========================================================================
+    
+    start_epoch = 1
+    best_val_loss = float('inf')
+    best_val_acc = 0.0
+    
+    if resume:
+        best_model_path = checkpoint_dir / 'best_model.pt'
+        if best_model_path.exists():
+            logger.info(f"Resuming from checkpoint: {best_model_path}")
+            checkpoint = torch.load(best_model_path, map_location=device)
+            model.load_state_dict(checkpoint['model_state_dict'])
+            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            start_epoch = checkpoint['epoch'] + 1
+            best_val_acc = checkpoint.get('val_acc', 0.0)
+            best_val_loss = checkpoint.get('val_loss', float('inf'))
+            logger.info(f"Resumed from epoch {checkpoint['epoch']} (best val acc: {best_val_acc:.4f})")
+        else:
+            logger.warning(f"No checkpoint found at {best_model_path}, starting from scratch")
+    
+    # ========================================================================
     # TRAINING LOOP
     # ========================================================================
     
@@ -365,8 +393,6 @@ def main(config_path: str, force_rebuild: bool = False):
     early_stopping_delta = config['training']['early_stopping']['min_delta']
     save_frequency = config['logging']['save_frequency']
     
-    best_val_loss = float('inf')
-    best_val_acc = 0.0
     patience_counter = 0
     
     history = {
@@ -378,7 +404,7 @@ def main(config_path: str, force_rebuild: bool = False):
     
     logger.info("Starting training...")
     
-    for epoch in range(1, num_epochs + 1):
+    for epoch in range(start_epoch, num_epochs + 1):
         # Train
         train_loss, train_acc = train_epoch(
             model, train_loader, optimizer, criterion, device, config
@@ -754,8 +780,10 @@ if __name__ == '__main__':
                        help='Path to configuration file')
     parser.add_argument('--force-rebuild', action='store_true',
                        help='Force rebuild dataset even if cache exists')
+    parser.add_argument('--resume', action='store_true',
+                       help='Resume training from best checkpoint')
     
     args = parser.parse_args()
     
-    main(args.config, args.force_rebuild)
+    main(args.config, args.force_rebuild, args.resume)
 

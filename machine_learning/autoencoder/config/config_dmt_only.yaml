@@ -1,0 +1,143 @@
+# ============================================================================
+# VAE Configuration - DMT ONLY (for correlation with subjective experience)
+# ============================================================================
+
+# Paths
+paths:
+  phases_dir: "/media/storage_hdd/dmt_fz/fwd-inv-stc"
+  output_dir: "/media/storage_hdd/dmt_fz/machine_learning/autoencoder/output_dmt"
+  dataset_cache: "/media/storage_hdd/dmt_fz/machine_learning/clf/data/cache"
+  checkpoints: "/media/storage_hdd/dmt_fz/machine_learning/autoencoder/output_dmt/checkpoints"
+  tensorboard: "/media/storage_hdd/dmt_fz/machine_learning/autoencoder/output_dmt/runs"
+
+# Data configuration - DMT ONLY, Alpha band
+data:
+  conditions: ["DMT"]  # ONLY DMT
+  bands: ["Alpha"]     # Start with Alpha for correlation analysis
+  use_stc: false       # 24 EEG channels
+  
+  graph:
+    fully_connected: true
+    edge_threshold: 0.3
+    self_loops: false
+    directed: false
+  
+  node_features:
+    use_phase_stats: true
+    use_amplitude_stats: true
+    use_temporal_complexity: true
+    use_network_label: true
+  
+  graph_features:
+    use_kuramoto: true
+    use_global_sync: true
+    use_topology: true
+  
+  split:
+    train_ratio: 0.7
+    val_ratio: 0.15
+    test_ratio: 0.15
+    stratify: false  # No stratification needed with single condition
+    random_state: 42
+    group_by_subject: true  # CRITICAL: no data leakage
+
+# Model configuration (will be overridden by hyperparam search)
+model:
+  name: "BrainStateVAE"
+  
+  encoder:
+    conv_type: "gatv2"
+    hidden_dim: 64
+    num_gat_layers: 2
+    num_attention_heads: 4
+    cheby_k: 3
+    dropout: 0.2
+    attention_dropout: 0.1
+    use_edge_attr: true
+    concat_heads: true
+    negative_slope: 0.2
+    use_skip_connections: true
+  
+  latent:
+    dim: 32
+  
+  decoder:
+    hidden_dims: [128, 64]  # Hidden layer dimensions
+    use_graph_conv: true    # Use graph convolutions (GAT/Cheb) in decoder
+    conv_type: "gatv2"      # Match encoder type
+    dropout: 0.1
+    reconstruct_edges: true
+    activation: "leaky_relu"
+  
+  pooling:
+    method: "mean"
+
+# Loss configuration
+loss:
+  reconstruction:
+    node_weight: 0.5
+    edge_weight: 1.0
+    type: "mse"
+  
+  kl:
+    weight: 0.01
+    annealing:
+      enabled: true
+      start: 0.0
+      end: 0.05
+      epochs: 30
+      type: "linear"
+  
+  free_bits: 0.1
+
+# Training configuration
+training:
+  num_epochs: 500
+  batch_size: 128
+  learning_rate: 0.001
+  weight_decay: 0.00001
+  optimizer: "adamw"
+  
+  scheduler:
+    type: "cosine"
+    patience: 10
+    factor: 0.5
+    min_lr: 0.000001
+  
+  early_stopping:
+    patience: 50
+    min_delta: 0.0001
+    monitor: "val_loss"
+  
+  gradient_clipping:
+    enabled: true
+    max_norm: 0.5
+
+# Logging
+logging:
+  level: "INFO"
+  tensorboard: true
+  save_frequency: 10
+  log_frequency: 1
+  
+  tensorboard_extras:
+    latent_space: true
+    reconstructions: true
+    attention_weights: true
+    kl_per_dim: true
+    gradient_norms: true
+
+visualization:
+  plot_training_curves: true
+  plot_latent_space: true
+  plot_reconstructions: true
+  latent_method: "umap"
+
+# Hardware
+seed: 42
+deterministic: true
+device: "cuda"
+num_workers: 4
+dataset_workers: 4
+pin_memory: true
+

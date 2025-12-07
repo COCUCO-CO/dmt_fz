@@ -113,7 +113,7 @@ evaluation:
 strict_validation: true  # If false, continue training even if dataset validation fails
 
 # Reproducibility
-seed: 42
+seed: 421
 deterministic: true
 
 # Hardware

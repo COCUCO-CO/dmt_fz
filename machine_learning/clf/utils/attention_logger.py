@@ -261,22 +261,39 @@ def plot_average_attention(model, data_loader, device, num_nodes: int,
     model.eval()
     save_dir.mkdir(parents=True, exist_ok=True)
     
+    # Detect large graphs and configure accordingly
+    is_large_graph = num_nodes > 50
+    if is_large_graph:
+        max_batches = 8
+        fig_size = (10, 8)
+        fig_dpi = 100
+        show_labels = False
+        line_widths = 0
+    else:
+        max_batches = 20
+        fig_size = (14, 12)
+        fig_dpi = 300
+        show_labels = True
+        line_widths = 0.1
+    
     # Load electrode names if not provided
     if channel_names is None:
         channel_names = load_electrode_names()
     
     # Format labels with index: "Name-Index"
-    if channel_names is not None and len(channel_names) >= num_nodes:
+    if show_labels and channel_names is not None and len(channel_names) >= num_nodes:
         axis_labels = format_electrode_labels(channel_names[:num_nodes])
-    else:
+    elif show_labels:
         axis_labels = [str(i) for i in range(num_nodes)]
+    else:
+        axis_labels = False
     
     # Accumulate attention matrices per layer
     layer_matrices = {i: [] for i in range(len(model.conv_layers))}
     
     with torch.no_grad():
         for batch_idx, batch in enumerate(data_loader):
-            if batch_idx >= 20:  # Process 20 batches
+            if batch_idx >= max_batches:
                 break
             
             batch = batch.to(device)
@@ -315,29 +332,30 @@ def plot_average_attention(model, data_loader, device, num_nodes: int,
         avg_matrix = np.mean(matrices, axis=0)
         
         # Plot heatmap
-        fig, ax = plt.subplots(figsize=(14, 12))
+        fig, ax = plt.subplots(figsize=fig_size)
         
         mask = (avg_matrix == 0)
         sns.heatmap(avg_matrix, mask=mask, cmap='YlOrRd',
                    cbar_kws={'label': 'Average Attention Weight'},
-                   square=True, linewidths=0.1, linecolor='gray',
+                   square=True, linewidths=line_widths, linecolor='gray',
                    ax=ax, vmin=0, vmax=avg_matrix.max(),
                    xticklabels=axis_labels,
                    yticklabels=axis_labels)
         
         ax.set_title(f'Average Attention Weights - Layer {layer_idx + 1}',
                     fontsize=14, fontweight='bold', pad=15)
-        ax.set_xlabel('Target Electrode', fontsize=12)
-        ax.set_ylabel('Source Electrode', fontsize=12)
+        ax.set_xlabel('Target Node', fontsize=12)
+        ax.set_ylabel('Source Node', fontsize=12)
         
         # Rotate labels for readability
-        plt.xticks(rotation=45, ha='right', fontsize=8)
-        plt.yticks(rotation=0, fontsize=8)
+        if show_labels:
+            plt.xticks(rotation=45, ha='right', fontsize=8)
+            plt.yticks(rotation=0, fontsize=8)
         
         plt.tight_layout()
         
         save_path = save_dir / f'attention_layer_{layer_idx + 1}_average.png'
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        plt.savefig(save_path, dpi=fig_dpi, bbox_inches='tight')
         plt.close()
         
         logger.info(f"Saved average attention for layer {layer_idx + 1} to {save_path}")
@@ -349,7 +367,7 @@ def log_attention_to_tensorboard(writer, model, data_loader, device, epoch: int,
     """
     Log attention weights to TensorBoard with electrode names, one example per class.
     
-    Generates 2 layers × 3 classes = 6 heatmaps with proper electrode labels.
+    Generates 2 layers × N classes heatmaps with proper electrode labels.
     
     Args:
         writer: TensorBoard SummaryWriter
@@ -369,8 +387,16 @@ def log_attention_to_tensorboard(writer, model, data_loader, device, epoch: int,
     # Load electrode names
     ch_names = load_electrode_names()
     
+    # Get number of nodes to detect large graphs
+    first_batch = next(iter(data_loader))
+    num_nodes_detect = first_batch.x.shape[0] // first_batch.num_graphs if first_batch.num_graphs > 0 else 24
+    is_large_graph = num_nodes_detect > 50
+    
+    # Reduce samples for large graphs
+    stats_samples = 30 if is_large_graph else 100
+    
     # Extract attention statistics
-    attention_stats = extract_attention_matrices(model, data_loader, device, num_samples=100)
+    attention_stats = extract_attention_matrices(model, data_loader, device, num_samples=stats_samples)
     
     # Log scalar statistics per layer
     for layer_key, stats in attention_stats.items():
@@ -443,10 +469,26 @@ def log_attention_to_tensorboard(writer, model, data_loader, device, epoch: int,
     
     # Create electrode labels
     num_nodes = next((v['num_nodes'] for v in class_examples.values() if v), 24)
-    if ch_names and len(ch_names) >= num_nodes:
-        axis_labels = format_electrode_labels(ch_names[:num_nodes])
+    
+    # Configure based on graph size
+    is_large = num_nodes > 50
+    if is_large:
+        show_labels = False
+        fig_size = (10, 8)
+        fig_dpi = 100
+        line_widths = 0  # Skip grid lines for large heatmaps
     else:
+        show_labels = True
+        fig_size = (12, 10)
+        fig_dpi = 150
+        line_widths = 0.1
+    
+    if show_labels and ch_names and len(ch_names) >= num_nodes:
+        axis_labels = format_electrode_labels(ch_names[:num_nodes])
+    elif show_labels:
         axis_labels = [str(i) for i in range(num_nodes)]
+    else:
+        axis_labels = False  # seaborn will hide labels
     
     # Create save directory if specified
     if save_dir:
@@ -461,7 +503,7 @@ def log_attention_to_tensorboard(writer, model, data_loader, device, epoch: int,
         
         for layer_idx, att_matrix in enumerate(data['layers']):
             # Create figure with electrode labels
-            fig, ax = plt.subplots(figsize=(12, 10))
+            fig, ax = plt.subplots(figsize=fig_size)
             
             mask = (att_matrix == 0)
             sns.heatmap(att_matrix, mask=mask, cmap='YlOrRd', square=True,
@@ -469,16 +511,17 @@ def log_attention_to_tensorboard(writer, model, data_loader, device, epoch: int,
                        ax=ax, vmin=0, vmax=att_matrix.max() if att_matrix.max() > 0 else 1,
                        xticklabels=axis_labels,
                        yticklabels=axis_labels,
-                       linewidths=0.1, linecolor='gray')
+                       linewidths=line_widths, linecolor='gray')
             
             title = f'Attention - {class_name} - Layer {layer_idx + 1} (Epoch {epoch})'
             ax.set_title(title, fontsize=14, fontweight='bold', pad=15)
-            ax.set_xlabel('Target Electrode', fontsize=11)
-            ax.set_ylabel('Source Electrode', fontsize=11)
+            ax.set_xlabel('Target Node', fontsize=11)
+            ax.set_ylabel('Source Node', fontsize=11)
             
             # Rotate labels for readability
-            plt.xticks(rotation=45, ha='right', fontsize=7)
-            plt.yticks(rotation=0, fontsize=7)
+            if show_labels:
+                plt.xticks(rotation=45, ha='right', fontsize=7)
+                plt.yticks(rotation=0, fontsize=7)
             
             plt.tight_layout()
             
@@ -495,7 +538,7 @@ def log_attention_to_tensorboard(writer, model, data_loader, device, epoch: int,
             # Save as file if directory specified
             if save_dir:
                 save_path = attention_save_dir / f'attention_example_{class_name}_layer_{layer_idx + 1}.png'
-                plt.savefig(save_path, dpi=150, bbox_inches='tight')
+                plt.savefig(save_path, dpi=fig_dpi, bbox_inches='tight')
                 logger.debug(f"Saved attention heatmap to {save_path}")
             
             plt.close(fig)
@@ -770,7 +813,8 @@ def save_embeddings_to_file(model, data_loader, device, save_path: Path,
 
 
 def compute_attention_matrix_per_class(model, data_loader, device, num_nodes: int,
-                                        class_names: List[str] = None) -> Dict[str, np.ndarray]:
+                                        class_names: List[str] = None,
+                                        max_batches: int = None) -> Dict[str, np.ndarray]:
     """
     Compute average attention matrices per class for comparison.
     
@@ -780,6 +824,7 @@ def compute_attention_matrix_per_class(model, data_loader, device, num_nodes: in
         device: torch device
         num_nodes: Number of nodes per graph
         class_names: List of class names
+        max_batches: Maximum batches to process (None = auto-detect based on num_nodes)
         
     Returns:
         Dict mapping class name to average attention matrix per layer
@@ -790,13 +835,26 @@ def compute_attention_matrix_per_class(model, data_loader, device, num_nodes: in
     model.eval()
     num_layers = len(model.conv_layers)
     
+    # Auto-detect max_batches based on graph size to avoid slow processing
+    if max_batches is None:
+        if num_nodes > 80:
+            max_batches = 10  # STC: 102 nodes - use fewer batches
+        elif num_nodes > 40:
+            max_batches = 20
+        else:
+            max_batches = None  # EEG: 24 nodes - use all
+    
     # Initialize accumulators
     attention_sums = {name: {l: np.zeros((num_nodes, num_nodes)) for l in range(num_layers)} 
                       for name in class_names}
     counts = {name: 0 for name in class_names}
     
+    batch_count = 0
     with torch.no_grad():
         for batch in data_loader:
+            if max_batches is not None and batch_count >= max_batches:
+                break
+            batch_count += 1
             batch = batch.to(device)
             
             # Get attention weights
@@ -941,7 +999,8 @@ def plot_attention_per_class(attention_per_class: Dict[str, Dict[int, np.ndarray
         logger.info(f"Saved attention differences for layer {layer_idx + 1}")
 
 
-def extract_attention_per_class(model, data_loader, device, class_names: List[str] = None) -> Dict:
+def extract_attention_per_class(model, data_loader, device, class_names: List[str] = None,
+                                max_batches: int = None) -> Dict:
     """
     Extract attention weight distributions per class for histogram plotting.
     
@@ -950,6 +1009,7 @@ def extract_attention_per_class(model, data_loader, device, class_names: List[st
         data_loader: DataLoader
         device: torch device
         class_names: List of class names
+        max_batches: Maximum batches to process (None = auto-detect based on num_nodes)
         
     Returns:
         Dict with attention values per class per layer
@@ -960,11 +1020,27 @@ def extract_attention_per_class(model, data_loader, device, class_names: List[st
     model.eval()
     num_layers = len(model.conv_layers)
     
+    # Auto-detect max_batches based on first batch's graph size
+    first_batch = next(iter(data_loader))
+    num_nodes = first_batch.x.shape[0] // first_batch.num_graphs if first_batch.num_graphs > 0 else 24
+    
+    if max_batches is None:
+        if num_nodes > 80:
+            max_batches = 10  # STC: 102 nodes - use fewer batches
+        elif num_nodes > 40:
+            max_batches = 20
+        else:
+            max_batches = None  # EEG: 24 nodes - use all
+    
     # Initialize storage
     attention_values = {name: {l: [] for l in range(num_layers)} for name in class_names}
     
+    batch_count = 0
     with torch.no_grad():
         for batch in data_loader:
+            if max_batches is not None and batch_count >= max_batches:
+                break
+            batch_count += 1
             batch = batch.to(device)
             all_attentions = model.get_all_attention_weights(batch)
             
@@ -1279,7 +1355,7 @@ def generate_full_attention_analysis(model, data_loader, device, save_dir: Path,
       - Per-class average attention heatmaps for each GAT layer
       - Attention difference heatmaps between class pairs
       - Attention weight distributions by class (KDE curves)
-      - Minimum Spanning Tree graphs for each class/layer
+      - Minimum Spanning Tree graphs for each class/layer (skipped for large graphs)
     
     Args:
         model: GAT model
@@ -1302,13 +1378,32 @@ def generate_full_attention_analysis(model, data_loader, device, save_dir: Path,
     first_batch = next(iter(data_loader))
     num_nodes = first_batch.x.shape[0] // first_batch.num_graphs
     
+    # Detect if we're working with large graphs (STC mode)
+    is_large_graph = num_nodes > 50
+    
+    # Configure plotting parameters based on graph size
+    if is_large_graph:
+        fig_dpi = 100  # Lower DPI for faster rendering
+        heatmap_figsize = (10, 8)  # Smaller figures
+        show_labels = False  # Skip axis labels for large heatmaps
+        skip_mst = True  # Skip MST graphs (too slow with 102 nodes)
+        logger.info(f"Large graph detected ({num_nodes} nodes), using optimized settings")
+    else:
+        fig_dpi = 200
+        heatmap_figsize = (12, 10)
+        show_labels = True
+        skip_mst = False
+    
     logger.info(f"Generating full attention analysis for {len(class_names)} classes...")
     
     # Load electrode labels
     ch_names = load_electrode_names()
-    axis_labels = format_electrode_labels(ch_names[:num_nodes]) if ch_names else [str(i) for i in range(num_nodes)]
+    if show_labels:
+        axis_labels = format_electrode_labels(ch_names[:num_nodes]) if ch_names else [str(i) for i in range(num_nodes)]
+    else:
+        axis_labels = False  # seaborn will hide labels
     
-    # 1. Compute average attention matrices per class
+    # 1. Compute average attention matrices per class (with batch limit for large graphs)
     attention_per_class = compute_attention_matrix_per_class(
         model, data_loader, device, num_nodes, class_names
     )
@@ -1325,22 +1420,23 @@ def generate_full_attention_analysis(model, data_loader, device, save_dir: Path,
             
             att_matrix = attention_per_class[class_name][layer_idx]
             
-            fig, ax = plt.subplots(figsize=(12, 10))
+            fig, ax = plt.subplots(figsize=heatmap_figsize)
             sns.heatmap(att_matrix, cmap='YlOrRd', square=True, ax=ax,
                        vmin=0, vmax=vmax,
                        cbar_kws={'label': 'Attention Weight'},
                        xticklabels=axis_labels, yticklabels=axis_labels)
             ax.set_title(f'Average Attention - {class_name} - Layer {layer_idx + 1}', 
                         fontsize=14, fontweight='bold')
-            ax.set_xlabel('Target Electrode', fontsize=11)
-            ax.set_ylabel('Source Electrode', fontsize=11)
-            plt.xticks(rotation=45, ha='right', fontsize=7)
-            plt.yticks(fontsize=7)
+            ax.set_xlabel('Target Node', fontsize=11)
+            ax.set_ylabel('Source Node', fontsize=11)
+            if show_labels:
+                plt.xticks(rotation=45, ha='right', fontsize=7)
+                plt.yticks(fontsize=7)
             plt.tight_layout()
             
             # Save file
             file_path = save_dir / f'attention_{class_name.lower()}_layer{layer_idx + 1}.png'
-            plt.savefig(file_path, dpi=200, bbox_inches='tight')
+            plt.savefig(file_path, dpi=fig_dpi, bbox_inches='tight')
             
             # Log to TensorBoard
             if writer is not None:
@@ -1363,22 +1459,23 @@ def generate_full_attention_analysis(model, data_loader, device, save_dir: Path,
             diff_matrix = attention_per_class[class_a][layer_idx] - attention_per_class[class_b][layer_idx]
             vmax_diff = max(abs(diff_matrix.min()), abs(diff_matrix.max()))
             
-            fig, ax = plt.subplots(figsize=(12, 10))
+            fig, ax = plt.subplots(figsize=heatmap_figsize)
             sns.heatmap(diff_matrix, cmap='RdBu_r', square=True, ax=ax,
                        center=0, vmin=-vmax_diff, vmax=vmax_diff,
                        cbar_kws={'label': f'{class_a} - {class_b}'},
                        xticklabels=axis_labels, yticklabels=axis_labels)
             ax.set_title(f'Attention Difference: {class_a} vs {class_b} - Layer {layer_idx + 1}', 
                         fontsize=14, fontweight='bold')
-            ax.set_xlabel('Target Electrode', fontsize=11)
-            ax.set_ylabel('Source Electrode', fontsize=11)
-            plt.xticks(rotation=45, ha='right', fontsize=7)
-            plt.yticks(fontsize=7)
+            ax.set_xlabel('Target Node', fontsize=11)
+            ax.set_ylabel('Source Node', fontsize=11)
+            if show_labels:
+                plt.xticks(rotation=45, ha='right', fontsize=7)
+                plt.yticks(fontsize=7)
             plt.tight_layout()
             
             # Save file
             file_path = save_dir / f'attention_diff_{class_a.lower()}_vs_{class_b.lower()}_layer{layer_idx + 1}.png'
-            plt.savefig(file_path, dpi=200, bbox_inches='tight')
+            plt.savefig(file_path, dpi=fig_dpi, bbox_inches='tight')
             
             # Log to TensorBoard
             if writer is not None:
@@ -1390,7 +1487,7 @@ def generate_full_attention_analysis(model, data_loader, device, save_dir: Path,
             
             plt.close()
     
-    # 4. Extract attention distributions per class and plot
+    # 4. Extract attention distributions per class and plot (with batch limit for large graphs)
     attention_dist_per_class = extract_attention_per_class(model, data_loader, device, class_names)
     
     # Define colors for each class
@@ -1437,7 +1534,7 @@ def generate_full_attention_analysis(model, data_loader, device, save_dir: Path,
     
     # Save distributions plot
     dist_path = save_dir / 'attention_distributions_by_class.png'
-    plt.savefig(dist_path, dpi=200, bbox_inches='tight')
+    plt.savefig(dist_path, dpi=fig_dpi, bbox_inches='tight')
     
     # Log to TensorBoard
     if writer is not None:
@@ -1450,50 +1547,54 @@ def generate_full_attention_analysis(model, data_loader, device, save_dir: Path,
     plt.close()
     
     # 5. Generate Minimum Spanning Tree graphs for each class/layer
-    logger.info("Generating Minimum Spanning Tree graphs...")
-    mst_dir = save_dir / 'mst_graphs'
-    mst_dir.mkdir(parents=True, exist_ok=True)
-    
-    # Load electrode coordinates for graph visualization
-    try:
-        with open(EXTRA_PKL_PATH, 'rb') as f:
-            extra_data = pickle.load(f)
-        eeg_coords_2d = extra_data[6]
-    except Exception as e:
-        logger.warning(f"Could not load electrode coordinates: {e}")
-        eeg_coords_2d = None
-    
-    for layer_idx in range(num_layers):
-        for class_name in class_names:
-            if class_name not in attention_per_class:
-                continue
-            
-            att_matrix = attention_per_class[class_name][layer_idx]
-            
-            # Compute MST
-            mst_matrix = compute_mst_from_attention(att_matrix)
-            
-            # Save MST graph visualization
-            mst_path = mst_dir / f'mst_{class_name.lower()}_layer{layer_idx + 1}.png'
-            try:
-                plot_attention_mst_graph(
-                    mst_matrix, 
-                    class_name, 
-                    layer_idx,
-                    mst_path,
-                    ch_names=ch_names[:num_nodes] if ch_names else None,
-                    eeg_coords_2d=eeg_coords_2d
-                )
+    # Skip MST for large graphs (STC mode) as it's very slow with 100+ nodes
+    if skip_mst:
+        logger.info(f"Skipping MST graphs for large graph ({num_nodes} nodes)")
+    else:
+        logger.info("Generating Minimum Spanning Tree graphs...")
+        mst_dir = save_dir / 'mst_graphs'
+        mst_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Load electrode coordinates for graph visualization
+        try:
+            with open(EXTRA_PKL_PATH, 'rb') as f:
+                extra_data = pickle.load(f)
+            eeg_coords_2d = extra_data[6]
+        except Exception as e:
+            logger.warning(f"Could not load electrode coordinates: {e}")
+            eeg_coords_2d = None
+        
+        for layer_idx in range(num_layers):
+            for class_name in class_names:
+                if class_name not in attention_per_class:
+                    continue
                 
-                # Log to TensorBoard
-                if writer is not None:
-                    img = plt.imread(str(mst_path))
-                    if img.ndim == 3 and img.shape[2] == 4:  # RGBA
-                        img = img[:, :, :3]
-                    img_tensor = torch.tensor(img.transpose(2, 0, 1))
-                    writer.add_image(f'Attention_MST/{class_name}/Layer_{layer_idx + 1}', img_tensor, epoch)
-            except Exception as e:
-                logger.warning(f"Failed to generate MST for {class_name} layer {layer_idx + 1}: {e}")
+                att_matrix = attention_per_class[class_name][layer_idx]
+                
+                # Compute MST
+                mst_matrix = compute_mst_from_attention(att_matrix)
+                
+                # Save MST graph visualization
+                mst_path = mst_dir / f'mst_{class_name.lower()}_layer{layer_idx + 1}.png'
+                try:
+                    plot_attention_mst_graph(
+                        mst_matrix, 
+                        class_name, 
+                        layer_idx,
+                        mst_path,
+                        ch_names=ch_names[:num_nodes] if ch_names else None,
+                        eeg_coords_2d=eeg_coords_2d
+                    )
+                    
+                    # Log to TensorBoard
+                    if writer is not None:
+                        img = plt.imread(str(mst_path))
+                        if img.ndim == 3 and img.shape[2] == 4:  # RGBA
+                            img = img[:, :, :3]
+                        img_tensor = torch.tensor(img.transpose(2, 0, 1))
+                        writer.add_image(f'Attention_MST/{class_name}/Layer_{layer_idx + 1}', img_tensor, epoch)
+                except Exception as e:
+                    logger.warning(f"Failed to generate MST for {class_name} layer {layer_idx + 1}: {e}")
     
     if writer is not None:
         writer.flush()

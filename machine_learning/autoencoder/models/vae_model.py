@@ -251,6 +251,10 @@ class GATEncoder(nn.Module):
 class GraphDecoder(nn.Module):
     """
     Decoder for reconstructing node features and optionally edge weights.
+    
+    Supports two modes:
+    - MLP: Simple feedforward decoder (use_graph_conv=False)
+    - Graph Conv: Uses GATv2 or ChebConv for decoding (use_graph_conv=True)
     """
     
     def __init__(self,
@@ -264,48 +268,109 @@ class GraphDecoder(nn.Module):
         dec_config = config['model']['decoder']
         
         hidden_dims = dec_config['hidden_dims']
-        dropout = dec_config['dropout']
-        activation = dec_config['activation']
+        dropout = dec_config.get('dropout', 0.1)
+        activation = dec_config.get('activation', 'leaky_relu')
         self.reconstruct_edges = dec_config.get('reconstruct_edges', True)
-        
-        # Node feature decoder
-        layers = []
-        prev_dim = latent_dim
-        
-        for hidden_dim in hidden_dims:
-            layers.append(nn.Linear(prev_dim, hidden_dim))
-            layers.append(nn.BatchNorm1d(hidden_dim))
-            
-            if activation == 'relu':
-                layers.append(nn.ReLU())
-            elif activation == 'elu':
-                layers.append(nn.ELU())
-            elif activation == 'leaky_relu':
-                layers.append(nn.LeakyReLU(0.2))
-            
-            layers.append(nn.Dropout(dropout))
-            prev_dim = hidden_dim
-        
-        # Output layer for node features
-        layers.append(nn.Linear(prev_dim, num_node_features))
-        
-        self.node_decoder = nn.Sequential(*layers)
-        
-        # Edge decoder (optional)
-        if self.reconstruct_edges:
-            # Use inner product for edge reconstruction
-            # or a small MLP
-            self.edge_decoder = nn.Sequential(
-                nn.Linear(latent_dim * 2, 64),
-                nn.ReLU(),
-                nn.Linear(64, num_edge_features)
-            )
-        else:
-            self.edge_decoder = None
+        self.use_graph_conv = dec_config.get('use_graph_conv', False)
+        self.conv_type = dec_config.get('conv_type', 'gatv2')
         
         self.latent_dim = latent_dim
         self.num_node_features = num_node_features
         self.num_edge_features = num_edge_features
+        self.num_nodes = num_nodes
+        
+        # Activation function
+        if activation == 'relu':
+            self.activation = nn.ReLU()
+        elif activation == 'elu':
+            self.activation = nn.ELU()
+        elif activation == 'leaky_relu':
+            self.activation = nn.LeakyReLU(0.2)
+        else:
+            self.activation = nn.ReLU()
+        
+        if self.use_graph_conv:
+            # Graph Convolutional Decoder
+            self._build_graph_conv_decoder(hidden_dims, dropout)
+        else:
+            # MLP Decoder
+            self._build_mlp_decoder(hidden_dims, dropout)
+        
+        # Edge decoder - input size depends on decoder type
+        if self.reconstruct_edges:
+            if self.use_graph_conv:
+                edge_input_dim = hidden_dims[-1] if hidden_dims else latent_dim
+            else:
+                # For MLP decoder, use latent_dim directly
+                edge_input_dim = latent_dim
+            
+            self.edge_decoder = nn.Sequential(
+                nn.Linear(edge_input_dim * 2, 64),
+                nn.ReLU(),
+                nn.Dropout(dropout),
+                nn.Linear(64, num_edge_features)
+            )
+        else:
+            self.edge_decoder = None
+    
+    def _build_mlp_decoder(self, hidden_dims: List[int], dropout: float):
+        """Build MLP-based decoder."""
+        layers = []
+        prev_dim = self.latent_dim
+        
+        for hidden_dim in hidden_dims:
+            layers.append(nn.Linear(prev_dim, hidden_dim))
+            layers.append(nn.BatchNorm1d(hidden_dim))
+            layers.append(self.activation)
+            layers.append(nn.Dropout(dropout))
+            prev_dim = hidden_dim
+        
+        layers.append(nn.Linear(prev_dim, self.num_node_features))
+        self.node_decoder = nn.Sequential(*layers)
+        self.conv_layers = None
+    
+    def _build_graph_conv_decoder(self, hidden_dims: List[int], dropout: float):
+        """Build Graph Convolutional decoder with GAT or Cheb layers."""
+        from torch_geometric.nn import GATv2Conv, ChebConv
+        
+        self.conv_layers = nn.ModuleList()
+        self.norms = nn.ModuleList()
+        self.dropouts = nn.ModuleList()
+        
+        prev_dim = self.latent_dim
+        
+        for i, hidden_dim in enumerate(hidden_dims):
+            if self.conv_type == 'gatv2':
+                # Use 4 heads for intermediate, 1 for last
+                heads = 4 if i < len(hidden_dims) - 1 else 1
+                concat = i < len(hidden_dims) - 1
+                out_dim = hidden_dim // heads if concat else hidden_dim
+                
+                conv = GATv2Conv(
+                    in_channels=prev_dim,
+                    out_channels=out_dim,
+                    heads=heads,
+                    concat=concat,
+                    dropout=dropout,
+                    add_self_loops=True,
+                    share_weights=False
+                )
+                prev_dim = out_dim * heads if concat else out_dim
+            else:  # cheby
+                conv = ChebConv(
+                    in_channels=prev_dim,
+                    out_channels=hidden_dim,
+                    K=3
+                )
+                prev_dim = hidden_dim
+            
+            self.conv_layers.append(conv)
+            self.norms.append(nn.BatchNorm1d(prev_dim))
+            self.dropouts.append(nn.Dropout(dropout))
+        
+        # Final projection to node features
+        self.output_proj = nn.Linear(prev_dim, self.num_node_features)
+        self.node_decoder = None  # Not used in graph conv mode
     
     def forward(self, z: torch.Tensor, 
                 edge_index: Optional[torch.Tensor] = None,
@@ -323,21 +388,33 @@ class GraphDecoder(nn.Module):
         Returns:
             Dict with 'x_recon' and optionally 'edge_attr_recon'
         """
-        # Decode node features
-        x_recon = self.node_decoder(z)
+        if self.use_graph_conv and self.conv_layers is not None:
+            # Graph convolutional decoding
+            h = z
+            for conv, norm, drop in zip(self.conv_layers, self.norms, self.dropouts):
+                if self.conv_type == 'gatv2':
+                    h = conv(h, edge_index)
+                else:
+                    h = conv(h, edge_index)
+                h = norm(h)
+                h = self.activation(h)
+                h = drop(h)
+            
+            x_recon = self.output_proj(h)
+            h_for_edges = h  # Use last hidden state for edge reconstruction
+        else:
+            # MLP decoding
+            x_recon = self.node_decoder(z)
+            h_for_edges = z
         
         result = {'x_recon': x_recon}
         
         # Decode edge features
         if self.reconstruct_edges and edge_index is not None and self.edge_decoder is not None:
-            # Get node pairs for each edge
             src, dst = edge_index[0], edge_index[1]
-            z_src = z[src]  # [num_edges, latent_dim]
-            z_dst = z[dst]  # [num_edges, latent_dim]
-            
-            # Concatenate source and destination embeddings
-            z_edge = torch.cat([z_src, z_dst], dim=1)  # [num_edges, 2*latent_dim]
-            
+            h_src = h_for_edges[src]
+            h_dst = h_for_edges[dst]
+            z_edge = torch.cat([h_src, h_dst], dim=1)
             edge_attr_recon = self.edge_decoder(z_edge)
             result['edge_attr_recon'] = edge_attr_recon
         

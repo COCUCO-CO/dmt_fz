@@ -1,0 +1,222 @@
+# ============================================================================
+# Enhanced VAE Configuration
+# With multi-band, temporal windows, GAT decoder
+# ============================================================================
+
+# Paths
+paths:
+  phases_dir: "/media/storage_hdd/dmt_fz/fwd-inv-stc"
+  output_dir: "/media/storage_hdd/dmt_fz/machine_learning/autoencoder/output_enhanced"
+  dataset_cache: "/media/storage_hdd/dmt_fz/machine_learning/autoencoder/cache"
+  checkpoints: "/media/storage_hdd/dmt_fz/machine_learning/autoencoder/checkpoints_enhanced"
+  tensorboard: "/media/storage_hdd/dmt_fz/machine_learning/autoencoder/runs_enhanced"
+  activations_dir: "/media/storage_hdd/dmt_fz/machine_learning/autoencoder/activations_enhanced"
+
+# ============================================================================
+# DATA CONFIGURATION
+# ============================================================================
+data:
+  conditions: ["DMT", "EC", "EO"]
+  bands: ["Delta", "Theta", "Alpha", "Beta", "Gamma"]
+  use_stc: false  # 24 channels (electrodes)
+  
+  # ==========================================================================
+  # PROCESSING MODE
+  # Options: "single_band", "multiband", "temporal_window"
+  # ==========================================================================
+  processing_mode: "single_band"  # Start with single_band
+  
+  # For temporal_window mode:
+  window_size: 5      # Number of consecutive epochs
+  window_stride: 2    # Step between windows
+  
+  # For multiband mode:
+  # All 5 bands are concatenated as features
+  
+  # ==========================================================================
+  # GRAPH CONSTRUCTION
+  # ==========================================================================
+  graph:
+    fully_connected: true
+    edge_threshold: 0.3
+    edge_threshold_percentile: null
+    self_loops: false
+    directed: false
+  
+  # ==========================================================================
+  # NODE FEATURES
+  # ==========================================================================
+  node_features:
+    use_phase_stats: true           # Circular statistics (mean, std, velocity)
+    use_direct_phases: false        # Direct phase matrix (64 timepoints)
+    phase_target_length: 64         # Resample phases to this length
+    use_temporal_complexity: true   # Entropy, Hurst, sample entropy
+    use_local_connectivity: true    # Degree, clustering coefficient
+    use_network_label: false        # Network assignment
+  
+  # ==========================================================================
+  # TEMPORAL FEATURES
+  # ==========================================================================
+  use_temporal_diff: true           # Include Δ(sync) between epochs
+  
+  # ==========================================================================
+  # GRAPH-LEVEL FEATURES
+  # ==========================================================================
+  graph_features:
+    use_kuramoto: true
+    use_global_sync: true
+    use_topology: true
+  
+  # ==========================================================================
+  # TRAIN/VAL/TEST SPLIT
+  # ==========================================================================
+  split:
+    train_ratio: 0.7
+    val_ratio: 0.15
+    test_ratio: 0.15
+    stratify: true
+    random_state: 42
+    group_by_subject: true
+
+# ============================================================================
+# ENHANCED VAE MODEL
+# ============================================================================
+model:
+  name: "EnhancedBrainStateVAE"
+  
+  # ==========================================================================
+  # GAT ENCODER
+  # ==========================================================================
+  encoder:
+    conv_type: "gatv2"
+    hidden_dim: 64
+    num_gat_layers: 3
+    num_attention_heads: 4
+    dropout: 0.2
+    attention_dropout: 0.1
+    use_edge_attr: true
+    concat_heads: true
+    negative_slope: 0.2
+    use_skip_connections: true
+  
+  # ==========================================================================
+  # LATENT SPACE
+  # ==========================================================================
+  latent:
+    dim: 32  # Compact latent for clustering
+  
+  # ==========================================================================
+  # GAT DECODER (NEW!)
+  # ==========================================================================
+  decoder:
+    hidden_dim: 64
+    num_gat_layers: 2           # Fewer layers than encoder
+    num_attention_heads: 4
+    dropout: 0.1
+    attention_dropout: 0.1
+    reconstruct_edges: true     # Reconstruct sync weights
+  
+  # ==========================================================================
+  # POOLING
+  # ==========================================================================
+  pooling:
+    method: "mean"  # mean, max, attention, mean+max
+
+# ============================================================================
+# LOSS CONFIGURATION
+# ============================================================================
+loss:
+  reconstruction:
+    node_weight: 0.3   # Nodes are less informative
+    edge_weight: 1.0   # Edges (sync) are most important!
+    type: "mse"
+  
+  kl:
+    weight: 0.01
+    annealing:
+      enabled: true
+      start: 0.0
+      end: 0.05
+      epochs: 50
+      type: "linear"
+  
+  free_bits: 0.1  # Prevent posterior collapse
+
+# ============================================================================
+# TRAINING
+# ============================================================================
+training:
+  num_epochs: 100
+  batch_size: 128
+  learning_rate: 0.001
+  weight_decay: 1e-5
+  optimizer: "adamw"
+  
+  scheduler:
+    type: "cosine"
+    patience: 10
+    factor: 0.5
+    min_lr: 1e-6
+  
+  early_stopping:
+    patience: 20
+    min_delta: 0.0001
+    monitor: "val_loss"
+  
+  gradient_clipping:
+    enabled: true
+    max_norm: 1.0
+
+# ============================================================================
+# LOGGING
+# ============================================================================
+logging:
+  level: "INFO"
+  tensorboard: true
+  save_frequency: 10
+  log_frequency: 1
+  
+  tensorboard_extras:
+    latent_space: true
+    reconstructions: true
+    attention_weights: true
+    kl_per_dim: true
+    gradient_norms: true
+
+visualization:
+  plot_training_curves: true
+  plot_latent_space: true
+  plot_reconstructions: true
+  num_examples_to_visualize: 10
+  latent_method: "umap"
+
+# ============================================================================
+# ACTIVATION EXTRACTION
+# ============================================================================
+extraction:
+  layers_to_extract:
+    - "encoder_layer_0"
+    - "encoder_layer_1"
+    - "encoder_layer_2"
+    - "decoder_layer_0"
+    - "decoder_layer_1"
+    - "latent"
+    - "pooled"
+  output_format: "pkl"
+  save_attention_weights: true
+  save_per_subject: true
+
+# ============================================================================
+# HARDWARE
+# ============================================================================
+seed: 42
+deterministic: true
+device: "cuda"
+num_workers: 8
+dataset_workers: 8
+pin_memory: true
+
+
+
+
+

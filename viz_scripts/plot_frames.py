@@ -319,13 +319,14 @@ def plot_advanced(epoch, fmt="png", quality="high", only_points=True, samples=[0
     eeg_syncro_mat = plot_utils.subject_syncro["syncros_eeg"][plot_utils.band][0][epoch].copy()
     stc_syncro_mat = plot_utils.subject_syncro["syncros_stc"][plot_utils.band][0][epoch].copy()
     
-    # Calculate coherence (mean) and metastability (std) for EEG and STC
-    eeg_kuramoto_means = np.asarray(plot_utils.eeg_kuramoto_mat).mean(axis=1)
-    stc_kuramoto_means = np.asarray(plot_utils.stc_kuramoto_mat).mean(axis=1)
-    eeg_coherence = np.nanmean(eeg_kuramoto_means)  # Global mean (coherence)
-    eeg_metastability = np.nanstd(eeg_kuramoto_means)  # Global std (metastability)
-    stc_coherence = np.nanmean(stc_kuramoto_means)
-    stc_metastability = np.nanstd(stc_kuramoto_means)
+    # Calculate coherence (mean) and metastability (std) for EEG and STC (only valid epochs)
+    eeg_kuramoto_all = np.asarray(plot_utils.eeg_kuramoto_mat).mean(axis=1)
+    stc_kuramoto_all = np.asarray(plot_utils.stc_kuramoto_mat).mean(axis=1)
+    valid_indices = [i for i in range(len(eeg_kuramoto_all)) if i not in plot_utils.rej]
+    eeg_coherence = np.mean(eeg_kuramoto_all[valid_indices])  # Global mean (coherence)
+    eeg_metastability = np.std(eeg_kuramoto_all[valid_indices])  # Global std (metastability)
+    stc_coherence = np.mean(stc_kuramoto_all[valid_indices])
+    stc_metastability = np.std(stc_kuramoto_all[valid_indices])
     
     for sample in samples:
         fig = plt.figure(figsize=(24*scale, 22*scale), facecolor='white')
@@ -336,10 +337,10 @@ def plot_advanced(epoch, fmt="png", quality="high", only_points=True, samples=[0
         ax_eeg_timeline = plt.subplot2grid(grid_size, (0, 0), colspan=3)
         ax_eeg_timeline.set_facecolor('white')
         
-        full_epochs_count = len(plot_utils.rej) + len(plot_utils.eeg_kuramoto_mat)
+        full_epochs_count = len(plot_utils.eeg_kuramoto_mat)  # 210 epochs total
         x_timeline = np.arange(full_epochs_count) + 0.5
-        avr_eeg = np.asarray(plot_utils.eeg_kuramoto_mat).mean(axis=1).tolist()
-        y_eeg = np.array([avr_eeg.pop(0) if i not in plot_utils.rej else np.nan for i in range(full_epochs_count)])
+        eeg_kuramoto_means = np.asarray(plot_utils.eeg_kuramoto_mat).mean(axis=1)
+        y_eeg = np.array([np.nan if i in plot_utils.rej else eeg_kuramoto_means[i] for i in range(full_epochs_count)])
         valid_mask = ~np.isnan(y_eeg)
         
         # Metastability band (std interval) - draw first so it's behind points
@@ -417,8 +418,8 @@ def plot_advanced(epoch, fmt="png", quality="high", only_points=True, samples=[0
         # STC Timeline
         ax_stc_timeline = plt.subplot2grid(grid_size, (5, 0), colspan=3)
         ax_stc_timeline.set_facecolor('white')
-        avr_stc = np.asarray(plot_utils.stc_kuramoto_mat).mean(axis=1).tolist()
-        y_stc = np.array([avr_stc.pop(0) if i not in plot_utils.rej else np.nan for i in range(full_epochs_count)])
+        stc_kuramoto_means = np.asarray(plot_utils.stc_kuramoto_mat).mean(axis=1)
+        y_stc = np.array([np.nan if i in plot_utils.rej else stc_kuramoto_means[i] for i in range(full_epochs_count)])
         
         # Metastability band (std interval) - draw first so it's behind points
         ax_stc_timeline.fill_between(

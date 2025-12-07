@@ -522,14 +522,16 @@ def main(config_path: str, force_rebuild: bool = False,
         history['beta'].append(beta)
         history['lr'].append(optimizer.param_groups[0]['lr'])
         
-        # Log to console
+        # Log to console (format used by eeg_viewer for real-time plotting)
+        current_lr = optimizer.param_groups[0]['lr']
         logger.info(
             f"Epoch {epoch:03d} [train] - Loss: {train_metrics['loss']:.4f} | "
             f"Recon: {train_metrics['recon_loss']:.4f} | KL: {train_metrics['kl_loss']:.4f}"
         )
         logger.info(
             f"Epoch {epoch:03d} [val]   - Loss: {val_metrics['loss']:.4f} | "
-            f"Recon: {val_metrics['recon_loss']:.4f} | KL: {val_metrics['kl_loss']:.4f} | β: {beta:.4f}"
+            f"Recon: {val_metrics['recon_loss']:.4f} | KL: {val_metrics['kl_loss']:.4f} | "
+            f"β: {beta:.4f} | LR: {current_lr:.2e}"
         )
         
         # Log to TensorBoard
@@ -566,6 +568,37 @@ def main(config_path: str, force_rebuild: bool = False,
                     )
                 except Exception as e:
                     logger.warning(f"Failed to log latent space: {e}")
+            
+            # Save reconstructions every 10 epochs for visualization
+            if epoch % 10 == 0 or epoch == 1:
+                try:
+                    recon_dir = output_dir / 'reconstructions'
+                    recon_dir.mkdir(exist_ok=True)
+                    
+                    # Get batch for visualization
+                    model.eval()
+                    with torch.no_grad():
+                        sample_batch = next(iter(val_loader))
+                        sample_batch = sample_batch.to(device)
+                        output = model(sample_batch)
+                        
+                        # Extract original and reconstructed node features
+                        orig_nodes = sample_batch.x.cpu().numpy()
+                        recon_nodes = output['x_recon'].cpu().numpy()
+                        
+                        # Limit size for storage
+                        max_nodes = min(1000, orig_nodes.shape[0])
+                        
+                        # Save as compressed numpy
+                        np.savez_compressed(
+                            recon_dir / f'recon_epoch_{epoch:03d}.npz',
+                            original=orig_nodes[:max_nodes],
+                            reconstructed=recon_nodes[:max_nodes],
+                            epoch=epoch
+                        )
+                        logger.info(f"Epoch {epoch:03d} [recon] - Saved {max_nodes} node features to {recon_dir}")
+                except Exception as e:
+                    logger.warning(f"Failed to save reconstructions: {e}")
         
         # Scheduler step
         if scheduler:
@@ -583,7 +616,13 @@ def main(config_path: str, force_rebuild: bool = False,
                 'optimizer_state_dict': optimizer.state_dict(),
                 'val_loss': val_metrics['loss'],
                 'history': history,
-                'config': config
+                'config': config,
+                'model_params': {
+                    'num_node_features': num_node_features,
+                    'num_edge_features': num_edge_features,
+                    'num_graph_features': num_graph_features,
+                    'num_nodes': num_nodes
+                }
             }, checkpoint_path)
         
         # Save best model
@@ -597,7 +636,13 @@ def main(config_path: str, force_rebuild: bool = False,
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
                 'val_loss': val_metrics['loss'],
-                'config': config
+                'config': config,
+                'model_params': {
+                    'num_node_features': num_node_features,
+                    'num_edge_features': num_edge_features,
+                    'num_graph_features': num_graph_features,
+                    'num_nodes': num_nodes
+                }
             }, best_model_path)
             
             logger.info(f"✓ New best model saved! Val Loss: {val_metrics['loss']:.4f}")
