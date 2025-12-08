@@ -115,7 +115,7 @@ class CleaningState:
         # Step-specific results
         self.filter_params: Dict[str, Any] = {}
         self.bad_channels: List[str] = []
-        self.bad_channels_auto: List[str] = []  # Auto-detected
+        self.bad_channels_auto: Optional[List[str]] = None  # Auto-detected (None = not run yet)
         self.bad_channels_manual: List[str] = []  # Manually marked
         self.interpolated_channels: List[str] = []
         self.reference_type: str = ""
@@ -228,7 +228,7 @@ class CleaningState:
             
             # Reset step-specific data
             self.bad_channels = []
-            self.bad_channels_auto = []
+            self.bad_channels_auto = None  # None means detection not run yet
             self.bad_channels_manual = []
             self.interpolated_channels = []
             self.ica = None

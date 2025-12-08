@@ -75,10 +75,14 @@ def compute_ica(raw: mne.io.Raw,
     # Filter for ICA (1 Hz highpass recommended)
     raw_filtered = raw.copy().filter(l_freq=1.0, h_freq=None, verbose=False)
     
-    # Determine n_components
+    # Determine n_components - ALWAYS cap at n_channels - 1
+    n_eeg = len(mne.pick_types(raw.info, eeg=True, exclude='bads'))
+    max_components = n_eeg - 1
+    
     if n_components is None:
-        n_eeg = len(mne.pick_types(raw.info, eeg=True, exclude='bads'))
-        n_components = min(n_eeg - 1, 20)  # Cap at 20 for speed
+        n_components = min(max_components, 20)  # Cap at 20 for speed
+    else:
+        n_components = min(n_components, max_components)  # Cap at max valid
     
     # Create ICA object
     ica = ICA(

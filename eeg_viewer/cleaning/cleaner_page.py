@@ -129,6 +129,7 @@ class CleanerPageState:
         # Epoch rejection state (persist across re-renders)
         self.reject_ptp_threshold: float = 150.0
         self.reject_flat_threshold: float = 0.5
+        self.reject_gradient_threshold: float = 100.0  # µV/ms - high default to be permissive
         
         # ICA parameters state (persist across re-renders)
         self.ica_n_components: int = 20
@@ -139,8 +140,23 @@ class CleanerPageState:
         self._ica_computing = False
         self._ica_applied = False  # Track if ICA was confirmed/applied
         
+        # ICA detection results (to show indicators)
+        self._eog_detected: Optional[bool] = None  # None=not run, True=found, False=not found
+        self._ecg_detected: Optional[bool] = None
+        self._muscle_detected: Optional[bool] = None
+        
         # Epoch results  
         self.epoch_result: Optional[EpochResult] = None
+        
+        # Reject step operation results (to show indicators)
+        self._rejection_applied: Optional[bool] = None  # None=not run, True=success, False=error
+        self._rejection_exported: Optional[bool] = None
+        
+        # Export step operation results
+        self._export_all_result: Optional[bool] = None  # None=not run, True=success, False=error
+        self._export_all_path: Optional[str] = None
+        self._export_epochs_result: Optional[bool] = None
+        self._export_epochs_path: Optional[str] = None
         
         # UI Settings
         self.show_tooltips = True  # Toggle for help tooltips
@@ -406,13 +422,6 @@ def cleaner_page():
         
         ui.element('div').classes('flex-1')
         
-        # Help toggle
-        help_switch = ui.switch('Help', value=PS.show_tooltips).props('dense').classes('help-toggle')
-        help_switch.on('update:model-value', lambda e: toggle_help(e.args))
-        help_switch.tooltip('Show/hide parameter explanations')
-        
-        ui.separator().props('vertical').classes('mx-3')
-        
         # Header actions
         with ui.row().classes('gap-2 items-center'):
             ui.button(icon='undo', on_click=do_undo).props('flat dense round').style(
@@ -425,8 +434,9 @@ def cleaner_page():
             
             ui.separator().props('vertical').classes('mx-2')
             
-            ui.button('VIEWER', icon='visibility', on_click=lambda: ui.navigate.to('/')).props('flat dense')
-            ui.button('PIPELINE', icon='account_tree', on_click=lambda: ui.navigate.to('/pipeline')).props('flat dense')
+            ui.button('← VIEWER', on_click=lambda: ui.navigate.to('/')).props('flat dense').style(
+                f'color: {THEME_TEXT};'
+            ).tooltip('Return to EEG Viewer')
     
     # Main layout
     with ui.row().classes('w-full gap-0').style(
@@ -516,21 +526,16 @@ def cleaner_page():
                         ).props(f'flat dense round size=sm {"color=warning" if is_reversed else ""}')
                         reverse_btn.tooltip('Reverse EEG temporally (flip time axis)')
                         
-                        # Show reverse indicator if any step is reversed
-                        if PS.reversed_steps:
-                            steps_str = ', '.join([s.short_name for s in PS.reversed_steps])
-                            ui.chip(f'⟲ {steps_str}', color='warning').props('dense').classes('ml-2').style('font-size: 0.65rem;')
-                        
-                        # Show current epoch indicator for EPOCHS and later steps
+                        # Show current epoch indicator for EPOCHS and later steps (simple text)
                         steps_with_epochs = [CleaningStep.EPOCHS, CleaningStep.REJECT, CleaningStep.VISUALIZE, CleaningStep.EXPORT]
                         if PS.cleaning.current_step in steps_with_epochs and PS.epoch_result is not None:
                             epoch_dur = PS.cleaning.epoch_duration or 2.0
                             current_epoch = int(PS.view_start / epoch_dur) if epoch_dur > 0 else 0
                             max_epoch = PS.epoch_result.n_total - 1
-                            is_rejected = current_epoch in PS.epoch_result.rejected_indices
-                            status = '❌' if is_rejected else '✓'
-                            color = 'negative' if is_rejected else 'primary'
-                            ui.chip(f'Epoch {current_epoch}/{max_epoch} {status}', color=color).props('dense').classes('ml-2').style('font-size: 0.65rem;')
+                            current_epoch = min(current_epoch, max_epoch)  # Clamp to valid range
+                            ui.label(f'Epoch: {current_epoch}/{max_epoch}').style(
+                                f'color: {THEME_TEXT_DIM}; font-size: 0.75rem; font-family: JetBrains Mono;'
+                            ).classes('ml-3')
                 
                 PS.main_plot = ui.plotly({}).classes('w-full').style('height: 420px;')
                 update_main_plot()
@@ -641,7 +646,7 @@ def render_info():
             info_item('sensors', 'Channels', str(PS.cleaning.n_channels))
             info_item('timer', 'Duration', f'{PS.cleaning.duration:.1f} s')
             
-            if PS.cleaning.bad_channels or PS.cleaning.reference_type or PS.cleaning.ica_excluded:
+            if PS.cleaning.bad_channels or PS.cleaning.interpolated_channels or PS.cleaning.reference_type or PS.cleaning.ica_excluded:
                 ui.separator().classes('my-3')
                 ui.label('PROCESSING').classes('section-title')
                 
@@ -650,7 +655,10 @@ def render_info():
                              (f' +{len(PS.cleaning.bad_channels)-3}' if len(PS.cleaning.bad_channels) > 3 else ''),
                              color=THEME_WARN)
                 if PS.cleaning.interpolated_channels:
-                    info_item('auto_fix_high', 'Interpolated', str(len(PS.cleaning.interpolated_channels)))
+                    interp_names = ', '.join(PS.cleaning.interpolated_channels[:3])
+                    if len(PS.cleaning.interpolated_channels) > 3:
+                        interp_names += f' +{len(PS.cleaning.interpolated_channels)-3}'
+                    info_item('auto_fix_high', 'Interpolated', interp_names, color=THEME_PRIMARY)
                 if PS.cleaning.reference_type:
                     info_item('compare_arrows', 'Reference', PS.cleaning.reference_type[:15])
                 if PS.cleaning.ica_excluded:
@@ -732,12 +740,6 @@ def render_step_controls():
                 ui.label(step.display_name.split('. ')[1] if '. ' in step.display_name else step.display_name).style(
                     f'color: {THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 1rem; font-weight: 500;'
                 )
-            
-            # Reset this step button
-            if step != CleaningStep.LOAD and step in PS.cleaning.completed_steps:
-                ui.button('Reset Step', icon='replay', on_click=lambda s=step: reset_step(s)).props(
-                    'flat dense size=sm'
-                ).classes('reset-btn').tooltip(f'Reset {step.short_name} and redo')
         
         # Render step-specific controls
         if step == CleaningStep.LOAD:
@@ -911,12 +913,18 @@ def render_bad_channels_controls():
             if PS.show_tooltips:
                 corr_thresh.tooltip(HELP_TEXTS['corr_threshold'])
         
-        ui.button('Detect Bad Channels', icon='search', on_click=lambda: auto_detect_bad(
-            std_thresh.value or 3.5, 
-            flat_thresh.value or 1e-12,
-            corr_thresh.value or 0.1,
-            check_corr.value
-        )).props('dense').classes('mt-3')
+        with ui.row().classes('items-center gap-2 mt-3'):
+            ui.button('Detect Bad Channels', icon='search', on_click=lambda: auto_detect_bad(
+                std_thresh.value or 3.5, 
+                flat_thresh.value or 1e-12,
+                corr_thresh.value or 0.1,
+                check_corr.value
+            )).props('dense')
+            
+            # Show result indicator if detection was run
+            if PS.cleaning.bad_channels_auto is not None:
+                if len(PS.cleaning.bad_channels) == 0:
+                    ui.icon('check_circle', size='sm').style(f'color: {THEME_PRIMARY};').tooltip('All channels OK')
     
     # Results
     if PS.cleaning.bad_channels:
@@ -1094,17 +1102,34 @@ def render_ica_controls():
             ui.icon('check_circle', size='sm').style(f'color: {THEME_PRIMARY};')
             ui.label(f'{PS.ica_result.n_components} components computed').style(f'color: {THEME_TEXT}; font-size: 0.85rem;')
         
-        # Detection buttons
-        with ui.row().classes('gap-2 mb-3'):
+        # Detection buttons with result indicators
+        with ui.row().classes('gap-2 mb-3 items-center'):
             ui.button('Detect EOG', icon='visibility', on_click=detect_eog).props('dense outlined').tooltip(
                 'Auto-detect eye movement components (blinks, saccades)'
             )
+            if PS._eog_detected is not None:
+                if PS._eog_detected:
+                    ui.icon('check', size='xs').style(f'color: {THEME_PRIMARY};')
+                else:
+                    ui.icon('remove', size='xs').style(f'color: {THEME_TEXT_DIM};').tooltip('None found')
+            
             ui.button('Detect ECG', icon='favorite', on_click=detect_ecg).props('dense outlined').tooltip(
                 'Auto-detect heartbeat components'
             )
+            if PS._ecg_detected is not None:
+                if PS._ecg_detected:
+                    ui.icon('check', size='xs').style(f'color: {THEME_PRIMARY};')
+                else:
+                    ui.icon('remove', size='xs').style(f'color: {THEME_TEXT_DIM};').tooltip('None found')
+            
             ui.button('Detect Muscle', icon='fitness_center', on_click=detect_muscle).props('dense outlined').tooltip(
                 'Auto-detect muscle artifact components (high-frequency)'
             )
+            if PS._muscle_detected is not None:
+                if PS._muscle_detected:
+                    ui.icon('check', size='xs').style(f'color: {THEME_PRIMARY};')
+                else:
+                    ui.icon('remove', size='xs').style(f'color: {THEME_TEXT_DIM};').tooltip('None found')
         
         # Info box explaining how to interpret
         with ui.element('div').style(
@@ -1232,6 +1257,9 @@ def render_epochs_controls():
             stat_card('Duration', f'{PS.cleaning.epoch_duration}s', THEME_SECONDARY)
     
     with ui.element('div').classes('action-bar'):
+        ui.button('Reset Step', icon='replay', on_click=lambda: reset_step(CleaningStep.EPOCHS)).props(
+            'flat dense'
+        ).classes('reset-btn')
         ui.element('div').classes('flex-1')
         ui.button('← Previous', icon='arrow_back', on_click=go_to_previous_step).props('flat dense')
         ui.button('Skip →', on_click=lambda: complete_step(CleaningStep.EPOCHS)).props('flat dense')
@@ -1260,18 +1288,27 @@ def render_reject_controls():
             def on_flat_change(e):
                 PS.reject_flat_threshold = float(e.value) if e.value else 0.5
             
-            ptp = ui.number('Peak-to-peak', value=PS.reject_ptp_threshold, min=50, max=500, suffix='µV',
-                           on_change=on_ptp_change).props('dense outlined').classes('w-36')
-            if PS.show_tooltips:
-                ptp.tooltip(HELP_TEXTS['peak_to_peak'])
+            def on_gradient_change(e):
+                PS.reject_gradient_threshold = float(e.value) if e.value else 100.0
             
-            flat = ui.number('Flat threshold', value=PS.reject_flat_threshold, min=0.1, max=5, suffix='µV',
-                            on_change=on_flat_change).props('dense outlined').classes('w-32')
-            if PS.show_tooltips:
-                flat.tooltip(HELP_TEXTS['flat_epoch'])
+            ptp = ui.number('Peak-to-peak', value=PS.reject_ptp_threshold, min=50, max=1000, suffix='µV',
+                           on_change=on_ptp_change).props('dense outlined').classes('w-32')
+            ptp.tooltip('Max amplitude difference within epoch (higher = more permissive)')
             
-            ui.button('Detect Bad Epochs', icon='search', 
-                     on_click=lambda: detect_bad_epochs_async(PS.reject_ptp_threshold, PS.reject_flat_threshold)).props('dense')
+            flat = ui.number('Flat', value=PS.reject_flat_threshold, min=0.1, max=5, suffix='µV',
+                            on_change=on_flat_change).props('dense outlined').classes('w-24')
+            flat.tooltip('Min standard deviation (lower = more permissive)')
+            
+            gradient = ui.number('Gradient', value=PS.reject_gradient_threshold, min=10, max=500, suffix='µV/ms',
+                                on_change=on_gradient_change).props('dense outlined').classes('w-32')
+            gradient.tooltip('Max rate of change (higher = more permissive)')
+            
+            ui.button('Detect', icon='search', 
+                     on_click=lambda: detect_bad_epochs_async(
+                         PS.reject_ptp_threshold, 
+                         PS.reject_flat_threshold,
+                         PS.reject_gradient_threshold
+                     )).props('dense')
     
     # Summary stats
     if PS.epoch_result.n_rejected > 0 or PS.epoch_result.n_good > 0:
@@ -1383,19 +1420,38 @@ def render_reject_controls():
         def export_rejection_json():
             from pathlib import Path
             import json
-            output_path = Path(EEG_CLEAN_DIR) / f'{PS.cleaning.filename.rsplit(".", 1)[0]}_rejection_info.json'
-            export_rejection_info(PS.epoch_result, str(output_path))
-            safe_notify(f'Exported rejection info to {output_path}', type='positive')
+            try:
+                output_path = Path(EEG_CLEAN_DIR) / f'{PS.cleaning.filename.rsplit(".", 1)[0]}_rejection_info.json'
+                export_rejection_info(PS.epoch_result, str(output_path))
+                PS._rejection_exported = True
+                render_step_controls()
+                safe_notify(f'Exported rejection info to {output_path}', type='positive')
+            except Exception as e:
+                PS._rejection_exported = False
+                render_step_controls()
+                safe_notify(f'Export error: {e}', type='negative')
         
-        ui.button('Export Rejection Info (JSON)', icon='save', on_click=export_rejection_json).props('dense outlined').tooltip(
-            'Export per-channel rejection stats and indices to JSON file'
-        )
+        with ui.row().classes('items-center gap-2'):
+            ui.button('Export Rejection Info', icon='save', on_click=export_rejection_json).props('dense outlined').tooltip(
+                'Export per-channel rejection stats and indices to JSON file'
+            )
+            if PS._rejection_exported is not None:
+                if PS._rejection_exported:
+                    ui.icon('check_circle', size='xs').style(f'color: {THEME_PRIMARY};')
+                else:
+                    ui.icon('error', size='xs').style(f'color: {THEME_ERROR};')
     
     with ui.element('div').classes('action-bar'):
         if PS.epoch_result.n_rejected > 0:
-            ui.button('Apply Rejection', icon='delete_sweep', on_click=apply_rejection).props('dense').tooltip(
-                'Remove rejected epochs from the dataset'
-            )
+            with ui.row().classes('items-center gap-2'):
+                ui.button('Apply Rejection', icon='delete_sweep', on_click=apply_rejection).props('dense').tooltip(
+                    'Remove rejected epochs from the dataset'
+                )
+                if PS._rejection_applied is not None:
+                    if PS._rejection_applied:
+                        ui.icon('check_circle', size='xs').style(f'color: {THEME_PRIMARY};')
+                    else:
+                        ui.icon('error', size='xs').style(f'color: {THEME_ERROR};')
         ui.button('Reset Step', icon='replay', on_click=lambda: reset_reject_step()).props(
             'flat dense'
         ).classes('reset-btn')
@@ -1597,10 +1653,36 @@ def render_export_controls():
         
         out_dir = ui.input('Output Directory', value=str(EEG_CLEAN_DIR)).props('dense outlined').classes('w-full mt-3')
     
-    with ui.row().classes('gap-3 mt-4'):
-        ui.button('Export All', icon='save', on_click=lambda: export_all(out_dir.value, ExportFormat(fmt.value))).props('dense')
-        if PS.epoch_result and PS.epoch_result.epochs:
-            ui.button('Export Epochs Only', icon='view_module', on_click=lambda: export_epochs_only(out_dir.value)).props('dense outlined')
+    # Export All button with indicator
+    with ui.column().classes('gap-1 mt-4'):
+        with ui.row().classes('items-center gap-2'):
+            ui.button('Export All', icon='save', on_click=lambda: export_all(out_dir.value, ExportFormat(fmt.value))).props('dense')
+            if PS._export_all_result is not None:
+                if PS._export_all_result:
+                    ui.icon('check_circle', size='xs').style(f'color: {THEME_PRIMARY};')
+                else:
+                    ui.icon('error', size='xs').style(f'color: {THEME_ERROR};')
+        if PS._export_all_result is not None and PS._export_all_path:
+            if PS._export_all_result:
+                ui.label(f'→ {PS._export_all_path}').style(f'color: {THEME_TEXT_DIM}; font-size: 0.7rem; font-family: JetBrains Mono;')
+            else:
+                ui.label(f'Error: {PS._export_all_path}').style(f'color: {THEME_ERROR}; font-size: 0.7rem;')
+    
+    # Export Epochs Only button with indicator
+    if PS.epoch_result and PS.epoch_result.epochs:
+        with ui.column().classes('gap-1 mt-3'):
+            with ui.row().classes('items-center gap-2'):
+                ui.button('Export Epochs Only', icon='view_module', on_click=lambda: export_epochs_only(out_dir.value)).props('dense outlined')
+                if PS._export_epochs_result is not None:
+                    if PS._export_epochs_result:
+                        ui.icon('check_circle', size='xs').style(f'color: {THEME_PRIMARY};')
+                    else:
+                        ui.icon('error', size='xs').style(f'color: {THEME_ERROR};')
+            if PS._export_epochs_result is not None and PS._export_epochs_path:
+                if PS._export_epochs_result:
+                    ui.label(f'→ {PS._export_epochs_path}').style(f'color: {THEME_TEXT_DIM}; font-size: 0.7rem; font-family: JetBrains Mono;')
+                else:
+                    ui.label(f'Error: {PS._export_epochs_path}').style(f'color: {THEME_ERROR}; font-size: 0.7rem;')
     
     with ui.element('div').classes('action-bar'):
         ui.element('div').classes('flex-1')
@@ -1674,11 +1756,43 @@ async def load_file(path: str):
             
         eeg_data = load_eeg_file(path)
         PS.cleaning.load_raw(eeg_data.raw, path)
+        
+        # Reset ALL pipeline state when loading new file
         PS.ica_result = None
         PS.epoch_result = None
         PS._step_snapshots = {}
         PS._step_raw_snapshots = {}
         PS._ica_applied = False
+        PS._ica_computing = False
+        
+        # Reset ICA detection states
+        PS._eog_detected = None
+        PS._ecg_detected = None
+        PS._muscle_detected = None
+        
+        # Reset rejection states
+        PS._rejection_applied = None
+        PS._rejection_exported = None
+        
+        # Reset export states
+        PS._export_all_result = None
+        PS._export_all_path = None
+        PS._export_epochs_result = None
+        PS._export_epochs_path = None
+        
+        # Reset UI states
+        PS.reversed_steps = set()
+        PS.selected_filter_preset = None
+        
+        # Reset cleaning state (bad channels, reference, etc.)
+        PS.cleaning.bad_channels = []
+        PS.cleaning.bad_channels_auto = None
+        PS.cleaning.bad_channels_manual = []
+        PS.cleaning.interpolated_channels = []
+        PS.cleaning.reference_type = ""
+        PS.cleaning.filter_params = {}
+        PS.cleaning.completed_steps = set()
+        PS.cleaning.current_step = CleaningStep.LOAD
         
         # Save snapshot for LOAD step (original raw)
         PS.save_step_raw(CleaningStep.LOAD)
@@ -1874,6 +1988,10 @@ async def compute_ica_async(n_components: int, method: str):
         safe_notify(f'Components limited to {max_components} (channels - 1)', type='warning')
     
     PS._ica_computing = True
+    # Reset detection states when computing new ICA
+    PS._eog_detected = None
+    PS._ecg_detected = None
+    PS._muscle_detected = None
     render_step_controls()
     
     try:
@@ -1897,10 +2015,13 @@ def detect_eog():
             for idx in indices:
                 if idx not in PS.ica_result.excluded:
                     PS.ica_result.excluded.append(idx)
+            PS._eog_detected = True
             render_step_controls()
             safe_notify(f'EOG detected: IC{", IC".join(map(str, indices))}', type='info')
         else:
-            safe_notify('No EOG components found', type='warning')
+            PS._eog_detected = False
+            render_step_controls()
+            safe_notify('No EOG components found', type='info')
     except Exception as e:
         safe_notify(f'EOG detection error: {e}', type='negative')
 
@@ -1914,10 +2035,13 @@ def detect_ecg():
             for idx in indices:
                 if idx not in PS.ica_result.excluded:
                     PS.ica_result.excluded.append(idx)
+            PS._ecg_detected = True
             render_step_controls()
             safe_notify(f'ECG detected: IC{", IC".join(map(str, indices))}', type='info')
         else:
-            safe_notify('No ECG components found', type='warning')
+            PS._ecg_detected = False
+            render_step_controls()
+            safe_notify('No ECG components found', type='info')
     except Exception as e:
         safe_notify(f'ECG detection error: {e}', type='negative')
 
@@ -1932,10 +2056,13 @@ def detect_muscle():
             for idx in indices:
                 if idx not in PS.ica_result.excluded:
                     PS.ica_result.excluded.append(idx)
+            PS._muscle_detected = True
             render_step_controls()
             safe_notify(f'Muscle detected: IC{", IC".join(map(str, indices))}', type='info')
         else:
-            safe_notify('No muscle artifact components found', type='warning')
+            PS._muscle_detected = False
+            render_step_controls()
+            safe_notify('No muscle artifacts found', type='info')
     except Exception as e:
         safe_notify(f'Muscle detection error: {e}', type='negative')
 
@@ -2006,6 +2133,10 @@ async def create_epochs_async(duration: float, overlap: float):
         PS.cleaning.epoch_duration = duration
         PS.cleaning.epochs_total = PS.epoch_result.n_total
         
+        # Reset rejection states when creating new epochs
+        PS._rejection_applied = None
+        PS._rejection_exported = None
+        
         # Save this step's output
         PS.save_step_raw(CleaningStep.EPOCHS)
         
@@ -2016,11 +2147,15 @@ async def create_epochs_async(duration: float, overlap: float):
         safe_notify(f'Epoch error: {e}', type='negative')
 
 
-async def detect_bad_epochs_async(ptp: float, flat: float):
+async def detect_bad_epochs_async(ptp: float, flat: float, gradient: float = 100.0):
     if PS.epoch_result is None:
         return
     try:
-        criteria = EpochRejectionCriteria(peak_to_peak_uv=ptp, flat_uv=flat)
+        criteria = EpochRejectionCriteria(
+            peak_to_peak_uv=ptp, 
+            flat_uv=flat,
+            gradient_uv_ms=gradient
+        )
         PS.epoch_result = detect_bad_epochs(PS.epoch_result, criteria)
         PS.cleaning.rejection_criteria = criteria.to_dict()
         render_step_controls()
@@ -2038,10 +2173,13 @@ def apply_rejection():
         PS.epoch_result = apply_epoch_rejection(PS.epoch_result)
         PS.cleaning.epochs = PS.epoch_result.epochs
         PS.cleaning.epochs_rejected = PS.epoch_result.rejected_indices
+        PS._rejection_applied = True
         render_step_controls()
         render_info()
         safe_notify(f'Rejected {n_rejected} epoch(s)', type='positive')
     except Exception as e:
+        PS._rejection_applied = False
+        render_step_controls()
         safe_notify(f'Rejection error: {e}', type='negative')
 
 
@@ -2051,9 +2189,15 @@ def export_all(out_dir: str, fmt: ExportFormat):
     try:
         outputs = create_export_bundle(PS.cleaning, Path(out_dir), raw_format=fmt,
                                        include_epochs=PS.epoch_result is not None and PS.epoch_result.epochs is not None)
+        PS._export_all_result = True
+        PS._export_all_path = out_dir
+        render_step_controls()
         safe_notify(f'Exported {len(outputs)} file(s) to {out_dir}', type='positive')
         complete_step(CleaningStep.EXPORT)
     except Exception as e:
+        PS._export_all_result = False
+        PS._export_all_path = str(e)
+        render_step_controls()
         safe_notify(f'Export error: {e}', type='negative')
 
 
@@ -2063,9 +2207,15 @@ def export_epochs_only(out_dir: str):
         return
     try:
         base_name = PS.cleaning.filename.rsplit('.', 1)[0] if PS.cleaning.filename else 'epochs'
-        export_epochs(PS.epoch_result.epochs, Path(out_dir), base_name)
+        output_path = export_epochs(PS.epoch_result.epochs, Path(out_dir), base_name)
+        PS._export_epochs_result = True
+        PS._export_epochs_path = str(output_path) if output_path else out_dir
+        render_step_controls()
         safe_notify(f'Epochs exported to {out_dir}', type='positive')
     except Exception as e:
+        PS._export_epochs_result = False
+        PS._export_epochs_path = str(e)
+        render_step_controls()
         safe_notify(f'Export error: {e}', type='negative')
 
 
@@ -2125,7 +2275,7 @@ def reset_step(step: CleaningStep):
         PS.selected_filter_preset = None
     elif step == CleaningStep.BAD_CHANNELS:
         PS.cleaning.bad_channels = []
-        PS.cleaning.bad_channels_auto = []
+        PS.cleaning.bad_channels_auto = None  # None means detection not run yet
         PS.cleaning.bad_channels_manual = []
         PS.cleaning.interpolated_channels = []
     elif step == CleaningStep.REREFERENCE:
@@ -2259,14 +2409,28 @@ def toggle_reverse_eeg():
                 PS.epoch_result.n_rejected = len(PS.epoch_result.rejected_indices)
                 PS.epoch_result.n_good = PS.epoch_result.n_total - PS.epoch_result.n_rejected
         
-        # Navigate to where the rejected epochs now are (end of signal if they were at start)
+        # Navigate to where the rejected epochs now are
         if PS.epoch_result and PS.epoch_result.rejected_indices:
             epoch_dur = PS.cleaning.epoch_duration or 2.0
-            # Go to show the first rejected epoch after reversal
+            # Get actual signal duration
+            actual_duration = current_output.n_times / current_output.info['sfreq']
+            n_epochs = PS.epoch_result.n_total
+            
+            # After reverse, data that was at the START is now at the END
+            # The first rejected epoch index is the smallest, which corresponds to 
+            # data that is now at the END of the reversed signal
             first_rej = PS.epoch_result.rejected_indices[0]
-            target_time = first_rej * epoch_dur
-            # Center the view on this epoch
-            PS.view_start = max(0, target_time - PS.view_duration / 2)
+            
+            # Calculate where the rejected data now IS after reversal
+            # Original epoch positions: epoch i was at i*dur
+            # After reverse, data from original epoch (n-1-first_rej) is at position first_rej
+            # The data we want to see is at the END of the signal
+            original_idx = n_epochs - 1 - first_rej
+            target_time = actual_duration - (original_idx + 1) * epoch_dur
+            
+            # Ensure we don't go past the end of the signal
+            max_start = max(0, actual_duration - PS.view_duration)
+            PS.view_start = min(max(0, target_time - PS.view_duration / 2), max_start)
         
         refresh_all()
     except Exception as e:
@@ -2284,8 +2448,10 @@ def nav_to_start():
 
 def nav_to_end():
     """Navigate to the end of the signal."""
-    if PS.cleaning.is_loaded:
-        PS.view_start = max(0, PS.cleaning.duration - PS.view_duration)
+    if PS.cleaning.is_loaded and PS.cleaning.raw is not None:
+        # Calculate actual duration from current raw
+        actual_duration = PS.cleaning.raw.n_times / PS.cleaning.raw.info['sfreq']
+        PS.view_start = max(0, actual_duration - PS.view_duration)
     PS.is_playing = False
     if PS._play_button:
         PS._play_button.props('icon=play_arrow')
@@ -2446,8 +2612,21 @@ def update_main_plot():
             return
             
         sfreq = raw.info['sfreq']
+        actual_duration = raw.n_times / sfreq
+        
+        # Clamp view_start to valid range
+        if PS.view_start > actual_duration - PS.view_duration:
+            PS.view_start = max(0, actual_duration - PS.view_duration)
+        if PS.view_start < 0:
+            PS.view_start = 0
+        
         start_sample = int(PS.view_start * sfreq)
         end_sample = min(int((PS.view_start + PS.view_duration) * sfreq), raw.n_times)
+        
+        # Ensure we have valid samples
+        if start_sample >= raw.n_times:
+            start_sample = max(0, raw.n_times - int(PS.view_duration * sfreq))
+            PS.view_start = start_sample / sfreq
         
         # Get all EEG channels (not limited to 16)
         picks = mne.pick_types(raw.info, eeg=True, exclude=[])
@@ -2460,16 +2639,36 @@ def update_main_plot():
         # Add rejected epochs overlay if enabled and epochs exist
         if PS.show_rejected_epochs_overlay and PS.epoch_result is not None:
             epoch_dur = PS.cleaning.epoch_duration or 2.0
+            n_epochs = PS.epoch_result.n_total
+            
+            # Check if current step has reverse applied
+            is_reversed = current_step in PS.reversed_steps
+            
             for rej_idx in PS.epoch_result.rejected_indices:
-                epoch_start = rej_idx * epoch_dur
-                epoch_end = epoch_start + epoch_dur
-                # Only show if visible in current view
-                if epoch_end >= PS.view_start and epoch_start <= PS.view_start + PS.view_duration:
+                if is_reversed:
+                    # When reversed, the DATA that was at the start is now at the end
+                    # The rejected index points to where the bad data IS now
+                    # We need to show it at the END of the signal
+                    # Original epoch positions: 0, 1, 2... -> start at 0*dur, 1*dur, 2*dur...
+                    # After reverse, epoch 281 CONTAINS data that was at the START
+                    # So show the overlay where that data now IS (at the end)
+                    original_idx = n_epochs - 1 - rej_idx
+                    epoch_start = actual_duration - (original_idx + 1) * epoch_dur
+                    epoch_end = epoch_start + epoch_dur
+                else:
+                    epoch_start = rej_idx * epoch_dur
+                    epoch_end = epoch_start + epoch_dur
+                
+                # Only show if visible in current view AND within signal duration
+                if (epoch_end >= PS.view_start and 
+                    epoch_start <= PS.view_start + PS.view_duration and
+                    epoch_start < actual_duration and
+                    epoch_start >= 0):
                     fig.add_vrect(
                         x0=max(epoch_start, PS.view_start),
-                        x1=min(epoch_end, PS.view_start + PS.view_duration),
-                        fillcolor='rgba(255, 85, 85, 0.1)',
-                        line=dict(color='rgba(255, 85, 85, 0.3)', width=1),
+                        x1=min(epoch_end, PS.view_start + PS.view_duration, actual_duration),
+                        fillcolor='rgba(255, 85, 85, 0.15)',
+                        line=dict(color='rgba(255, 85, 85, 0.5)', width=1),
                         layer='below'
                     )
         
