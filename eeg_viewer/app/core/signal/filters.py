@@ -31,7 +31,28 @@ def apply_notch(
         >>> filtered = apply_notch(eeg_data, sfreq=250, freq=50)
     """
     b, a = signal.iirnotch(freq, quality, sfreq)
-    return signal.filtfilt(b, a, data, axis=-1)
+    
+    # Apply filter channel by channel to handle problematic channels gracefully
+    result = data.copy()
+    if data.ndim == 1:
+        # Single channel
+        try:
+            if np.std(data) > 1e-10 and not np.any(np.isnan(data)) and not np.any(np.isinf(data)):
+                result = signal.filtfilt(b, a, data)
+        except Exception:
+            pass  # Keep original data if filter fails
+    else:
+        # Multiple channels
+        for i in range(data.shape[0]):
+            try:
+                ch_data = data[i]
+                # Only filter if channel has meaningful variance and no NaN/Inf
+                if np.std(ch_data) > 1e-10 and not np.any(np.isnan(ch_data)) and not np.any(np.isinf(ch_data)):
+                    result[i] = signal.filtfilt(b, a, ch_data)
+            except Exception:
+                pass  # Keep original channel data if filter fails
+    
+    return result
 
 
 def apply_bandpass(
@@ -66,7 +87,25 @@ def apply_bandpass(
     high = max(low + 0.001, min(high, 0.999))
     
     b, a = signal.butter(order, [low, high], btype='band')
-    return signal.filtfilt(b, a, data, axis=-1)
+    
+    # Apply filter channel by channel to handle problematic channels gracefully
+    result = data.copy()
+    if data.ndim == 1:
+        try:
+            if np.std(data) > 1e-10 and not np.any(np.isnan(data)) and not np.any(np.isinf(data)):
+                result = signal.filtfilt(b, a, data)
+        except Exception:
+            pass
+    else:
+        for i in range(data.shape[0]):
+            try:
+                ch_data = data[i]
+                if np.std(ch_data) > 1e-10 and not np.any(np.isnan(ch_data)) and not np.any(np.isinf(ch_data)):
+                    result[i] = signal.filtfilt(b, a, ch_data)
+            except Exception:
+                pass
+    
+    return result
 
 
 def apply_lowpass(

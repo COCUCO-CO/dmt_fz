@@ -82,7 +82,7 @@ class FFTFigure(BaseFigure):
             axis_range=[0, self.max_freq]
         )
         
-        # Y-axis: Power
+        # Y-axis: Power - fixed range (calculated once per EEG, reset on filter change)
         self.configure_axis(
             fig, 'y',
             title='PWR [µV]',

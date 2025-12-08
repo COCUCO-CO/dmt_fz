@@ -32,6 +32,30 @@ CLUSTER_COLORS = [
 ]
 
 # ============================================================================
+# HELPER FOR NO DATA
+# ============================================================================
+
+def _create_no_data_figure(message="No data available", height=350):
+    """Create a figure showing 'no data' message"""
+    fig = go.Figure()
+    fig.add_annotation(
+        x=0.5, y=0.5,
+        xref='paper', yref='paper',
+        text=message,
+        showarrow=False,
+        font=dict(size=16, color='#888'),
+    )
+    fig.update_layout(
+        template='plotly_dark',
+        paper_bgcolor='#0a0a0a',
+        plot_bgcolor='#0a0a0a',
+        height=height,
+        xaxis=dict(visible=False),
+        yaxis=dict(visible=False)
+    )
+    return fig
+
+# ============================================================================
 # DATA LOADING
 # ============================================================================
 
@@ -123,13 +147,9 @@ def create_band_comparison_figure(run_dir):
                 calinski_scores.append(get_score(data, 'calinski') or get_score(data, 'calinski_harabasz') or 0)
                 davies_scores.append(get_score(data, 'davies') or get_score(data, 'davies_bouldin') or 0)
     
-    # Use demo data if no results found
+    # Return no data if no results found
     if not bands_found:
-        np.random.seed(42)
-        bands_found = BANDS
-        silhouette_scores = [0.35 + 0.2 * np.random.rand() for _ in BANDS]
-        calinski_scores = [200 + 100 * np.random.rand() for _ in BANDS]
-        davies_scores = [0.8 + 0.4 * np.random.rand() for _ in BANDS]
+        return _create_no_data_figure("No clustering results found\nRun clustering.py first", 400)
     
     # Silhouette (higher is better)
     fig.add_trace(go.Bar(
@@ -190,13 +210,9 @@ def create_cluster_distribution_figure(run_dir, band='Alpha'):
             labels = np.array(data['labels'])
             n_clusters = data.get('n_clusters', data.get('best_k', len(np.unique(labels))))
     
-    # Demo data if not found
+    # Return no data if not found
     if labels is None:
-        np.random.seed(hash(band) % 2**32)
-        n_samples = 300
-        n_clusters = 5
-        probs = np.random.dirichlet(np.ones(n_clusters))
-        labels = np.random.choice(n_clusters, size=n_samples, p=probs)
+        return _create_no_data_figure(f"No cluster labels for {band}\nRun clustering.py first", 350)
     
     unique_labels, counts = np.unique(labels, return_counts=True)
     
@@ -244,13 +260,9 @@ def create_condition_breakdown_figure(run_dir, band='Alpha'):
             labels = np.array(data.get('labels', []))
             conditions = np.array(data.get('conditions', data.get('condition_labels', [])))
     
-    # Demo data
+    # Return no data
     if labels is None or len(labels) == 0 or conditions is None or len(conditions) == 0:
-        np.random.seed(hash(band) % 2**32)
-        n_samples = 300
-        n_clusters = 5
-        labels = np.random.choice(n_clusters, size=n_samples)
-        conditions = np.random.choice(['DMT', 'EC', 'EO'], size=n_samples)
+        return _create_no_data_figure(f"No cluster-condition data for {band}\nRun clustering.py first", 350)
     
     unique_clusters = np.unique(labels)
     unique_conditions = np.unique(conditions)
@@ -311,16 +323,9 @@ def create_score_heatmap_figure(run_dir):
                 data_matrix.append([s_norm, c_norm, d_norm])
                 bands_found.append(band)
     
-    # Demo data
+    # Return no data
     if not data_matrix:
-        np.random.seed(42)
-        bands_found = BANDS
-        for band in BANDS:
-            data_matrix.append([
-                0.4 + 0.3 * np.random.rand(),
-                0.5 + 0.3 * np.random.rand(),
-                0.4 + 0.3 * np.random.rand()
-            ])
+        return _create_no_data_figure("No silhouette heatmap data\nRun clustering.py first", 400)
     
     fig = go.Figure()
     
@@ -368,28 +373,9 @@ def create_pca_scatter_figure(run_dir, band='Alpha'):
             if pca_data is not None:
                 pca_data = np.array(pca_data)
     
-    # Demo data
+    # Return no data
     if pca_data is None or labels is None or len(labels) == 0:
-        np.random.seed(hash(band) % 2**32)
-        n_samples = 300
-        n_clusters = 4
-        
-        # Generate clustered data
-        centers = np.random.randn(n_clusters, 2) * 2
-        pca_data = []
-        labels = []
-        conditions = []
-        
-        for i in range(n_clusters):
-            n = n_samples // n_clusters
-            cluster_data = centers[i] + np.random.randn(n, 2) * 0.5
-            pca_data.append(cluster_data)
-            labels.extend([i] * n)
-            conditions.extend(np.random.choice(['DMT', 'EC', 'EO'], size=n))
-        
-        pca_data = np.vstack(pca_data)
-        labels = np.array(labels)
-        conditions = np.array(conditions)
+        return _create_no_data_figure(f"No PCA data for {band}\nRun clustering.py first", 400)
     
     if pca_data.shape[1] < 2:
         # Need at least 2 dimensions
@@ -458,12 +444,9 @@ def create_cluster_centroids_figure(run_dir, band='Alpha'):
             if centroids is not None:
                 centroids = np.array(centroids)
     
-    # Demo data
+    # Return no data
     if centroids is None:
-        np.random.seed(hash(band) % 2**32)
-        n_clusters = 4
-        n_features = 10
-        centroids = np.random.randn(n_clusters, n_features) * 0.5
+        return _create_no_data_figure(f"No centroids data for {band}\nRun clustering.py first", 400)
     
     n_clusters, n_features = centroids.shape
     
@@ -519,13 +502,9 @@ def create_elbow_plot(run_dir, band='Alpha'):
                 k_values = list(scores.keys())
                 scores = list(scores.values())
     
-    # Demo data
+    # Return no data
     if k_values is None or scores is None:
-        np.random.seed(hash(band) % 2**32)
-        k_values = list(range(2, 12))
-        # Create elbow-like curve
-        scores = [1000 / (k**0.7) + 50 * np.random.rand() for k in k_values]
-        best_k = 5
+        return _create_no_data_figure(f"No elbow data for {band}\nRun clustering.py first", 350)
     
     fig = go.Figure()
     
@@ -594,13 +573,9 @@ def create_summary_dashboard(run_dir):
                 
                 best_ks.append(data.get('best_k', data.get('n_clusters', 0)))
     
-    # Demo data
+    # Return no data
     if not bands_found:
-        np.random.seed(42)
-        bands_found = BANDS
-        silhouette_scores = [0.35 + 0.2 * np.random.rand() for _ in BANDS]
-        cluster_counts = [3 + int(3 * np.random.rand()) for _ in BANDS]
-        best_ks = cluster_counts.copy()
+        return _create_no_data_figure("No clustering summary data\nRun clustering.py first", 450)
     
     # Silhouette scores
     fig.add_trace(go.Bar(

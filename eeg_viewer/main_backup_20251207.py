@@ -818,7 +818,7 @@ class PipelineState:
 
 PS = PipelineState()
 
-PIPELINE_DIR = Path(__file__).parent.parent / "dashboard" / "pipeline_backend"
+PIPELINE_DIR = Path(__file__).parent.parent / "pipeline"
 PIPELINE_OUTPUTS = Path(__file__).parent.parent / "pipeline_outputs"
 RESULTS_BASE = Path(__file__).parent.parent / "fwd-inv-stc"
 DEFAULT_INPUT_DIR = Path(__file__).parent.parent / "EEG_CLEAN"

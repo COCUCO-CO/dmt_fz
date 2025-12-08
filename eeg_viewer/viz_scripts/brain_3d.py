@@ -12,6 +12,30 @@ from itertools import combinations
 from pathlib import Path
 
 # ============================================================================
+# HELPER FOR NO DATA
+# ============================================================================
+
+def _create_no_data_figure(message="No data available", height=450):
+    """Create a figure showing 'no data' message"""
+    fig = go.Figure()
+    fig.add_annotation(
+        x=0.5, y=0.5,
+        xref='paper', yref='paper',
+        text=message,
+        showarrow=False,
+        font=dict(size=16, color='#888'),
+    )
+    fig.update_layout(
+        template='plotly_dark',
+        paper_bgcolor='#0a0a0a',
+        plot_bgcolor='#0a0a0a',
+        height=height,
+        xaxis=dict(visible=False),
+        yaxis=dict(visible=False)
+    )
+    return fig
+
+# ============================================================================
 # BRAIN DATA LOADING (exactly like plots3d.py)
 # ============================================================================
 
@@ -385,10 +409,9 @@ def create_sync_brain_figure(syncro_data, band='Alpha', epoch=0):
         except:
             pass
     
-    # Default to random if no data
+    # Return no data if no sync values
     if sync_values is None:
-        np.random.seed(42)
-        sync_values = 0.3 + 0.4 * np.random.rand(len(nodes))
+        return _create_no_data_figure(f"No sync data for {band} epoch {epoch}\nRun calculate_syncro.py first", 450)
     
     # Ensure sync_values matches nodes length
     if len(sync_values) < len(nodes):
@@ -480,11 +503,14 @@ def create_network_comparison_figure(data=None, band='Alpha'):
                 else:
                     v = float(k) if not hasattr(k, '__iter__') else np.mean(k)
             except:
-                v = 0.4 + 0.15 * np.random.rand()
+                v = None
         else:
-            np.random.seed(hash(net) % 2**32)
-            v = 0.35 + 0.25 * np.random.rand()
-        values.append(v)
+            v = None
+        
+        if v is not None:
+            values.append(v)
+        else:
+            values.append(0)  # Use 0 for missing data instead of random
     
     fig = go.Figure()
     
@@ -515,26 +541,24 @@ def create_hemispheric_comparison_figure(data=None, band='Alpha'):
     """Hemispheric comparison visualization"""
     brain_data = _load_brain_data()
     
-    np.random.seed(42)
+    left_vals = None
+    right_vals = None
     
-    # Generate or extract hemispheric data
+    # Extract hemispheric data
     if data and 'kuramoto_stc' in data and band in data['kuramoto_stc']:
         try:
             k = data['kuramoto_stc'][band]
             if isinstance(k, list) and len(k) > 0:
                 values = np.array([np.mean(e) if hasattr(e, '__iter__') else e for e in k])
                 mid = len(values) // 2
-                left_vals = values[:mid] if mid > 0 else 0.4 + 0.2 * np.random.rand(15)
-                right_vals = values[mid:] if mid > 0 else 0.42 + 0.2 * np.random.rand(15)
-            else:
-                left_vals = 0.4 + 0.2 * np.random.rand(15)
-                right_vals = 0.42 + 0.2 * np.random.rand(15)
+                if mid > 0:
+                    left_vals = values[:mid]
+                    right_vals = values[mid:]
         except:
-            left_vals = 0.4 + 0.2 * np.random.rand(15)
-            right_vals = 0.42 + 0.2 * np.random.rand(15)
-    else:
-        left_vals = 0.4 + 0.2 * np.random.rand(15)
-        right_vals = 0.42 + 0.2 * np.random.rand(15)
+            pass
+    
+    if left_vals is None or right_vals is None:
+        return _create_no_data_figure(f"No hemispheric data for {band}\nRun pipeline first", 400)
     
     fig = go.Figure()
     
@@ -625,8 +649,7 @@ def create_all_bands_brain_figure(data=None):
         band_means.append(r_mean)
         
         if sync_values is None:
-            np.random.seed(hash(band) % 2**32)
-            sync_values = 0.3 + 0.4 * np.random.rand(len(nodes))
+            sync_values = np.ones(len(nodes)) * 0.5  # Use neutral value instead of random
         
         if len(sync_values) < len(nodes):
             sync_values = np.pad(sync_values, (0, len(nodes) - len(sync_values)), constant_values=0.5)
@@ -700,9 +723,12 @@ def create_all_bands_brain_figure(data=None):
 
 def _create_fallback_network_figure():
     """Fallback visualization when MNE is not available"""
+    return _create_no_data_figure("MNE not available\nCannot load brain data", 450)
+
+def _create_fallback_network_figure_DISABLED():
+    """DISABLED - Original fallback with random data"""
     fig = go.Figure()
     
-    np.random.seed(42)
     n_rois = 100
     
     networks = ['VN', 'SMN', 'DAN', 'SVA', 'LN', 'FPN', 'DMN']

@@ -220,9 +220,19 @@ def _update_eeg_generic(eeg_plot, eeg_data, channels, use_secondary=False, updat
             
             for i in range(n):
                 offset = (n - 1 - i)
-                y = data[i]
+                y = data[i].copy()
+                
+                # Handle NaN/Inf values
+                if np.any(np.isnan(y)) or np.any(np.isinf(y)):
+                    y = np.nan_to_num(y, nan=0.0, posinf=0.0, neginf=0.0)
+                
                 # Better normalization (like cleaner) - robust to outliers
-                y_norm = (y - np.mean(y)) / (np.std(y) + 1e-10) * spacing_factor + offset
+                std_val = np.std(y)
+                if std_val < 1e-10:
+                    # Channel is flat, show as flat line at offset
+                    y_norm = np.zeros_like(y) + offset
+                else:
+                    y_norm = (y - np.mean(y)) / std_val * spacing_factor + offset
                 
                 # Compute amplitude for brain plot
                 amp = np.sqrt(np.mean(y**2))
@@ -290,7 +300,8 @@ def calculate_fixed_ranges(eeg_data, is_secondary=False):
                     continue
                     
                 data, times, _ = get_channel_data(eeg_data, eeg_chs, start, seg_duration)
-                data = data * 1e6  # to µV
+                # Apply same processing as _update_fft_generic
+                data = process_data(data, eeg_data.sfreq) * 1e6
                 
                 # FFT values
                 freqs, fft_v = compute_fft(data, eeg_data.sfreq)
@@ -307,11 +318,14 @@ def calculate_fixed_ranges(eeg_data, is_secondary=False):
         # Use 95th percentile for robust estimation (handles outliers)
         if fft_values:
             max_fft = np.percentile(fft_values, 95) * 1.3
+            # Ensure minimum sensible value
+            max_fft = max(max_fft, 10)
         else:
             max_fft = 50
             
         if hilbert_values:
             max_hilbert = np.percentile(hilbert_values, 95) * 1.3
+            max_hilbert = max(max_hilbert, 10)
         else:
             max_hilbert = 100
         
@@ -347,15 +361,24 @@ def _update_fft_generic(fft_plot, eeg_data, channels, use_secondary=False):
         colors = _SECONDARY_COLORS[:5] if use_secondary else _PRIMARY_COLORS[:5]
         fills = _SECONDARY_FFT_FILLS if use_secondary else _PRIMARY_FFT_FILLS
         
-        # Use pre-calculated fixed range, or compute if not available
-        y_max = S.fft_y_max2 if use_secondary else S.fft_y_max
-        if y_max is None or y_max <= 0:
-            y_max = np.max(fft_v) * 1.2 if fft_v.size > 0 else 50
-            # Store for next time
+        # Use stored Y max if available, otherwise calculate from current data
+        y_max_stored = S.fft_y_max2 if use_secondary else S.fft_y_max
+        
+        if y_max_stored is None or y_max_stored <= 0:
+            # Calculate and store for this EEG
+            if fft_v.size > 0:
+                y_max = np.max(fft_v) * 1.3
+                y_max = max(y_max, 1)
+            else:
+                y_max = 50
+            # Store for future updates
             if use_secondary:
                 S.fft_y_max2 = y_max
             else:
                 S.fft_y_max = y_max
+            print(f"[FFT] Calculated Y range: {y_max:.1f}")
+        else:
+            y_max = y_max_stored
         
         with fft_plot:
             fft_plot.figure.data = []
@@ -365,8 +388,8 @@ def _update_fft_generic(fft_plot, eeg_data, channels, use_secondary=False):
                     line=dict(color=colors[i % len(colors)], width=1.5),
                     fill='tozeroy', fillcolor=fills[i % len(fills)]
                 ))
-            # Apply fixed y-axis range (calculated once per EEG)
-            fft_plot.figure.update_layout(yaxis=dict(range=[0, y_max], fixedrange=True))
+            # Fixed Y axis range (calculated once per EEG or after filter change)
+            fft_plot.figure.update_layout(yaxis=dict(range=[0, y_max], fixedrange=True, autorange=False))
             fft_plot.update()
     except Exception as e:
         print(f"FFT{'2' if use_secondary else ''} error: {e}")
@@ -570,6 +593,9 @@ def toggle_ch(ch):
         S.current_amplitudes.pop(ch, None)
     else:
         S.selected_channels.append(ch)
+    # Reset FFT Y ranges to recalculate for new channel selection
+    S.fft_y_max = None
+    S.fft_y_max2 = None
     refresh_channels()
     refresh_hilbert_select()
     update_all()
@@ -577,6 +603,9 @@ def toggle_ch(ch):
 def select_all_ch():
     if S.eeg_data:
         S.selected_channels = [ch for ch, t in S.eeg_data.channel_types.items() if t == 'eeg']
+        # Reset FFT Y ranges to recalculate for new channel selection
+        S.fft_y_max = None
+        S.fft_y_max2 = None
         refresh_channels()
         refresh_hilbert_select()
         update_all()
@@ -584,6 +613,9 @@ def select_all_ch():
 def select_10_ch():
     if S.eeg_data:
         S.selected_channels = [ch for ch, t in S.eeg_data.channel_types.items() if t == 'eeg'][:10]
+        # Reset FFT Y ranges to recalculate for new channel selection
+        S.fft_y_max = None
+        S.fft_y_max2 = None
         refresh_channels()
         refresh_hilbert_select()
         update_all()
@@ -591,6 +623,9 @@ def select_10_ch():
 def clear_ch():
     S.selected_channels = []
     S.current_amplitudes.clear()
+    # Reset FFT Y ranges
+    S.fft_y_max = None
+    S.fft_y_max2 = None
     refresh_channels()
     update_all()
 
@@ -729,7 +764,7 @@ def save_epochs():
 
 # PipelineState (PS) imported from app.state
 
-PIPELINE_DIR = Path(__file__).parent.parent.parent.parent / "dashboard" / "pipeline_backend"
+PIPELINE_DIR = Path(__file__).parent.parent.parent.parent / "pipeline"
 PIPELINE_OUTPUTS = Path(__file__).parent.parent.parent / "pipeline_outputs"
 RESULTS_BASE = Path(__file__).parent.parent / "fwd-inv-stc"
 DEFAULT_INPUT_DIR = Path(__file__).parent.parent.parent.parent / "EEG_CLEAN"
@@ -780,6 +815,9 @@ def main_content():
                     def clear_eeg2():
                         S.eeg_data2 = None
                         S.compare_mode = False
+                        # Reset axis ranges so they recalculate
+                        S.fft_y_max2 = None
+                        S.hilbert_amp_max2 = None
                         update_all()
                         refresh_info()
                         ui.notify('EEG 2 cleared', type='info')
@@ -805,6 +843,9 @@ def main_content():
                             S.view_start = 0
                             S.epochs = []
                             S.current_amplitudes = {}
+                            # Reset axis ranges so they recalculate for new EEG
+                            S.fft_y_max = None
+                            S.hilbert_amp_max = None
                             ui.notify(f'EEG 1: {loaded.filename}', type='positive')
                             refresh_channels()
                             refresh_hilbert_select()
@@ -956,8 +997,8 @@ def main_content():
                 S.channel_container = ui.column().classes('w-full')
                 refresh_channels()
         
-        # MAIN CONTENT
-        with ui.column().classes('flex-1 gap-3'):
+        # MAIN CONTENT - min-w-0 allows flex children to shrink properly
+        with ui.column().classes('flex-1 gap-3 min-w-0 overflow-hidden'):
             
             # FILTERS
             with ui.card().classes('dark-card p-3'):
@@ -974,13 +1015,19 @@ def main_content():
                     def apply_filt():
                         S.notch_enabled, S.notch_freq = notch_sw.value, notch_hz.value or 50
                         S.bandpass_enabled, S.bandpass_low, S.bandpass_high = bp_sw.value, bp_lo.value or 1, bp_hi.value or 45
+                        # Reset FFT/Hilbert Y ranges to recalculate with new filter settings
+                        S.fft_y_max = None
+                        S.fft_y_max2 = None
+                        S.hilbert_amp_max = None
+                        S.hilbert_amp_max2 = None
                         update_all()
+                        ui.notify('Filters applied', type='positive')
                     ui.button('Apply', on_click=apply_filt, icon='check').props('dense')
             
-            # TOP ROW: EEG + BRAIN (with comparison support)
-            with ui.row().classes('gap-3 w-full'):
+            # TOP ROW: EEG (with comparison support) - side by side, equal width
+            with ui.row().classes('gap-3 w-full flex-nowrap'):
                 # EEG 1
-                with ui.card().classes('dark-card p-3 flex-1'):
+                with ui.card().classes('dark-card p-3 flex-1 min-w-0'):
                     with ui.row().classes('items-center justify-between mb-1'):
                         ui.label('▌EEG 1').style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.8rem; letter-spacing: 1px;')
                         with ui.row().classes('gap-1'):
@@ -989,8 +1036,8 @@ def main_content():
                             ui.button('+', on_click=lambda: (setattr(S, 'scale_factor', min(5, S.scale_factor*1.4)), update_eeg())).props('dense flat size=xs')
                     S.eeg_plot = ui.plotly(make_eeg_fig()).classes('w-full')
                 
-                # EEG 2 (comparison)
-                with ui.card().classes('dark-card p-3 flex-1').bind_visibility_from(S, 'compare_mode'):
+                # EEG 2 (comparison) - same width as EEG 1
+                with ui.card().classes('dark-card p-3 flex-1 min-w-0').bind_visibility_from(S, 'compare_mode'):
                     ui.label('▌EEG 2').style(f'color:#f472b6; font-family: JetBrains Mono; font-size: 0.8rem; letter-spacing: 1px;').classes('mb-1')
                     S.eeg_plot2 = ui.plotly(make_eeg_fig(use_eeg2=True)).classes('w-full')
             
@@ -1030,36 +1077,36 @@ def main_content():
                     
                     S.time_label = ui.label('0:00.0 / 0:00.0').classes('text-sm font-mono opacity-70')
             
-            # TOPOGRAPHY ROW
-            with ui.row().classes('gap-3 w-full'):
-                with ui.card().classes('dark-card p-3 flex-1'):
+            # TOPOGRAPHY ROW - side by side, equal width
+            with ui.row().classes('gap-3 w-full flex-nowrap'):
+                with ui.card().classes('dark-card p-3 flex-1 min-w-0'):
                     ui.label('▌TOPO 1').style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-1')
                     S.brain_plot = ui.plotly(make_brain_fig()).classes('w-full')
                 
-                with ui.card().classes('dark-card p-3 flex-1').bind_visibility_from(S, 'compare_mode'):
+                with ui.card().classes('dark-card p-3 flex-1 min-w-0').bind_visibility_from(S, 'compare_mode'):
                     ui.label('▌TOPO 2').style(f'color:#f472b6; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-1')
                     S.brain_plot2 = ui.plotly(make_brain_fig(use_eeg2=True)).classes('w-full')
             
-            # FFT ROW
-            with ui.row().classes('gap-3 w-full'):
-                with ui.card().classes('dark-card p-3 flex-1'):
+            # FFT ROW - side by side, equal width
+            with ui.row().classes('gap-3 w-full flex-nowrap'):
+                with ui.card().classes('dark-card p-3 flex-1 min-w-0'):
                     ui.label('▌FFT 1').style(f'color:{THEME_SECONDARY}; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-1')
                     S.fft_plot = ui.plotly(make_fft_fig()).classes('w-full')
                 
-                with ui.card().classes('dark-card p-3 flex-1').bind_visibility_from(S, 'compare_mode'):
+                with ui.card().classes('dark-card p-3 flex-1 min-w-0').bind_visibility_from(S, 'compare_mode'):
                     ui.label('▌FFT 2').style(f'color:#f472b6; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-1')
                     S.fft_plot2 = ui.plotly(make_fft_fig(use_eeg2=True)).classes('w-full')
             
-            # HILBERT ROW
-            with ui.row().classes('gap-3 w-full'):
-                with ui.card().classes('dark-card p-3 flex-1'):
+            # HILBERT ROW - side by side, equal width
+            with ui.row().classes('gap-3 w-full flex-nowrap'):
+                with ui.card().classes('dark-card p-3 flex-1 min-w-0'):
                     with ui.row().classes('items-center gap-2 mb-1'):
                         ui.label('▌HILBERT 1').style(f'color:{THEME_WARN}; font-family: JetBrains Mono; font-size: 0.8rem;')
                         S.hilbert_select_container = ui.row().classes('items-center gap-1')
                         refresh_hilbert_select()
                     S.hilbert_plot = ui.plotly(make_hilbert_fig()).classes('w-full')
                 
-                with ui.card().classes('dark-card p-3 flex-1').bind_visibility_from(S, 'compare_mode'):
+                with ui.card().classes('dark-card p-3 flex-1 min-w-0').bind_visibility_from(S, 'compare_mode'):
                     ui.label('▌HILBERT 2').style(f'color:#f472b6; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-1')
                     S.hilbert_plot2 = ui.plotly(make_hilbert_fig(use_eeg2=True)).classes('w-full')
             
