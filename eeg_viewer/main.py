@@ -283,104 +283,179 @@ def make_brain_fig(use_eeg2=False):
 # (actual figure creation now uses app.visualization.styles.theme)
 # PLOT_BG, PLOT_GRID, PLOT_GRID_MINOR remain defined above for compatibility
 
-# Update functions
-def update_eeg():
-    if not S.eeg_plot or not S.eeg_data or not S.selected_channels:
+# Update functions - Unified implementations using app.core.updaters
+
+# Color schemes
+_PRIMARY_COLORS = SIGNAL_COLORS
+_SECONDARY_COLORS = ['#f472b6', '#fb7185', '#fda4af', '#fecdd3', '#ffe4e6']
+_PRIMARY_FFT_FILLS = ['rgba(0,255,136,0.15)', 'rgba(0,212,255,0.15)', 'rgba(255,204,0,0.15)', 'rgba(255,107,157,0.15)', 'rgba(167,139,250,0.15)']
+_SECONDARY_FFT_FILLS = ['rgba(244,114,182,0.15)', 'rgba(251,113,133,0.15)', 'rgba(253,164,175,0.15)', 'rgba(254,205,211,0.15)', 'rgba(255,228,230,0.15)']
+
+
+def _update_eeg_generic(eeg_plot, eeg_data, channels, use_secondary=False, update_time_label=False, amplitudes_dict=None):
+    """Generic EEG update function for both EEG1 and EEG2."""
+    if not eeg_plot or not eeg_data or not channels:
         return
+    
+    # Filter channels that exist in this EEG data
+    valid_channels = [ch for ch in channels if ch in eeg_data.channel_types]
+    if not valid_channels:
+        return
+    
     try:
-        data, times, chs = get_channel_data(S.eeg_data, S.selected_channels, S.view_start, S.view_duration)
-        data = process_data(data, S.eeg_data.sfreq) * 1e6
+        data, times, chs = get_channel_data(eeg_data, valid_channels, S.view_start, S.view_duration)
+        data = process_data(data, eeg_data.sfreq) * 1e6
         n = len(chs)
         
-        # Normalize and store amplitudes
+        # Normalize and compute amplitudes
         norm = np.zeros_like(data)
         for i in range(n):
             std = np.std(data[i])
-            S.current_amplitudes[chs[i]] = np.sqrt(np.mean(data[i]**2))
+            amp = np.sqrt(np.mean(data[i]**2))
+            if amplitudes_dict is not None:
+                amplitudes_dict[chs[i]] = amp
             norm[i] = data[i] / (std * 3) if std > 0 else data[i]
         
         spacing = 2.0 * S.scale_factor
-        colors = SIGNAL_COLORS
+        colors = _SECONDARY_COLORS if use_secondary else _PRIMARY_COLORS
         
-        # Fixed Y-axis range based on number of channels
         y_min = -spacing
-        y_max = (n) * spacing
+        y_max = n * spacing
         
-        with S.eeg_plot:
-            S.eeg_plot.figure.data = []
+        with eeg_plot:
+            eeg_plot.figure.data = []
             for i in range(n):
                 off = (n - 1 - i) * spacing
-                S.eeg_plot.figure.add_trace(go.Scatter(
-                    x=times, y=norm[i] + off, name=chs[i], line=dict(color=colors[i % len(colors)], width=1),
-                    hovertemplate=f'{chs[i]}: %{{customdata:.1f}} µV<extra></extra>', customdata=data[i]
+                eeg_plot.figure.add_trace(go.Scatter(
+                    x=times, y=norm[i] + off, name=chs[i],
+                    line=dict(color=colors[i % len(colors)], width=1),
+                    hovertemplate=f'{chs[i]}: %{{customdata:.1f}} µV<extra></extra>',
+                    customdata=data[i]
                 ))
-            S.eeg_plot.figure.update_layout(
+            eeg_plot.figure.update_layout(
                 yaxis=dict(
-                    tickmode='array', 
-                    tickvals=[(n-1-i)*spacing for i in range(n)], 
+                    tickmode='array',
+                    tickvals=[(n-1-i)*spacing for i in range(n)],
                     ticktext=chs,
-                    range=[y_min, y_max],  # Fixed range
+                    range=[y_min, y_max],
                     fixedrange=True
                 )
             )
-            S.eeg_plot.update()
+            eeg_plot.update()
         
-        if S.time_label and S.eeg_data:
+        if update_time_label and S.time_label and eeg_data:
             m, s = int(S.view_start // 60), S.view_start % 60
-            tm, ts = int(S.eeg_data.duration_sec // 60), S.eeg_data.duration_sec % 60
+            tm, ts = int(eeg_data.duration_sec // 60), eeg_data.duration_sec % 60
             S.time_label.set_text(f'{m}:{s:04.1f} / {tm}:{ts:04.1f}')
     except Exception as e:
-        print(f"EEG error: {e}")
+        print(f"EEG{'2' if use_secondary else ''} error: {e}")
 
-def update_fft():
-    if not S.fft_plot or not S.eeg_data or not S.selected_channels:
+
+def update_eeg():
+    """Update primary EEG plot."""
+    _update_eeg_generic(S.eeg_plot, S.eeg_data, S.selected_channels, 
+                        use_secondary=False, update_time_label=True, 
+                        amplitudes_dict=S.current_amplitudes)
+
+def _update_fft_generic(fft_plot, eeg_data, channels, use_secondary=False):
+    """Generic FFT update function for both EEG1 and EEG2."""
+    if not fft_plot or not eeg_data or not channels:
         return
+    
+    valid_channels = [ch for ch in channels[:5] if ch in eeg_data.channel_types]
+    if not valid_channels:
+        return
+    
     try:
-        data, times, chs = get_channel_data(S.eeg_data, S.selected_channels[:5], S.view_start, S.view_duration)
-        data = process_data(data, S.eeg_data.sfreq) * 1e6
-        freqs, fft_v = compute_fft(data, S.eeg_data.sfreq)
+        data, times, chs = get_channel_data(eeg_data, valid_channels, S.view_start, S.view_duration)
+        data = process_data(data, eeg_data.sfreq) * 1e6
+        freqs, fft_v = compute_fft(data, eeg_data.sfreq)
         mask = freqs <= 60
         freqs, fft_v = freqs[mask], fft_v[:, mask]
         
-        colors = SIGNAL_COLORS[:5]
-        fills = ['rgba(0,255,136,0.15)', 'rgba(0,212,255,0.15)', 'rgba(255,204,0,0.15)', 'rgba(255,107,157,0.15)', 'rgba(167,139,250,0.15)']
+        colors = _SECONDARY_COLORS[:5] if use_secondary else _PRIMARY_COLORS[:5]
+        fills = _SECONDARY_FFT_FILLS if use_secondary else _PRIMARY_FFT_FILLS
         
-        with S.fft_plot:
-            S.fft_plot.figure.data = []
+        with fft_plot:
+            fft_plot.figure.data = []
             for i, ch in enumerate(chs[:5]):
-                S.fft_plot.figure.add_trace(go.Scatter(x=freqs, y=fft_v[i], name=ch, line=dict(color=colors[i], width=1.5), fill='tozeroy', fillcolor=fills[i]))
-            S.fft_plot.update()
+                fft_plot.figure.add_trace(go.Scatter(
+                    x=freqs, y=fft_v[i], name=ch,
+                    line=dict(color=colors[i % len(colors)], width=1.5),
+                    fill='tozeroy', fillcolor=fills[i % len(fills)]
+                ))
+            fft_plot.update()
     except Exception as e:
-        print(f"FFT error: {e}")
+        print(f"FFT{'2' if use_secondary else ''} error: {e}")
 
-def update_hilbert():
-    if not S.hilbert_plot or not S.eeg_data or not S.selected_channels:
+
+def update_fft():
+    """Update primary FFT plot."""
+    _update_fft_generic(S.fft_plot, S.eeg_data, S.selected_channels, use_secondary=False)
+
+def _update_hilbert_generic(hilbert_plot, eeg_data, selected_channels, hilbert_channel, use_secondary=False):
+    """Generic Hilbert update function for both EEG1 and EEG2."""
+    if not hilbert_plot or not eeg_data or not selected_channels:
         return
-    ch = S.hilbert_channel if S.hilbert_channel in S.selected_channels else (S.selected_channels[0] if S.selected_channels else None)
+    
+    # Find valid channel
+    ch = hilbert_channel if hilbert_channel in eeg_data.channel_types else None
+    if not ch:
+        for c in selected_channels:
+            if c in eeg_data.channel_types:
+                ch = c
+                break
     if not ch:
         return
+    
     try:
-        data, times, _ = get_channel_data(S.eeg_data, [ch], S.view_start, S.view_duration)
-        data = process_data(data, S.eeg_data.sfreq)[0] * 1e6
+        data, times, _ = get_channel_data(eeg_data, [ch], S.view_start, S.view_duration)
+        data = process_data(data, eeg_data.sfreq)[0] * 1e6
         amp, phase = compute_hilbert(data)
         
-        with S.hilbert_plot:
-            S.hilbert_plot.figure.data = []
-            S.hilbert_plot.figure.add_trace(go.Scatter(x=times, y=data, name='Signal', line=dict(color=THEME_SECONDARY, width=1)), row=1, col=1)
-            S.hilbert_plot.figure.add_trace(go.Scatter(x=times, y=amp, name='Envelope', line=dict(color=THEME_PRIMARY, width=2)), row=1, col=1)
-            S.hilbert_plot.figure.add_trace(go.Scatter(x=times, y=-amp, showlegend=False, line=dict(color=THEME_PRIMARY, width=2)), row=1, col=1)
-            S.hilbert_plot.figure.add_trace(go.Scatter(x=times, y=phase, name='Phase', line=dict(color=THEME_WARN, width=1)), row=2, col=1)
-            S.hilbert_plot.update()
+        # Color scheme
+        if use_secondary:
+            signal_color, envelope_color, phase_color = '#fb7185', '#f472b6', '#fda4af'
+        else:
+            signal_color, envelope_color, phase_color = THEME_SECONDARY, THEME_PRIMARY, THEME_WARN
+        
+        with hilbert_plot:
+            hilbert_plot.figure.data = []
+            hilbert_plot.figure.add_trace(go.Scatter(x=times, y=data, name='Signal', line=dict(color=signal_color, width=1)), row=1, col=1)
+            hilbert_plot.figure.add_trace(go.Scatter(x=times, y=amp, name='Envelope', line=dict(color=envelope_color, width=2)), row=1, col=1)
+            hilbert_plot.figure.add_trace(go.Scatter(x=times, y=-amp, showlegend=False, line=dict(color=envelope_color, width=2)), row=1, col=1)
+            hilbert_plot.figure.add_trace(go.Scatter(x=times, y=phase, name='Phase', line=dict(color=phase_color, width=1)), row=2, col=1)
+            hilbert_plot.update()
     except Exception as e:
-        print(f"Hilbert error: {e}")
+        print(f"Hilbert{'2' if use_secondary else ''} error: {e}")
 
-def update_brain():
-    if not S.brain_plot or not S.eeg_data:
+
+def update_hilbert():
+    """Update primary Hilbert plot."""
+    ch = S.hilbert_channel if S.hilbert_channel in S.selected_channels else (S.selected_channels[0] if S.selected_channels else None)
+    _update_hilbert_generic(S.hilbert_plot, S.eeg_data, S.selected_channels, ch, use_secondary=False)
+
+def _update_brain_generic(brain_plot, eeg_data, selected_channels, amplitudes, use_secondary=False):
+    """Generic brain topography update function for both EEG1 and EEG2."""
+    if not brain_plot or not eeg_data:
         return
+    
     try:
-        amps = S.current_amplitudes
-        if amps and S.selected_channels:
-            vals = [amps.get(ch, 0) for ch in S.selected_channels if ch in amps]
+        # Get amplitudes - either from provided dict or compute fresh
+        if amplitudes:
+            amps = amplitudes
+        else:
+            # Compute amplitudes for provided channels
+            valid_channels = [ch for ch in selected_channels if ch in eeg_data.channel_types]
+            if valid_channels:
+                data, times, chs = get_channel_data(eeg_data, valid_channels, S.view_start, S.view_duration)
+                data = process_data(data, eeg_data.sfreq) * 1e6
+                amps = {ch: np.sqrt(np.mean(data[i]**2)) for i, ch in enumerate(chs)}
+            else:
+                amps = {}
+        
+        if amps and selected_channels:
+            vals = [amps.get(ch, 0) for ch in selected_channels if ch in amps]
             min_a, max_a = (min(vals), max(vals)) if vals else (0, 1)
             rng = max_a - min_a if max_a > min_a else 1
         else:
@@ -389,35 +464,48 @@ def update_brain():
         sel_x, sel_y, sel_c, sel_t, sel_l = [], [], [], [], []
         uns_x, uns_y, uns_l = [], [], []
         
+        valid_in_eeg = set(eeg_data.channel_types.keys()) if hasattr(eeg_data, 'channel_types') else set(selected_channels)
+        
         for ch, (x, y) in ELECTRODE_POSITIONS.items():
-            if ch in S.selected_channels:
+            if ch in selected_channels and ch in valid_in_eeg:
                 sel_x.append(x); sel_y.append(y); sel_l.append(ch)
                 a = amps.get(ch, 0)
                 sel_c.append((a - min_a) / rng if rng > 0 else 0.5)
                 sel_t.append(f'{ch}<br>{a:.1f} µV')
-            else:
+            elif not use_secondary:  # Only show unselected for primary
                 uns_x.append(x); uns_y.append(y); uns_l.append(ch)
         
-        with S.brain_plot:
-            S.brain_plot.figure.data = S.brain_plot.figure.data[:4]
+        # Color scheme
+        if use_secondary:
+            primary_color = '#f472b6'
+            colorscale = [[0, '#831843'], [0.25, '#be185d'], [0.5, '#f472b6'], [0.75, '#fda4af'], [1, '#ffe4e6']]
+        else:
+            primary_color = THEME_PRIMARY
+            colorscale = [[0, '#0d47a1'], [0.25, '#00bcd4'], [0.5, '#00ff88'], [0.75, '#ffcc00'], [1, '#ff5722']]
+        
+        with brain_plot:
+            brain_plot.figure.data = brain_plot.figure.data[:4]  # Keep head outline
             if uns_x:
-                S.brain_plot.figure.add_trace(go.Scatter(x=uns_x, y=uns_y, mode='markers+text',
+                brain_plot.figure.add_trace(go.Scatter(x=uns_x, y=uns_y, mode='markers+text',
                     marker=dict(size=12, color='rgba(30,30,30,0.6)', line=dict(width=1, color='rgba(60,60,60,0.5)')),
                     text=uns_l, textposition='top center', textfont=dict(size=7, color='rgba(100,100,100,0.6)', family='JetBrains Mono'),
                     hoverinfo='text', hovertext=uns_l, showlegend=False))
             if sel_x:
-                # Custom colorscale: dark blue -> cyan -> green -> yellow
-                terminal_scale = [[0, '#0d47a1'], [0.25, '#00bcd4'], [0.5, '#00ff88'], [0.75, '#ffcc00'], [1, '#ff5722']]
-                S.brain_plot.figure.add_trace(go.Scatter(x=sel_x, y=sel_y, mode='markers+text',
-                    marker=dict(size=18, color=sel_c, colorscale=terminal_scale, cmin=0, cmax=1,
-                               line=dict(width=2, color=THEME_PRIMARY), showscale=True,
+                brain_plot.figure.add_trace(go.Scatter(x=sel_x, y=sel_y, mode='markers+text',
+                    marker=dict(size=18, color=sel_c, colorscale=colorscale, cmin=0, cmax=1,
+                               line=dict(width=2, color=primary_color), showscale=True,
                                colorbar=dict(title=dict(text='µV', font=dict(size=9, color=THEME_TEXT_DIM)),
                                            len=0.5, thickness=8, x=1.02, tickfont=dict(size=8, color=THEME_TEXT_DIM))),
-                    text=sel_l, textposition='top center', textfont=dict(size=8, color=THEME_PRIMARY, family='JetBrains Mono'),
+                    text=sel_l, textposition='top center', textfont=dict(size=8, color=primary_color, family='JetBrains Mono'),
                     hoverinfo='text', hovertext=sel_t, showlegend=False))
-            S.brain_plot.update()
+            brain_plot.update()
     except Exception as e:
-        print(f"Brain error: {e}")
+        print(f"Brain{'2' if use_secondary else ''} error: {e}")
+
+
+def update_brain():
+    """Update primary brain topography plot."""
+    _update_brain_generic(S.brain_plot, S.eeg_data, S.selected_channels, S.current_amplitudes, use_secondary=False)
 
 def update_all():
     update_eeg()
@@ -433,136 +521,19 @@ def update_all():
 
 def update_eeg2():
     """Update EEG 2 plot with same time window and channels as EEG 1."""
-    if not S.eeg_plot2 or not S.eeg_data2 or not S.selected_channels:
-        return
-    try:
-        # Use same channels if they exist in EEG 2
-        eeg2_chs = [ch for ch in S.selected_channels if ch in S.eeg_data2.channel_types]
-        if not eeg2_chs:
-            return
-        data, times, chs = get_channel_data(S.eeg_data2, eeg2_chs, S.view_start, S.view_duration)
-        data = process_data(data, S.eeg_data2.sfreq) * 1e6
-        n = len(chs)
-        
-        norm = np.zeros_like(data)
-        for i in range(n):
-            std = np.std(data[i])
-            norm[i] = data[i] / (std * 3) if std > 0 else data[i]
-        
-        spacing = 2.0 * S.scale_factor
-        colors = ['#f472b6', '#fb7185', '#fda4af', '#fecdd3', '#ffe4e6']  # Pink tones for EEG 2
-        
-        y_min = -spacing
-        y_max = (n) * spacing
-        
-        with S.eeg_plot2:
-            S.eeg_plot2.figure.data = []
-            for i in range(n):
-                off = (n - 1 - i) * spacing
-                S.eeg_plot2.figure.add_trace(go.Scatter(
-                    x=times, y=norm[i] + off, name=chs[i], line=dict(color=colors[i % len(colors)], width=1),
-                    hovertemplate=f'{chs[i]}: %{{customdata:.1f}} µV<extra></extra>', customdata=data[i]
-                ))
-            S.eeg_plot2.figure.update_layout(
-                yaxis=dict(tickmode='array', tickvals=[(n-1-i)*spacing for i in range(n)], ticktext=chs, range=[y_min, y_max], fixedrange=True)
-            )
-            S.eeg_plot2.update()
-    except Exception as e:
-        print(f"EEG2 error: {e}")
+    _update_eeg_generic(S.eeg_plot2, S.eeg_data2, S.selected_channels, use_secondary=True)
 
 def update_fft2():
     """Update FFT 2 plot."""
-    if not S.fft_plot2 or not S.eeg_data2 or not S.selected_channels:
-        return
-    try:
-        eeg2_chs = [ch for ch in S.selected_channels[:5] if ch in S.eeg_data2.channel_types]
-        if not eeg2_chs:
-            return
-        data, times, chs = get_channel_data(S.eeg_data2, eeg2_chs, S.view_start, S.view_duration)
-        data = process_data(data, S.eeg_data2.sfreq) * 1e6
-        freqs, fft_v = compute_fft(data, S.eeg_data2.sfreq)
-        mask = freqs <= 60
-        freqs, fft_v = freqs[mask], fft_v[:, mask]
-        
-        colors = ['#f472b6', '#fb7185', '#fda4af', '#fecdd3', '#ffe4e6']
-        fills = ['rgba(244,114,182,0.15)', 'rgba(251,113,133,0.15)', 'rgba(253,164,175,0.15)', 'rgba(254,205,211,0.15)', 'rgba(255,228,230,0.15)']
-        
-        with S.fft_plot2:
-            S.fft_plot2.figure.data = []
-            for i, ch in enumerate(chs[:5]):
-                S.fft_plot2.figure.add_trace(go.Scatter(x=freqs, y=fft_v[i], name=ch, line=dict(color=colors[i], width=1.5), fill='tozeroy', fillcolor=fills[i]))
-            S.fft_plot2.update()
-    except Exception as e:
-        print(f"FFT2 error: {e}")
+    _update_fft_generic(S.fft_plot2, S.eeg_data2, S.selected_channels, use_secondary=True)
 
 def update_hilbert2():
     """Update Hilbert 2 plot."""
-    if not S.hilbert_plot2 or not S.eeg_data2 or not S.selected_channels:
-        return
-    ch = S.hilbert_channel if S.hilbert_channel in S.eeg_data2.channel_types else None
-    if not ch:
-        # Try first available channel
-        for c in S.selected_channels:
-            if c in S.eeg_data2.channel_types:
-                ch = c
-                break
-    if not ch:
-        return
-    try:
-        data, times, _ = get_channel_data(S.eeg_data2, [ch], S.view_start, S.view_duration)
-        data = process_data(data, S.eeg_data2.sfreq)[0] * 1e6
-        amp, phase = compute_hilbert(data)
-        
-        with S.hilbert_plot2:
-            S.hilbert_plot2.figure.data = []
-            S.hilbert_plot2.figure.add_trace(go.Scatter(x=times, y=data, name='Signal', line=dict(color='#fb7185', width=1)), row=1, col=1)
-            S.hilbert_plot2.figure.add_trace(go.Scatter(x=times, y=amp, name='Envelope', line=dict(color='#f472b6', width=2)), row=1, col=1)
-            S.hilbert_plot2.figure.add_trace(go.Scatter(x=times, y=-amp, showlegend=False, line=dict(color='#f472b6', width=2)), row=1, col=1)
-            S.hilbert_plot2.figure.add_trace(go.Scatter(x=times, y=phase, name='Phase', line=dict(color='#fda4af', width=1)), row=2, col=1)
-            S.hilbert_plot2.update()
-    except Exception as e:
-        print(f"Hilbert2 error: {e}")
+    _update_hilbert_generic(S.hilbert_plot2, S.eeg_data2, S.selected_channels, S.hilbert_channel, use_secondary=True)
 
 def update_brain2():
     """Update brain topography 2 plot."""
-    if not S.brain_plot2 or not S.eeg_data2:
-        return
-    try:
-        # Calculate amplitudes for EEG 2
-        eeg2_chs = [ch for ch in S.selected_channels if ch in S.eeg_data2.channel_types]
-        if not eeg2_chs:
-            return
-        data, times, chs = get_channel_data(S.eeg_data2, eeg2_chs, S.view_start, S.view_duration)
-        data = process_data(data, S.eeg_data2.sfreq) * 1e6
-        
-        amps = {ch: np.sqrt(np.mean(data[i]**2)) for i, ch in enumerate(chs)}
-        vals = list(amps.values())
-        min_a, max_a = (min(vals), max(vals)) if vals else (0, 1)
-        rng = max_a - min_a if max_a > min_a else 1
-        
-        sel_x, sel_y, sel_c, sel_t, sel_l = [], [], [], [], []
-        
-        for ch, (x, y) in ELECTRODE_POSITIONS.items():
-            if ch in eeg2_chs:
-                sel_x.append(x); sel_y.append(y); sel_l.append(ch)
-                a = amps.get(ch, 0)
-                sel_c.append((a - min_a) / rng if rng > 0 else 0.5)
-                sel_t.append(f'{ch}<br>{a:.1f} µV')
-        
-        with S.brain_plot2:
-            S.brain_plot2.figure.data = S.brain_plot2.figure.data[:4]
-            if sel_x:
-                pink_scale = [[0, '#831843'], [0.25, '#be185d'], [0.5, '#f472b6'], [0.75, '#fda4af'], [1, '#ffe4e6']]
-                S.brain_plot2.figure.add_trace(go.Scatter(x=sel_x, y=sel_y, mode='markers+text',
-                    marker=dict(size=18, color=sel_c, colorscale=pink_scale, cmin=0, cmax=1,
-                               line=dict(width=2, color='#f472b6'), showscale=True,
-                               colorbar=dict(title=dict(text='µV', font=dict(size=9, color=THEME_TEXT_DIM)),
-                                           len=0.5, thickness=8, x=1.02, tickfont=dict(size=8, color=THEME_TEXT_DIM))),
-                    text=sel_l, textposition='top center', textfont=dict(size=8, color='#f472b6', family='JetBrains Mono'),
-                    hoverinfo='text', hovertext=sel_t, showlegend=False))
-            S.brain_plot2.update()
-    except Exception as e:
-        print(f"Brain2 error: {e}")
+    _update_brain_generic(S.brain_plot2, S.eeg_data2, S.selected_channels, None, use_secondary=True)
 
 # Channel management
 def refresh_channels():
