@@ -24,6 +24,20 @@ from config import (
 from eeg_loader import load_eeg_file, get_channel_data, scan_eeg_directory, EEGData
 from cleaning.cleaner_page import cleaner_page
 
+# === NEW MODULAR IMPORTS ===
+from app.core.signal import (
+    apply_notch as _apply_notch,
+    apply_bandpass as _apply_bandpass,
+    compute_fft as _compute_fft,
+    compute_hilbert as _compute_hilbert,
+)
+from app.visualization import (
+    make_eeg_fig as _make_eeg_fig,
+    make_fft_fig as _make_fft_fig,
+    make_hilbert_fig as _make_hilbert_fig,
+    make_brain_fig as _make_brain_fig,
+)
+
 # Electrode positions (10-20 system)
 ELECTRODE_POSITIONS = {
     'Fp1': (-0.3, 0.9), 'Fp2': (0.3, 0.9), 'Fpz': (0.0, 0.95),
@@ -75,33 +89,34 @@ class State:
 
 S = State()
 
-# Signal processing
+# Signal processing - now delegating to app.core.signal module
 def apply_notch(data, sfreq, freq=50.0):
-    b, a = signal.iirnotch(freq, 30, sfreq)
-    return signal.filtfilt(b, a, data, axis=-1)
+    """Apply notch filter. Delegates to app.core.signal.filters."""
+    return _apply_notch(data, sfreq, freq)
 
 def apply_bandpass(data, sfreq, low, high):
-    nyq = sfreq / 2
-    b, a = signal.butter(4, [max(low/nyq, 0.001), min(high/nyq, 0.99)], btype='band')
-    return signal.filtfilt(b, a, data, axis=-1)
+    """Apply bandpass filter. Delegates to app.core.signal.filters."""
+    return _apply_bandpass(data, sfreq, low, high)
 
 def compute_fft(data, sfreq):
-    n = data.shape[-1]
-    freqs = fftfreq(n, 1/sfreq)[:n//2]
-    fft_vals = np.abs(fft(data, axis=-1))[..., :n//2] / n * 2
-    return freqs, fft_vals
+    """Compute FFT. Delegates to app.core.signal.transforms."""
+    return _compute_fft(data, sfreq, window=None)  # Match original behavior (no window)
 
 def compute_hilbert(data):
-    analytic = signal.hilbert(data, axis=-1)
-    return np.abs(analytic), np.angle(analytic)
+    """Compute Hilbert transform. Delegates to app.core.signal.transforms."""
+    return _compute_hilbert(data)
 
 def process_data(data, sfreq):
-    out = data.copy()
-    if S.notch_enabled:
-        out = apply_notch(out, sfreq, S.notch_freq)
-    if S.bandpass_enabled:
-        out = apply_bandpass(out, sfreq, S.bandpass_low, S.bandpass_high)
-    return out
+    """Apply enabled filters based on global state S."""
+    from app.core.signal import process_data as _process_data
+    return _process_data(
+        data, sfreq,
+        notch_enabled=S.notch_enabled,
+        notch_freq=S.notch_freq,
+        bandpass_enabled=S.bandpass_enabled,
+        bandpass_low=S.bandpass_low,
+        bandpass_high=S.bandpass_high
+    )
 
 # Styles - Konsole/Terminal aesthetic
 STYLE = f"""
@@ -243,123 +258,24 @@ PLOT_GRID = 'rgba(0,255,136,0.08)'
 PLOT_GRID_MINOR = 'rgba(0,255,136,0.03)'
 
 def make_eeg_fig(use_eeg2=False):
-    """Create EEG figure. use_eeg2=True uses S.eeg_data2 instead of S.eeg_data."""
-    fig = go.Figure()
-    title_color = '#f472b6' if use_eeg2 else THEME_PRIMARY
-    fig.update_layout(
-        template='plotly_dark',
-        paper_bgcolor='rgba(0,0,0,0)',
-        plot_bgcolor=PLOT_BG,
-        margin=dict(l=70, r=10, t=10, b=50),
-        height=250,
-        font=dict(family='JetBrains Mono, monospace', size=10, color=THEME_TEXT),
-        xaxis=dict(
-            title=dict(text='TIME [s]', font=dict(size=9, color=title_color)),
-            gridcolor=PLOT_GRID,
-            zerolinecolor=PLOT_GRID,
-            tickfont=dict(size=9, color=THEME_TEXT_DIM),
-            fixedrange=False
-        ),
-        yaxis=dict(
-            gridcolor=PLOT_GRID_MINOR,
-            tickfont=dict(size=9, color=title_color),
-            fixedrange=True
-        ),
-        showlegend=False,
-        hovermode='x unified',
-        hoverlabel=dict(bgcolor=THEME_CARD, font=dict(family='JetBrains Mono', size=10))
-    )
-    return fig
+    """Create EEG figure. Delegates to app.visualization.figures."""
+    return _make_eeg_fig(use_eeg2=use_eeg2)
 
 def make_fft_fig(use_eeg2=False):
-    """Create FFT figure. use_eeg2=True uses S.eeg_data2 instead of S.eeg_data."""
-    fig = go.Figure()
-    title_color = '#f472b6' if use_eeg2 else THEME_SECONDARY
-    band_colors = ['rgba(0,212,255,0.08)', 'rgba(0,255,136,0.08)', 'rgba(255,204,0,0.08)', 'rgba(255,107,157,0.08)', 'rgba(167,139,250,0.08)']
-    for i, (band, (lo, hi)) in enumerate(FREQ_BANDS.items()):
-        fig.add_vrect(x0=lo, x1=hi, fillcolor=band_colors[i % len(band_colors)], line_width=0)
-        fig.add_annotation(x=(lo+hi)/2, y=1.02, yref='paper', text=band, showarrow=False,
-                          font=dict(size=11, color=THEME_TEXT_DIM, family='JetBrains Mono'))
-    fig.update_layout(
-        template='plotly_dark',
-        paper_bgcolor='rgba(0,0,0,0)',
-        plot_bgcolor=PLOT_BG,
-        margin=dict(l=60, r=10, t=30, b=50),
-        height=180,
-        font=dict(family='JetBrains Mono, monospace', size=10, color=THEME_TEXT),
-        xaxis=dict(
-            title=dict(text='FREQ [Hz]', font=dict(size=9, color=title_color)),
-            gridcolor=PLOT_GRID,
-            range=[0, 60],
-            fixedrange=True,
-            tickfont=dict(size=9, color=THEME_TEXT_DIM)
-        ),
-        yaxis=dict(
-            title=dict(text='PWR [µV]', font=dict(size=9, color=title_color)),
-            gridcolor=PLOT_GRID,
-            fixedrange=True,
-            tickfont=dict(size=9, color=THEME_TEXT_DIM)
-        ),
-        showlegend=True,
-        legend=dict(orientation='h', y=1.15, font=dict(size=8, color=THEME_TEXT_DIM)),
-        hovermode='x unified',
-        hoverlabel=dict(bgcolor=THEME_CARD, font=dict(family='JetBrains Mono', size=10))
-    )
-    return fig
+    """Create FFT figure. Delegates to app.visualization.figures."""
+    return _make_fft_fig(use_eeg2=use_eeg2)
 
 def make_hilbert_fig(use_eeg2=False):
-    """Create Hilbert figure. use_eeg2=True uses S.eeg_data2 instead of S.eeg_data."""
-    title_color = '#f472b6' if use_eeg2 else THEME_WARN
-    fig = make_subplots(rows=2, cols=1, shared_xaxes=True,
-                        subplot_titles=('<b>ENVELOPE</b>', '<b>PHASE</b>'),
-                        vertical_spacing=0.22)
-    fig.update_layout(
-        template='plotly_dark',
-        paper_bgcolor='rgba(0,0,0,0)',
-        plot_bgcolor=PLOT_BG,
-        margin=dict(l=60, r=10, t=35, b=50),
-        height=180,
-        font=dict(family='JetBrains Mono, monospace', size=10, color=THEME_TEXT),
-        showlegend=True,
-        legend=dict(orientation='h', y=1.15, font=dict(size=8, color=THEME_TEXT_DIM)),
-        hovermode='x unified',
-        hoverlabel=dict(bgcolor=THEME_CARD, font=dict(family='JetBrains Mono', size=10))
-    )
-    fig.update_annotations(font=dict(size=9, color=title_color, family='JetBrains Mono'))
-    fig.update_xaxes(gridcolor=PLOT_GRID, tickfont=dict(size=9, color=THEME_TEXT_DIM), fixedrange=True)
-    fig.update_yaxes(gridcolor=PLOT_GRID, tickfont=dict(size=9, color=THEME_TEXT_DIM), fixedrange=True)
-    return fig
+    """Create Hilbert figure. Delegates to app.visualization.figures."""
+    return _make_hilbert_fig(use_eeg2=use_eeg2)
 
 def make_brain_fig(use_eeg2=False):
-    """Create brain topography figure. use_eeg2=True uses S.eeg_data2 instead of S.eeg_data."""
-    fig = go.Figure()
-    theta = np.linspace(0, 2*np.pi, 100)
-    # Head outline - use different color for EEG 2
-    head_color = 'rgba(244,114,182,0.5)' if use_eeg2 else 'rgba(0,255,136,0.5)'
-    fig.add_trace(go.Scatter(x=np.cos(theta), y=np.sin(theta), mode='lines',
-                            line=dict(color=head_color, width=2), showlegend=False, hoverinfo='skip'))
-    # Nose
-    fig.add_trace(go.Scatter(x=[-0.08, 0, 0.08], y=[0.98, 1.12, 0.98], mode='lines',
-                            line=dict(color=head_color, width=2), showlegend=False, hoverinfo='skip'))
-    # Ears
-    fig.add_trace(go.Scatter(x=[-1.02, -1.08, -1.02], y=[0.15, 0, -0.15], mode='lines',
-                            line=dict(color=head_color, width=1.5), showlegend=False, hoverinfo='skip'))
-    fig.add_trace(go.Scatter(x=[1.02, 1.08, 1.02], y=[0.15, 0, -0.15], mode='lines',
-                            line=dict(color=head_color, width=1.5), showlegend=False, hoverinfo='skip'))
-    fig.update_layout(
-        template='plotly_dark',
-        paper_bgcolor='rgba(0,0,0,0)',
-        plot_bgcolor='#0a0a0a',
-        margin=dict(l=5, r=5, t=5, b=5),
-        height=200,
-        font=dict(family='JetBrains Mono, monospace', color=THEME_TEXT),
-        xaxis=dict(range=[-1.25, 1.25], showgrid=False, zeroline=False, showticklabels=False, scaleanchor='y', fixedrange=True),
-        yaxis=dict(range=[-0.9, 1.2], showgrid=False, zeroline=False, showticklabels=False, fixedrange=True),
-        showlegend=False,
-        hovermode='closest',
-        hoverlabel=dict(bgcolor=THEME_CARD, font=dict(family='JetBrains Mono', size=10, color='#f472b6' if use_eeg2 else THEME_PRIMARY))
-    )
-    return fig
+    """Create brain topography figure. Delegates to app.visualization.figures."""
+    return _make_brain_fig(use_eeg2=use_eeg2)
+
+# Legacy constants kept for compatibility with existing code
+# (actual figure creation now uses app.visualization.styles.theme)
+# PLOT_BG, PLOT_GRID, PLOT_GRID_MINOR remain defined above for compatibility
 
 # Update functions
 def update_eeg():

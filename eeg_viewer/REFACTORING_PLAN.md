@@ -2785,3 +2785,92 @@ ui.button('Load', on_click=partial(self._load_file, slot=1))
 [dashboard/pipeline_backend/*.py]
 ```
 
+---
+
+## ✅ PROGRESO DE IMPLEMENTACIÓN
+
+### Estado: EN PROGRESO (Fase 2 Completada)
+
+| Fase | Estado | Fecha |
+|------|--------|-------|
+| Fase 0: Preparación | ✅ COMPLETADA | 2024-12-08 |
+| Fase 1: Infraestructura Base | ✅ COMPLETADA | 2024-12-08 |
+| Fase 2: Visualización y Migración | ✅ COMPLETADA | 2024-12-08 |
+| Fase 3: Páginas UI | ⏳ PENDIENTE | - |
+
+### Archivos Creados (21 archivos Python)
+
+```
+eeg_viewer/app/
+├── __init__.py                          # Package principal
+├── state/
+│   ├── __init__.py                      # Exports de state
+│   ├── base.py                          # BaseState + Observer + StateHolder
+│   └── viewer_state.py                  # ViewerState, PipelineState, ModelState, AnalysisState
+├── core/
+│   ├── __init__.py
+│   └── signal/
+│       ├── __init__.py                  # Exports de signal
+│       ├── filters.py                   # apply_notch, apply_bandpass, apply_lowpass, apply_highpass
+│       ├── transforms.py                # compute_fft, compute_hilbert, compute_psd, compute_band_power
+│       └── processing.py                # process_data, process_with_state, extract_epochs
+├── visualization/
+│   ├── __init__.py                      # Exports de visualization
+│   ├── figures/
+│   │   ├── __init__.py
+│   │   ├── base.py                      # BaseFigure, FigureFactory
+│   │   ├── eeg_figure.py                # EEGFigure, make_eeg_fig
+│   │   ├── fft_figure.py                # FFTFigure, make_fft_fig
+│   │   ├── hilbert_figure.py            # HilbertFigure, make_hilbert_fig
+│   │   └── brain_figure.py              # BrainFigure, make_brain_fig
+│   ├── styles/
+│   │   ├── __init__.py
+│   │   └── theme.py                     # Constantes de tema (re-exporta config.py)
+│   └── components/
+│       └── __init__.py                  # Componentes UI reutilizables (pendiente)
+├── pages/
+│   └── __init__.py                      # Páginas UI (pendiente)
+└── utils/
+    └── __init__.py                      # Utilidades (pendiente)
+```
+
+### Cambios en main.py
+
+| Antes | Después | Reducción |
+|-------|---------|-----------|
+| 5094 líneas | 5009 líneas | -85 líneas (~1.7%) |
+
+**Funciones migradas a módulos:**
+- `apply_notch()` → `app.core.signal.filters`
+- `apply_bandpass()` → `app.core.signal.filters`
+- `compute_fft()` → `app.core.signal.transforms`
+- `compute_hilbert()` → `app.core.signal.transforms`
+- `process_data()` → `app.core.signal.processing`
+- `make_eeg_fig()` → `app.visualization.figures.eeg_figure`
+- `make_fft_fig()` → `app.visualization.figures.fft_figure`
+- `make_hilbert_fig()` → `app.visualization.figures.hilbert_figure`
+- `make_brain_fig()` → `app.visualization.figures.brain_figure`
+
+### Tests de Humo
+
+| Test Suite | Resultado |
+|------------|-----------|
+| TestSignalProcessing (6 tests) | ✅ PASSED |
+| TestFigureCreation (5 tests) | ✅ PASSED |
+| TestStateCreation (4 tests) | ✅ PASSED |
+| TestImports (3 tests) | ✅ PASSED |
+| TestConstants (2 tests) | ✅ PASSED |
+| TestHelperFunctions (4 tests) | ✅ PASSED |
+| TestDatasetDetection (2 tests) | ✅ PASSED |
+| TestModelFunctions (1 test) | ✅ PASSED |
+| TestAnalysisFunctions (1 test) | ✅ PASSED |
+| **TOTAL** | **28/28 PASSED** |
+
+### Próximos Pasos (Fase 3)
+
+1. Crear componentes UI reutilizables en `app/visualization/components/`
+2. Extraer páginas a `app/pages/` (viewer_page.py, pipeline_page.py, etc.)
+3. Migrar estado global a instancias de StateHolder
+4. Refactorizar funciones update_* para eliminar duplicación EEG1/EEG2
+5. Continuar reduciendo main.py gradualmente
+
