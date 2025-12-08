@@ -21,6 +21,11 @@ from app.core.signal import (
 )
 
 
+# Color palettes for EEG traces
+_PRIMARY_COLORS = SIGNAL_COLORS
+_SECONDARY_COLORS = ['#f472b6', '#fb7185', '#fda4af', '#fecdd3', '#ffe4e6']
+
+
 def process_data(data, sfreq):
     """Apply enabled filters based on global state S."""
     return _process_data_core(
