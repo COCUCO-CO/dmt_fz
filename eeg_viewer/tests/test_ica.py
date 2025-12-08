@@ -255,3 +255,4 @@ class TestGetComponentTimeseries:
         assert len(data) > 0
         assert len(times) == len(data)
 
+

@@ -401,3 +401,4 @@ def create_section_header(title: str) -> None:
         f'border-bottom: 1px solid {THEME_BORDER}; padding-bottom: 4px;'
     )
 
+

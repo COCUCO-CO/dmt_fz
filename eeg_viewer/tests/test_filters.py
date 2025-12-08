@@ -218,3 +218,4 @@ class TestComputePSD:
         # Check there's some power at alpha (not a rigorous test)
         assert psd[0, alpha_idx] > 0
 
+

@@ -435,3 +435,4 @@ def auto_detect_eog(ica, raw, ch_name='Fp1', threshold=3.0):
 
 Una vez aprobado este documento, se procederá a implementar los pasos faltantes en el visualizador existente (`/eeg_viewer/main.py`), integrándolos con el código actual y manteniendo la estética "terminal/konsole" ya definida en `config.py`.
 
+

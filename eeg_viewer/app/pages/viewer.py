@@ -4,16 +4,16 @@ import asyncio
 import numpy as np
 from nicegui import ui
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 from config import (
     EEG_RAW_DIR, EEG_CLEAN_DIR,
     THEME_BG, THEME_CARD, THEME_BORDER, THEME_PRIMARY, THEME_SECONDARY,
-    THEME_WARN, THEME_TEXT, THEME_TEXT_DIM, SIGNAL_COLORS
+    THEME_WARN, THEME_TEXT, THEME_TEXT_DIM, SIGNAL_COLORS, FREQ_BANDS
 )
 from eeg_loader import load_eeg_file, get_channel_data, scan_eeg_directory
 from app.state import S
 from app.visualization.styles.css import STYLE
-from app.visualization import make_eeg_fig, make_fft_fig, make_hilbert_fig, make_brain_fig
 from app.core.signal import (
     apply_notch, apply_bandpass, 
     compute_fft, compute_hilbert,
@@ -24,6 +24,142 @@ from app.core.signal import (
 # Color palettes for EEG traces
 _PRIMARY_COLORS = SIGNAL_COLORS
 _SECONDARY_COLORS = ['#f472b6', '#fb7185', '#fda4af', '#fecdd3', '#ffe4e6']
+
+# FFT fill colors
+_PRIMARY_FFT_FILLS = ['rgba(0,255,136,0.15)', 'rgba(0,212,255,0.15)', 'rgba(255,204,0,0.15)', 'rgba(255,107,157,0.15)', 'rgba(167,139,250,0.15)']
+_SECONDARY_FFT_FILLS = ['rgba(244,114,182,0.15)', 'rgba(251,113,133,0.15)', 'rgba(253,164,175,0.15)', 'rgba(254,205,211,0.15)', 'rgba(255,228,230,0.15)']
+
+# Plot constants - Terminal style (from original working code)
+PLOT_BG = 'rgba(8,8,8,1)'
+PLOT_GRID = 'rgba(0,255,136,0.08)'
+PLOT_GRID_MINOR = 'rgba(0,255,136,0.03)'
+
+
+# ==============================================================================
+# FIGURE CREATION FUNCTIONS - Original working implementations
+# ==============================================================================
+
+def make_eeg_fig(use_eeg2=False):
+    """Create EEG figure with proper styling."""
+    fig = go.Figure()
+    title_color = '#f472b6' if use_eeg2 else THEME_PRIMARY
+    fig.update_layout(
+        template='plotly_dark',
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor=PLOT_BG,
+        margin=dict(l=70, r=10, t=10, b=50),
+        height=250,
+        font=dict(family='JetBrains Mono, monospace', size=10, color=THEME_TEXT),
+        xaxis=dict(
+            title=dict(text='TIME [s]', font=dict(size=9, color=title_color)),
+            gridcolor=PLOT_GRID,
+            zerolinecolor=PLOT_GRID,
+            tickfont=dict(size=9, color=THEME_TEXT_DIM),
+            fixedrange=False
+        ),
+        yaxis=dict(
+            gridcolor=PLOT_GRID_MINOR,
+            tickfont=dict(size=9, color=title_color),
+            fixedrange=True
+        ),
+        showlegend=False,
+        hovermode='x unified',
+        hoverlabel=dict(bgcolor=THEME_CARD, font=dict(family='JetBrains Mono', size=10))
+    )
+    return fig
+
+
+def make_fft_fig(use_eeg2=False):
+    """Create FFT figure with frequency band annotations."""
+    fig = go.Figure()
+    title_color = '#f472b6' if use_eeg2 else THEME_SECONDARY
+    band_colors = ['rgba(0,212,255,0.08)', 'rgba(0,255,136,0.08)', 'rgba(255,204,0,0.08)', 'rgba(255,107,157,0.08)', 'rgba(167,139,250,0.08)']
+    for i, (band, (lo, hi)) in enumerate(FREQ_BANDS.items()):
+        fig.add_vrect(x0=lo, x1=hi, fillcolor=band_colors[i % len(band_colors)], line_width=0)
+        fig.add_annotation(x=(lo+hi)/2, y=1.02, yref='paper', text=band, showarrow=False,
+                          font=dict(size=11, color=THEME_TEXT_DIM, family='JetBrains Mono'))
+    fig.update_layout(
+        template='plotly_dark',
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor=PLOT_BG,
+        margin=dict(l=60, r=10, t=30, b=50),
+        height=180,
+        font=dict(family='JetBrains Mono, monospace', size=10, color=THEME_TEXT),
+        xaxis=dict(
+            title=dict(text='FREQ [Hz]', font=dict(size=9, color=title_color)),
+            gridcolor=PLOT_GRID,
+            range=[0, 60],
+            fixedrange=True,
+            tickfont=dict(size=9, color=THEME_TEXT_DIM)
+        ),
+        yaxis=dict(
+            title=dict(text='PWR [µV]', font=dict(size=9, color=title_color)),
+            gridcolor=PLOT_GRID,
+            fixedrange=True,
+            tickfont=dict(size=9, color=THEME_TEXT_DIM)
+        ),
+        showlegend=True,
+        legend=dict(orientation='h', y=1.15, font=dict(size=8, color=THEME_TEXT_DIM)),
+        hovermode='x unified',
+        hoverlabel=dict(bgcolor=THEME_CARD, font=dict(family='JetBrains Mono', size=10))
+    )
+    return fig
+
+
+def make_hilbert_fig(use_eeg2=False):
+    """Create Hilbert figure with envelope and phase subplots."""
+    title_color = '#f472b6' if use_eeg2 else THEME_WARN
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True,
+                        subplot_titles=('<b>ENVELOPE</b>', '<b>PHASE</b>'),
+                        vertical_spacing=0.22)
+    fig.update_layout(
+        template='plotly_dark',
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor=PLOT_BG,
+        margin=dict(l=60, r=10, t=35, b=50),
+        height=180,
+        font=dict(family='JetBrains Mono, monospace', size=10, color=THEME_TEXT),
+        showlegend=True,
+        legend=dict(orientation='h', y=1.15, font=dict(size=8, color=THEME_TEXT_DIM)),
+        hovermode='x unified',
+        hoverlabel=dict(bgcolor=THEME_CARD, font=dict(family='JetBrains Mono', size=10))
+    )
+    fig.update_annotations(font=dict(size=9, color=title_color, family='JetBrains Mono'))
+    fig.update_xaxes(gridcolor=PLOT_GRID, tickfont=dict(size=9, color=THEME_TEXT_DIM), fixedrange=True)
+    fig.update_yaxes(gridcolor=PLOT_GRID, tickfont=dict(size=9, color=THEME_TEXT_DIM), fixedrange=True)
+    return fig
+
+
+def make_brain_fig(use_eeg2=False):
+    """Create brain topography figure with head outline."""
+    fig = go.Figure()
+    theta = np.linspace(0, 2*np.pi, 100)
+    head_color = 'rgba(244,114,182,0.5)' if use_eeg2 else 'rgba(0,255,136,0.5)'
+    # Head outline
+    fig.add_trace(go.Scatter(x=np.cos(theta), y=np.sin(theta), mode='lines',
+                            line=dict(color=head_color, width=2), showlegend=False, hoverinfo='skip'))
+    # Nose
+    fig.add_trace(go.Scatter(x=[-0.08, 0, 0.08], y=[0.98, 1.12, 0.98], mode='lines',
+                            line=dict(color=head_color, width=2), showlegend=False, hoverinfo='skip'))
+    # Ears
+    fig.add_trace(go.Scatter(x=[-1.02, -1.08, -1.02], y=[0.15, 0, -0.15], mode='lines',
+                            line=dict(color=head_color, width=1.5), showlegend=False, hoverinfo='skip'))
+    fig.add_trace(go.Scatter(x=[1.02, 1.08, 1.02], y=[0.15, 0, -0.15], mode='lines',
+                            line=dict(color=head_color, width=1.5), showlegend=False, hoverinfo='skip'))
+    fig.update_layout(
+        template='plotly_dark',
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='#0a0a0a',
+        margin=dict(l=5, r=5, t=5, b=5),
+        height=200,
+        font=dict(family='JetBrains Mono, monospace', color=THEME_TEXT),
+        xaxis=dict(range=[-1.25, 1.25], showgrid=False, zeroline=False, showticklabels=False, scaleanchor='y', fixedrange=True),
+        yaxis=dict(range=[-0.9, 1.2], showgrid=False, zeroline=False, showticklabels=False, fixedrange=True),
+        showlegend=False,
+        hovermode='closest',
+        hoverlabel=dict(bgcolor=THEME_CARD, font=dict(family='JetBrains Mono', size=10, color='#f472b6' if use_eeg2 else THEME_PRIMARY))
+    )
+    return fig
 
 
 def process_data(data, sfreq):
@@ -449,10 +585,10 @@ def save_epochs():
 
 # PipelineState (PS) imported from app.state
 
-PIPELINE_DIR = Path(__file__).parent.parent / "dashboard" / "pipeline_backend"
-PIPELINE_OUTPUTS = Path(__file__).parent.parent / "pipeline_outputs"
+PIPELINE_DIR = Path(__file__).parent.parent.parent.parent / "dashboard" / "pipeline_backend"
+PIPELINE_OUTPUTS = Path(__file__).parent.parent.parent / "pipeline_outputs"
 RESULTS_BASE = Path(__file__).parent.parent / "fwd-inv-stc"
-DEFAULT_INPUT_DIR = Path(__file__).parent.parent / "EEG_CLEAN"
+DEFAULT_INPUT_DIR = Path(__file__).parent.parent.parent.parent / "EEG_CLEAN"
 
 # Update main page header to include navigation
 @ui.page('/')
@@ -532,22 +668,129 @@ def main_content():
                     except Exception as e:
                         ui.notify(f'Error: {e}', type='negative')
                 
-                with ui.scroll_area().classes('w-full').style('height: 250px;'):
-                    for lbl, files in [('raw/', scan_eeg_directory(EEG_RAW_DIR)), ('clean/', scan_eeg_directory(EEG_CLEAN_DIR))]:
-                        if files:
-                            ui.label(f'├─ {lbl}').style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mt-3 mb-2')
-                            conds = {}
-                            for f in files:
-                                conds.setdefault(f['condition'], []).append(f)
-                            for cond, cfs in conds.items():
-                                with ui.expansion(f'{cond} ({len(cfs)} files)').classes('w-full'):
-                                    for f in cfs:
-                                        with ui.row().classes('file-item items-center w-full gap-3'):
-                                            ui.icon('description', size='sm').classes('opacity-60')
-                                            with ui.column().classes('flex-1'):
-                                                ui.label(f['name']).classes('text-sm font-medium')
-                                                ui.label(f"{f['size_mb']:.1f} MB").classes('text-xs opacity-50')
-                                            ui.button(icon='play_arrow', on_click=lambda e, p=f['path']: load_file(p)).props('flat dense size=sm color=red')
+                # Path input for custom directories
+                with ui.row().classes('w-full gap-2 mb-3 items-center'):
+                    path_input = ui.input(
+                        placeholder='Enter path or click Browse...'
+                    ).props('dense outlined').classes('flex-1').style('font-size: 0.8rem;')
+                    
+                    custom_paths = []
+                    
+                    async def browse_folder():
+                        """Open folder picker dialog."""
+                        with ui.dialog() as dialog, ui.card().classes('p-4'):
+                            ui.label('Select Folder').classes('text-lg font-bold mb-3')
+                            
+                            folder_input = ui.input(
+                                value=str(Path.home()),
+                                label='Folder Path'
+                            ).props('outlined').classes('w-full mb-3')
+                            
+                            ui.label('Quick Access:').classes('text-xs opacity-50 mb-2')
+                            with ui.row().classes('gap-2 flex-wrap mb-3'):
+                                common_paths = [
+                                    ('Home', str(Path.home())),
+                                    ('EEG RAW', str(EEG_RAW_DIR)),
+                                    ('EEG CLEAN', str(EEG_CLEAN_DIR)),
+                                ]
+                                for name, path in common_paths:
+                                    if Path(path).exists():
+                                        ui.button(name, on_click=lambda p=path: folder_input.set_value(p)).props('dense size=sm')
+                            
+                            with ui.row().classes('gap-2 justify-end'):
+                                ui.button('Cancel', on_click=dialog.close).props('flat')
+                                
+                                def select_folder():
+                                    path_input.set_value(folder_input.value)
+                                    dialog.close()
+                                
+                                ui.button('Select', on_click=select_folder).props('color=primary')
+                        
+                        dialog.open()
+                    
+                    ui.button(icon='folder_open', on_click=browse_folder).props(
+                        'flat dense'
+                    ).tooltip('Browse folder')
+                    
+                    def add_path():
+                        path = path_input.value
+                        if path and path not in custom_paths:
+                            if Path(path).exists() and Path(path).is_dir():
+                                custom_paths.append(path)
+                                refresh_file_list()
+                                ui.notify(f'Added: {path}', type='positive')
+                            else:
+                                ui.notify('Invalid path or not a directory', type='warning')
+                    
+                    ui.button(icon='add', on_click=add_path).props(
+                        'flat dense color=green'
+                    ).tooltip('Add path to list')
+                    
+                    ui.button(icon='refresh', on_click=lambda: refresh_file_list()).props(
+                        'flat dense'
+                    ).tooltip('Refresh file list')
+                
+                files_container = ui.scroll_area().classes('w-full').style('height: 250px;')
+                
+                def refresh_file_list():
+                    files_container.clear()
+                    with files_container:
+                        # Default directories
+                        for lbl, files in [('raw/', scan_eeg_directory(EEG_RAW_DIR)), ('clean/', scan_eeg_directory(EEG_CLEAN_DIR))]:
+                            if files:
+                                ui.label(f'├─ {lbl}').style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mt-3 mb-2')
+                                conds = {}
+                                for f in files:
+                                    conds.setdefault(f['condition'], []).append(f)
+                                for cond, cfs in conds.items():
+                                    with ui.expansion(f'{cond} ({len(cfs)} files)').classes('w-full'):
+                                        for f in cfs:
+                                            with ui.row().classes('file-item items-center w-full gap-3'):
+                                                ui.icon('description', size='sm').classes('opacity-60')
+                                                with ui.column().classes('flex-1'):
+                                                    ui.label(f['name']).classes('text-sm font-medium')
+                                                    ui.label(f"{f['size_mb']:.1f} MB").classes('text-xs opacity-50')
+                                                ui.button(icon='play_arrow', on_click=lambda e, p=f['path']: load_file(p)).props('flat dense size=sm color=red')
+                        
+                        # Custom paths
+                        for path in custom_paths:
+                            files = scan_eeg_directory(path)
+                            if files:
+                                ui.label(f'├─ 📁 {Path(path).name}').style(f'color:{THEME_SECONDARY}; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mt-3 mb-2')
+                                conds = {}
+                                for f in files:
+                                    conds.setdefault(f['condition'], []).append(f)
+                                for cond, cfs in conds.items():
+                                    with ui.expansion(f'{cond} ({len(cfs)} files)').classes('w-full'):
+                                        for f in cfs:
+                                            with ui.row().classes('file-item items-center w-full gap-3'):
+                                                ui.icon('description', size='sm').classes('opacity-60')
+                                                with ui.column().classes('flex-1'):
+                                                    ui.label(f['name']).classes('text-sm font-medium')
+                                                    ui.label(f"{f['size_mb']:.1f} MB").classes('text-xs opacity-50')
+                                                ui.button(icon='play_arrow', on_click=lambda e, p=f['path']: load_file(p)).props('flat dense size=sm color=red')
+                        
+                        # Path from input
+                        if path_input.value and path_input.value not in custom_paths:
+                            input_path = path_input.value
+                            if Path(input_path).exists():
+                                files = scan_eeg_directory(input_path)
+                                if files:
+                                    ui.label(f'├─ 📂 {Path(input_path).name}').style(f'color:{THEME_WARN}; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mt-3 mb-2')
+                                    conds = {}
+                                    for f in files:
+                                        conds.setdefault(f['condition'], []).append(f)
+                                    for cond, cfs in conds.items():
+                                        with ui.expansion(f'{cond} ({len(cfs)} files)').classes('w-full'):
+                                            for f in cfs:
+                                                with ui.row().classes('file-item items-center w-full gap-3'):
+                                                    ui.icon('description', size='sm').classes('opacity-60')
+                                                    with ui.column().classes('flex-1'):
+                                                        ui.label(f['name']).classes('text-sm font-medium')
+                                                        ui.label(f"{f['size_mb']:.1f} MB").classes('text-xs opacity-50')
+                                                    ui.button(icon='play_arrow', on_click=lambda e, p=f['path']: load_file(p)).props('flat dense size=sm color=red')
+                
+                refresh_file_list()
             
             # FILE INFO
             with ui.card().classes('dark-card p-4 w-full'):

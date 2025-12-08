@@ -13,10 +13,10 @@ from config import (
 from app.state import PS
 from app.visualization.styles.css import STYLE
 
-PIPELINE_DIR = Path(__file__).parent.parent.parent / "dashboard" / "pipeline_backend"
-PIPELINE_OUTPUTS = Path(__file__).parent.parent.parent / "pipeline_outputs"
+PIPELINE_DIR = Path(__file__).parent.parent.parent.parent / "dashboard" / "pipeline_backend"
+PIPELINE_OUTPUTS = Path(__file__).parent.parent.parent.parent / "eeg_viewer" / "pipeline_outputs"
 RESULTS_BASE = Path(__file__).parent.parent.parent / "fwd-inv-stc"
-DEFAULT_INPUT_DIR = Path(__file__).parent.parent.parent / "EEG_CLEAN"
+DEFAULT_INPUT_DIR = Path(__file__).parent.parent.parent.parent / "EEG_CLEAN"
 
 def get_run_dirs():
     """List existing pipeline runs"""
@@ -37,7 +37,14 @@ def pipeline_log(msg):
     """Add message to pipeline log"""
     if PS.log_container:
         with PS.log_container:
+            # Add line break before new steps/sections
+            if any(x in msg for x in ['[RUN]', 'Starting:', '[INFO]', '[SETUP]', '===', 'COMPLETED', 'FAILED']):
+                ui.label('').style('height: 12px;')
             ui.label(msg).style(f'color:{THEME_TEXT}; font-family: JetBrains Mono; font-size: 0.75rem;')
+        # Force UI update and scroll to bottom
+        PS.log_container.update()
+        if hasattr(PS, 'log_scroll') and PS.log_scroll:
+            PS.log_scroll.scroll_to(percent=1.0)
 
 async def run_pipeline_step(script_name, args_list, step_name, output_dir=None, input_dir=None):
     """Run a pipeline script with arguments"""
@@ -84,19 +91,29 @@ async def run_pipeline_step(script_name, args_list, step_name, output_dir=None, 
         PS.current_process = process
         
         # Read both stdout and stderr
-        async def read_stream(stream, prefix=""):
+        async def read_stream(stream, is_stderr=False):
             while True:
                 line = await stream.readline()
                 if not line:
                     break
                 text = line.decode().strip()
                 if text:
-                    pipeline_log(f"{prefix}{text}")
+                    # Skip tqdm progress bars (they clutter the log)
+                    is_progress_bar = any(x in text for x in ['%|', 'it/s]', '0%|', '100%|', '█', '▌'])
+                    if is_progress_bar:
+                        continue  # Skip progress bar output
+                    
+                    # Prefix actual errors/warnings from stderr
+                    if is_stderr:
+                        pipeline_log(f"[WARN] {text}")
+                    else:
+                        pipeline_log(text)
+                    await asyncio.sleep(0.01)  # Allow UI to update
         
         # Read both streams concurrently
         await asyncio.gather(
-            read_stream(process.stdout),
-            read_stream(process.stderr, "[ERR] ")
+            read_stream(process.stdout, is_stderr=False),
+            read_stream(process.stderr, is_stderr=True)
         )
         
         await process.wait()
@@ -143,10 +160,11 @@ def pipeline_page():
             ui.button('MODEL', on_click=lambda: ui.navigate.to('/model')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
             ui.button('ANALYSIS', on_click=lambda: ui.navigate.to('/analysis')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
     
-    with ui.row().classes('w-full p-4 gap-4').style('height: calc(100vh - 50px); align-items: stretch;'):
+    with ui.row().classes('w-full p-4 gap-4').style('height: calc(100vh - 50px); align-items: stretch; overflow: hidden;'):
         
-        # LEFT: Pipeline Controls
-        with ui.column().classes('gap-4').style('width: 450px;'):
+        # LEFT: Pipeline Controls (scrollable independently)
+        with ui.scroll_area().style('width: 450px; height: 100%;'):
+          with ui.column().classes('gap-4 pr-2'):
             
             # INPUT/OUTPUT CONFIGURATION
             with ui.card().classes('dark-card p-4 w-full').style(f'border: 1px solid {THEME_PRIMARY};'):
@@ -406,7 +424,7 @@ def pipeline_page():
                     ui.label('~3-5 min').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
         
         # RIGHT: Tabbed Panel (Console, Files, System, Visualize)
-        with ui.column().classes('flex-1').style('min-height: 0; display: flex; flex-direction: column;'):
+        with ui.column().classes('flex-1').style('height: 100%; min-height: 0; display: flex; flex-direction: column; overflow: hidden;'):
             with ui.card().classes('dark-card p-2 w-full flex-1').style('display: flex; flex-direction: column; min-height: 0;'):
                 with ui.tabs().classes('w-full').style(f'background: {THEME_BG};') as tabs:
                     tab_console = ui.tab('CONSOLE', icon='terminal').style(f'color:{THEME_PRIMARY};')
@@ -416,8 +434,8 @@ def pipeline_page():
                 
                 with ui.tab_panels(tabs, value=tab_console).classes('w-full').style('flex: 1; min-height: 0; overflow: hidden;'):
                     # CONSOLE TAB
-                    with ui.tab_panel(tab_console).classes('p-2').style('height: 100%; display: flex; flex-direction: column;'):
-                        with ui.row().classes('items-center gap-3 mb-2'):
+                    with ui.tab_panel(tab_console).classes('p-2').style('height: 100%; display: flex; flex-direction: column; overflow: hidden;'):
+                        with ui.row().classes('items-center gap-3 mb-2 shrink-0'):
                             ui.label('// OUTPUT_LOG').classes('terminal-header')
                             
                             # Status indicator
@@ -458,7 +476,8 @@ def pipeline_page():
                                     PS.log_container.clear()
                             ui.button('CLEAR', on_click=clear_log, icon='delete').props('flat dense size=sm')
                         
-                        with ui.scroll_area().classes('w-full flex-1').style('background: #050505; border-radius: 4px; min-height: 200px;'):
+                        PS.log_scroll = ui.scroll_area().classes('w-full').style('background: #050505; border-radius: 4px; flex: 1; min-height: 0;')
+                        with PS.log_scroll:
                             PS.log_container = ui.column().classes('w-full p-3 gap-0')
                             with PS.log_container:
                                 ui.label('Pipeline ready. Select a step and click RUN.').style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.75rem;')

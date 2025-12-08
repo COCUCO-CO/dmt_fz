@@ -8,10 +8,15 @@ from .navigation import (
     FilterControls,
     ScaleControls,
 )
+from .signal_preview import SignalPreviewComponent, SignalPreviewState
+from .file_browser import FileBrowserComponent
 
 __all__ = [
     'NavigationControls',
     'FilterControls',
     'ScaleControls',
+    'SignalPreviewComponent',
+    'SignalPreviewState',
+    'FileBrowserComponent',
 ]
 

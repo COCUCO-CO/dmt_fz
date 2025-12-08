@@ -29,10 +29,10 @@ from config import (
     FREQ_BANDS,
 )
 
-# Plot-specific colors
-PLOT_BG = '#0a0a0a'
-PLOT_GRID = 'rgba(50,50,50,0.5)'
-PLOT_GRID_MINOR = 'rgba(40,40,40,0.3)'
+# Plot-specific colors (Terminal style - green tinted)
+PLOT_BG = 'rgba(8,8,8,1)'
+PLOT_GRID = 'rgba(0,255,136,0.08)'
+PLOT_GRID_MINOR = 'rgba(0,255,136,0.03)'
 
 # Secondary (EEG2) colors
 SECONDARY_COLOR = '#f472b6'  # Pink for second EEG

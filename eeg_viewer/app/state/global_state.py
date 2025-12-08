@@ -63,6 +63,7 @@ class PipelineState:
         self.start_time = None
         self.current_process = None
         self.log_container = None
+        self.log_scroll = None
         self.status_label = None
         self.progress = 0
         self.refresh_files = None  # Function to refresh file browser
@@ -90,6 +91,7 @@ class ModelState:
         self.current_process = None
         self.history = {'train_loss': [], 'val_loss': [], 'recon_loss': [], 'kl_loss': [], 'epoch': []}
         self.log_container = None
+        self.log_scroll = None
         self.loss_plot = None
         self.config = {}
         

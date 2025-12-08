@@ -12,8 +12,8 @@ from config import (
 from app.state import AS
 from app.visualization.styles.css import STYLE
 
-AUTOENCODER_DIR = Path(__file__).parent.parent.parent / "machine_learning" / "autoencoder"
-AUTOENCODER_CACHE_DIR = Path(__file__).parent.parent / "cache" / "autoencoder"
+AUTOENCODER_DIR = Path(__file__).parent.parent.parent.parent / "machine_learning" / "autoencoder"
+AUTOENCODER_CACHE_DIR = Path(__file__).parent.parent.parent / "cache" / "autoencoder"
 
 def analysis_log(msg: str, msg_type: str = 'info'):
     """Add message to analysis log."""
