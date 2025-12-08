@@ -37,6 +37,12 @@ from app.visualization import (
     make_hilbert_fig as _make_hilbert_fig,
     make_brain_fig as _make_brain_fig,
 )
+from app.core import (
+    update_eeg_plot as _update_eeg_plot,
+    update_fft_plot as _update_fft_plot,
+    update_hilbert_plot as _update_hilbert_plot,
+    update_brain_plot as _update_brain_plot,
+)
 
 # Electrode positions (10-20 system)
 ELECTRODE_POSITIONS = {

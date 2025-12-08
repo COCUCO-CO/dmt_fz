@@ -2789,16 +2789,18 @@ ui.button('Load', on_click=partial(self._load_file, slot=1))
 
 ## ✅ PROGRESO DE IMPLEMENTACIÓN
 
-### Estado: EN PROGRESO (Fase 2 Completada)
+### Estado: EN PROGRESO (Fase 3 Parcialmente Completada)
 
 | Fase | Estado | Fecha |
 |------|--------|-------|
 | Fase 0: Preparación | ✅ COMPLETADA | 2024-12-08 |
 | Fase 1: Infraestructura Base | ✅ COMPLETADA | 2024-12-08 |
 | Fase 2: Visualización y Migración | ✅ COMPLETADA | 2024-12-08 |
-| Fase 3: Páginas UI | ⏳ PENDIENTE | - |
+| Fase 3: Componentes UI | ✅ COMPLETADA | 2024-12-08 |
+| Fase 3: Separar Páginas | ⏳ PENDIENTE | - |
+| Fase 3: Eliminar duplicación | ⏳ PENDIENTE | - |
 
-### Archivos Creados (21 archivos Python)
+### Archivos Creados (23 archivos Python, 2390 líneas)
 
 ```
 eeg_viewer/app/
@@ -2808,7 +2810,8 @@ eeg_viewer/app/
 │   ├── base.py                          # BaseState + Observer + StateHolder
 │   └── viewer_state.py                  # ViewerState, PipelineState, ModelState, AnalysisState
 ├── core/
-│   ├── __init__.py
+│   ├── __init__.py                      # Exports de core
+│   ├── updaters.py                      # Funciones unificadas update_eeg_plot, update_fft_plot, etc.
 │   └── signal/
 │       ├── __init__.py                  # Exports de signal
 │       ├── filters.py                   # apply_notch, apply_bandpass, apply_lowpass, apply_highpass
@@ -2827,9 +2830,10 @@ eeg_viewer/app/
 │   │   ├── __init__.py
 │   │   └── theme.py                     # Constantes de tema (re-exporta config.py)
 │   └── components/
-│       └── __init__.py                  # Componentes UI reutilizables (pendiente)
+│       ├── __init__.py                  # Exports de components
+│       └── navigation.py                # NavigationControls, FilterControls, ScaleControls
 ├── pages/
-│   └── __init__.py                      # Páginas UI (pendiente)
+│   └── __init__.py                      # Páginas UI (pendiente migración)
 └── utils/
     └── __init__.py                      # Utilidades (pendiente)
 ```
@@ -2838,7 +2842,12 @@ eeg_viewer/app/
 
 | Antes | Después | Reducción |
 |-------|---------|-----------|
-| 5094 líneas | 5009 líneas | -85 líneas (~1.7%) |
+| 5094 líneas | 5015 líneas | -79 líneas (~1.6%) |
+
+**Nota:** La reducción de líneas es modesta porque:
+1. Las funciones originales se mantienen como wrappers para compatibilidad
+2. Los nuevos módulos están listos para uso gradual
+3. La duplicación EEG1/EEG2 aún está pendiente de refactorizar
 
 **Funciones migradas a módulos:**
 - `apply_notch()` → `app.core.signal.filters`
@@ -2851,26 +2860,62 @@ eeg_viewer/app/
 - `make_hilbert_fig()` → `app.visualization.figures.hilbert_figure`
 - `make_brain_fig()` → `app.visualization.figures.brain_figure`
 
-### Tests de Humo
+### Tests Creados
 
-| Test Suite | Resultado |
-|------------|-----------|
-| TestSignalProcessing (6 tests) | ✅ PASSED |
-| TestFigureCreation (5 tests) | ✅ PASSED |
-| TestStateCreation (4 tests) | ✅ PASSED |
-| TestImports (3 tests) | ✅ PASSED |
-| TestConstants (2 tests) | ✅ PASSED |
-| TestHelperFunctions (4 tests) | ✅ PASSED |
-| TestDatasetDetection (2 tests) | ✅ PASSED |
-| TestModelFunctions (1 test) | ✅ PASSED |
-| TestAnalysisFunctions (1 test) | ✅ PASSED |
-| **TOTAL** | **28/28 PASSED** |
+| Archivo | Líneas | Descripción |
+|---------|--------|-------------|
+| test_smoke.py | 314 | Tests de humo para main.py |
+| test_state.py | 249 | Tests para app/state (Observer, StateHolder) |
+| test_signal.py | 300 | Tests para app/core/signal (filtros, transforms) |
+| test_visualization.py | 223 | Tests para app/visualization (figuras) |
+| **Nuevos tests** | **772** | **69 tests adicionales** |
 
-### Próximos Pasos (Fase 3)
+### Resultado de Tests
 
-1. Crear componentes UI reutilizables en `app/visualization/components/`
-2. Extraer páginas a `app/pages/` (viewer_page.py, pipeline_page.py, etc.)
-3. Migrar estado global a instancias de StateHolder
-4. Refactorizar funciones update_* para eliminar duplicación EEG1/EEG2
-5. Continuar reduciendo main.py gradualmente
+| Test Suite | Tests | Resultado |
+|------------|-------|-----------|
+| test_state.py | 22 | ✅ PASSED |
+| test_signal.py | 27 | ✅ PASSED |
+| test_visualization.py | 20 | ✅ PASSED |
+| test_smoke.py | 28 | ✅ PASSED |
+| **TOTAL** | **97** | **97/97 PASSED** |
+
+### Próximos Pasos
+
+1. **Separar páginas** a `app/pages/`:
+   - `pipeline_page.py` (~1580 líneas, líneas 857-2440)
+   - `model_page.py` (~1390 líneas, líneas 2441-3831)
+   - `analysis_page.py` (~965 líneas, líneas 3832-4797)
+   - `viewer_page.py` (main page, líneas 4798-5015)
+
+2. **Eliminar duplicación EEG1/EEG2**:
+   - Usar `app/core/updaters.py` con parámetro `use_secondary`
+   - Unificar `update_eeg()` y `update_eeg2()` 
+   - Unificar `update_fft()` y `update_fft2()`
+   - Etc.
+
+3. **Migrar estado global**:
+   - Reemplazar `S`, `PS`, `MS`, `AS` con `StateHolder`
+   - Usar inyección de dependencias en lugar de globals
+
+### Uso de los Nuevos Módulos
+
+```python
+# Importar módulos
+from app.state import ViewerState, StateHolder
+from app.core.signal import apply_notch, compute_fft, process_data
+from app.core import update_eeg_plot, update_fft_plot
+from app.visualization import make_eeg_fig, FigureFactory
+from app.visualization.components import NavigationControls, FilterControls
+
+# Crear estado con Observer
+state = ViewerState()
+state.subscribe(lambda attr, old, new: update_plots())
+
+# Crear figuras
+fig = FigureFactory.create('eeg', use_secondary_style=False)
+
+# Actualizar plots de forma unificada
+update_eeg_plot(plot, data, times, channels, use_secondary=False)
+```
 
