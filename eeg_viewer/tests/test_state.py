@@ -202,26 +202,17 @@ class TestPipelineState:
         
         assert state.running == False
         assert state.workers == 7
-        assert state.log_messages == []
+        assert state.progress == 0
+        assert state.current_step == ""
     
-    def test_add_log(self):
-        """Test add_log appends messages."""
+    def test_pipeline_parameters(self):
+        """Test pipeline parameters exist."""
         state = PipelineState()
         
-        state.add_log("Message 1")
-        state.add_log("Message 2")
-        
-        assert len(state.log_messages) == 2
-        assert state.log_messages[0] == "Message 1"
-    
-    def test_clear_logs(self):
-        """Test clear_logs empties list."""
-        state = PipelineState()
-        state.add_log("Test")
-        
-        state.clear_logs()
-        
-        assert state.log_messages == []
+        assert state.max_subjects == 0
+        assert "DMT" in state.conditions
+        assert state.min_k == 2
+        assert state.max_k == 15
 
 
 class TestModelState:
@@ -233,8 +224,8 @@ class TestModelState:
         
         assert state.training == False
         assert state.model_type == "vae"
-        assert state.epochs == 100
-        assert state.batch_size == 32
+        assert state.status == 'idle'
+        assert state.dataset_path == ""
 
 
 class TestAnalysisState:
@@ -246,4 +237,5 @@ class TestAnalysisState:
         
         assert state.device == "cpu"
         assert state.model_type == "graph"
-        assert state.model_loaded == False
+        assert state.model is None
+        assert state.dataset is None
