@@ -62,8 +62,39 @@ def load_eeg_file(filepath: Path | str, preload: bool = True) -> EEGData:
     if reader is None:
         raise ValueError(f"No reader available for: {filepath.suffix}")
     
-    # Load raw data
-    raw = reader(filepath, preload=preload, verbose=False)
+    # Load raw data - handle files that may contain epochs
+    raw = None
+    
+    def epochs_to_continuous(epochs):
+        """Convert epochs to continuous raw data by concatenating all epoch data."""
+        # Get all epoch data: shape (n_epochs, n_channels, n_times)
+        data = epochs.get_data()
+        n_epochs, n_channels, n_times = data.shape
+        
+        # Reshape to (n_channels, n_epochs * n_times) - continuous signal
+        continuous_data = data.transpose(1, 0, 2).reshape(n_channels, -1)
+        
+        # Create Raw object from continuous data
+        raw_continuous = mne.io.RawArray(continuous_data, epochs.info, verbose=False)
+        return raw_continuous
+    
+    # Check if it's an epochs file (.fif with _epo suffix)
+    if filepath.suffix.lower() == '.fif' and '_epo' in filepath.stem.lower():
+        # Load epochs and convert to continuous
+        epochs = mne.read_epochs(filepath, preload=True, verbose=False)
+        raw = epochs_to_continuous(epochs)
+    elif filepath.suffix.lower() == '.set':
+        try:
+            raw = reader(filepath, preload=preload, verbose=False)
+        except Exception as e:
+            if 'trials' in str(e).lower() or 'epochs' in str(e).lower():
+                # File contains epochs, load as epochs and convert to continuous
+                epochs = mne.io.read_epochs_eeglab(filepath, verbose=False)
+                raw = epochs_to_continuous(epochs)
+            else:
+                raise
+    else:
+        raw = reader(filepath, preload=preload, verbose=False)
     
     # Extract metadata
     # Get channel types using the correct MNE API

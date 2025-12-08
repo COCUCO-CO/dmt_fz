@@ -178,16 +178,29 @@ def pipeline_page():
                     def scan_input_dir():
                         p = Path(input_dir_field.value)
                         if p.exists():
+                            # Check for subdirectory structure (DMT/, EC/, EO/)
                             conds = [d.name for d in p.iterdir() if d.is_dir() and d.name in ['DMT', 'EC', 'EO']]
-                            files = sum(len(list((p / c).glob('*.set'))) for c in conds if (p / c).exists())
-                            ui.notify(f'Found: {conds}, {files} files', type='info')
-                            pipeline_log(f"[INPUT] Scanned {p}: {conds}, {files} .set files")
+                            
+                            if conds:
+                                # Subdirectory structure
+                                files = sum(len(list((p / c).glob('*.set'))) for c in conds)
+                                ui.notify(f'Found: {conds}, {files} .set files', type='info')
+                                pipeline_log(f"[INPUT] Scanned {p}: {conds}, {files} .set files")
+                            else:
+                                # Flat structure (files in root with condition in filename)
+                                all_set = list(p.glob('*.set'))
+                                dmt = len([f for f in all_set if 'DMT' in f.name.upper()])
+                                ec = len([f for f in all_set if 'EC' in f.name.upper()])
+                                eo = len([f for f in all_set if 'EO' in f.name.upper()])
+                                total = dmt + ec + eo
+                                ui.notify(f'Flat: DMT={dmt}, EC={ec}, EO={eo} .set files', type='info')
+                                pipeline_log(f"[INPUT] Scanned {p}: Flat - DMT={dmt}, EC={ec}, EO={eo} .set files")
                         else:
                             ui.notify('Directory not found', type='warning')
                     
                     ui.button(icon='search', on_click=scan_input_dir).props('flat dense size=sm')
                 
-                ui.label('Directorio con subcarpetas DMT/, EC/, EO/ y archivos .set').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem; margin-left: 68px;')
+                ui.label('Directorio con DMT/, EC/, EO/ o archivos .set con condición en nombre').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem; margin-left: 68px;')
                 
                 # Mutable container for input dir
                 current_input_dir = [DEFAULT_INPUT_DIR]

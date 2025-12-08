@@ -21,6 +21,8 @@ class State:
         self.view_duration = 5.0
         self.is_playing = False
         self.scale_factor = 1.0
+        self.playback_speed = 1.0
+        self.playback_reverse = False
         
         # Filter settings
         self.notch_freq = 50.0
@@ -38,6 +40,12 @@ class State:
         
         # Current amplitudes
         self.current_amplitudes = {}
+        
+        # Fixed axis ranges (calculated on load)
+        self.fft_y_max = None  # Max Y for FFT plot
+        self.fft_y_max2 = None  # Max Y for FFT2 plot
+        self.hilbert_amp_max = None  # Max amplitude for Hilbert envelope
+        self.hilbert_amp_max2 = None  # Max amplitude for Hilbert2 envelope
         
         # UI references
         self.eeg_plot = None

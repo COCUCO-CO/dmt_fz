@@ -97,12 +97,26 @@ def apply_notch_filter(raw: mne.io.Raw, freq: float = 50.0,
             freqs.append(harmonic)
             harmonic += freq
     
-    raw_filtered.notch_filter(
-        freqs=freqs,
-        filter_length='auto',
-        notch_widths=freq / quality,
-        verbose=False
-    )
+    # Calculate appropriate filter length for signal
+    n_samples = raw.n_times
+    sfreq = raw.info['sfreq']
+    
+    # For short signals, use shorter filter or IIR
+    if n_samples < 5000:
+        # Use IIR filter for short signals (no length issues)
+        raw_filtered.notch_filter(
+            freqs=freqs,
+            method='iir',
+            notch_widths=freq / quality,
+            verbose=False
+        )
+    else:
+        raw_filtered.notch_filter(
+            freqs=freqs,
+            filter_length='auto',
+            notch_widths=freq / quality,
+            verbose=False
+        )
     
     return raw_filtered
 
@@ -125,13 +139,24 @@ def apply_bandpass_filter(raw: mne.io.Raw,
     """
     raw_filtered = raw.copy()
     
-    raw_filtered.filter(
-        l_freq=l_freq,
-        h_freq=h_freq,
-        method=method,
-        filter_length='auto',
-        verbose=False
-    )
+    # For short signals, use IIR filter to avoid filter length issues
+    n_samples = raw.n_times
+    if n_samples < 5000:
+        method = 'iir'
+        raw_filtered.filter(
+            l_freq=l_freq,
+            h_freq=h_freq,
+            method=method,
+            verbose=False
+        )
+    else:
+        raw_filtered.filter(
+            l_freq=l_freq,
+            h_freq=h_freq,
+            method=method,
+            filter_length='auto',
+            verbose=False
+        )
     
     return raw_filtered
 

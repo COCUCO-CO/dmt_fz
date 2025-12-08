@@ -44,7 +44,8 @@ from .epochs import (
 )
 from .export import (
     ExportFormat, export_cleaned_eeg, export_epochs,
-    export_preprocessing_log, create_export_bundle
+    export_preprocessing_log, create_export_bundle,
+    get_pipeline_compatible_name
 )
 
 # Import from parent
@@ -1646,8 +1647,8 @@ def render_export_controls():
     
     with ui.element('div').classes('control-section'):
         fmt = ui.select(
-            {f.value: f.display_name for f in [ExportFormat.FIF, ExportFormat.SET, ExportFormat.EDF]},
-            value=ExportFormat.FIF.value,
+            {f.value: f.display_name for f in [ExportFormat.SET, ExportFormat.FIF, ExportFormat.EDF]},
+            value=ExportFormat.SET.value,  # SET by default for pipeline compatibility
             label='Export Format'
         ).props('dense outlined').classes('w-64')
         
@@ -1668,11 +1669,11 @@ def render_export_controls():
             else:
                 ui.label(f'Error: {PS._export_all_path}').style(f'color: {THEME_ERROR}; font-size: 0.7rem;')
     
-    # Export Epochs Only button with indicator
+    # Export Epochs Only button with indicator (uses same format as Export All)
     if PS.epoch_result and PS.epoch_result.epochs:
         with ui.column().classes('gap-1 mt-3'):
             with ui.row().classes('items-center gap-2'):
-                ui.button('Export Epochs Only', icon='view_module', on_click=lambda: export_epochs_only(out_dir.value)).props('dense outlined')
+                ui.button('Export Epochs (.set)', icon='view_module', on_click=lambda: export_epochs_only(out_dir.value, ExportFormat(fmt.value))).props('dense outlined')
                 if PS._export_epochs_result is not None:
                     if PS._export_epochs_result:
                         ui.icon('check_circle', size='xs').style(f'color: {THEME_PRIMARY};')
@@ -2201,17 +2202,27 @@ def export_all(out_dir: str, fmt: ExportFormat):
         safe_notify(f'Export error: {e}', type='negative')
 
 
-def export_epochs_only(out_dir: str):
+def export_epochs_only(out_dir: str, fmt: ExportFormat = ExportFormat.SET):
+    """Export epochs in the specified format (default: SET for pipeline compatibility)."""
     if PS.epoch_result is None or PS.epoch_result.epochs is None:
         safe_notify('No epochs to export', type='warning')
         return
     try:
-        base_name = PS.cleaning.filename.rsplit('.', 1)[0] if PS.cleaning.filename else 'epochs'
-        output_path = export_epochs(PS.epoch_result.epochs, Path(out_dir), base_name)
+        # Generate pipeline-compatible name from original filename
+        original_name = PS.cleaning.filename if PS.cleaning.filename else 'epochs'
+        base_name = get_pipeline_compatible_name(original_name)
+        
+        # Export in the requested format (SET for pipeline, NPY as extra)
+        formats = [fmt]
+        if fmt != ExportFormat.NPY:
+            formats.append(ExportFormat.NPY)  # Always include NPY for convenience
+        output_paths = export_epochs(PS.epoch_result.epochs, Path(out_dir), base_name, formats=formats)
         PS._export_epochs_result = True
-        PS._export_epochs_path = str(output_path) if output_path else out_dir
+        # Show the main format path
+        main_path = output_paths.get(fmt.value, output_paths.get('set', list(output_paths.values())[0] if output_paths else out_dir))
+        PS._export_epochs_path = str(main_path)
         render_step_controls()
-        safe_notify(f'Epochs exported to {out_dir}', type='positive')
+        safe_notify(f'Exported: {base_name}.{fmt.value}', type='positive')
     except Exception as e:
         PS._export_epochs_result = False
         PS._export_epochs_path = str(e)

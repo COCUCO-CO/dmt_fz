@@ -200,40 +200,51 @@ def _update_eeg_generic(eeg_plot, eeg_data, channels, use_secondary=False, updat
     
     try:
         data, times, chs = get_channel_data(eeg_data, valid_channels, S.view_start, S.view_duration)
-        data = process_data(data, eeg_data.sfreq) * 1e6
+        data = process_data(data, eeg_data.sfreq) * 1e6  # Convert to µV
         n = len(chs)
         
-        # Normalize and compute amplitudes
-        norm = np.zeros_like(data)
-        for i in range(n):
-            std = np.std(data[i])
-            amp = np.sqrt(np.mean(data[i]**2))
-            if amplitudes_dict is not None:
-                amplitudes_dict[chs[i]] = amp
-            norm[i] = data[i] / (std * 3) if std > 0 else data[i]
+        # Adjust spacing based on number of channels (like cleaner)
+        spacing_factor = 0.35 if n <= 16 else (0.25 if n <= 24 else 0.2)
+        spacing_factor *= S.scale_factor
         
-        spacing = 2.0 * S.scale_factor
-        colors = _SECONDARY_COLORS if use_secondary else _PRIMARY_COLORS
-        
-        y_min = -spacing
-        y_max = n * spacing
+        # Color scheme - white for primary (clean look), pink for secondary
+        if use_secondary:
+            signal_color = 'rgba(244, 114, 182, 0.7)'  # Pink
+        else:
+            signal_color = 'rgba(255, 255, 255, 0.6)'  # White (like cleaner)
         
         with eeg_plot:
             eeg_plot.figure.data = []
+            y_ticks = []
+            y_labels = []
+            
             for i in range(n):
-                off = (n - 1 - i) * spacing
+                offset = (n - 1 - i)
+                y = data[i]
+                # Better normalization (like cleaner) - robust to outliers
+                y_norm = (y - np.mean(y)) / (np.std(y) + 1e-10) * spacing_factor + offset
+                
+                # Compute amplitude for brain plot
+                amp = np.sqrt(np.mean(y**2))
+                if amplitudes_dict is not None:
+                    amplitudes_dict[chs[i]] = amp
+                
+                y_ticks.append(offset)
+                y_labels.append(chs[i])
+                
                 eeg_plot.figure.add_trace(go.Scatter(
-                    x=times, y=norm[i] + off, name=chs[i],
-                    line=dict(color=colors[i % len(colors)], width=1),
+                    x=times, y=y_norm, name=chs[i],
+                    line=dict(color=signal_color, width=1),
                     hovertemplate=f'{chs[i]}: %{{customdata:.1f}} µV<extra></extra>',
-                    customdata=data[i]
+                    customdata=y
                 ))
+            
             eeg_plot.figure.update_layout(
                 yaxis=dict(
                     tickmode='array',
-                    tickvals=[(n-1-i)*spacing for i in range(n)],
-                    ticktext=chs,
-                    range=[y_min, y_max],
+                    tickvals=y_ticks,
+                    ticktext=y_labels,
+                    range=[-0.5, n - 0.5],
                     fixedrange=True
                 )
             )
@@ -252,6 +263,70 @@ def update_eeg():
     _update_eeg_generic(S.eeg_plot, S.eeg_data, S.selected_channels, 
                         use_secondary=False, update_time_label=True, 
                         amplitudes_dict=S.current_amplitudes)
+
+def calculate_fixed_ranges(eeg_data, is_secondary=False):
+    """Calculate fixed axis ranges for FFT and Hilbert plots based on full EEG."""
+    if not eeg_data:
+        return
+    
+    try:
+        # Get EEG channels
+        eeg_chs = [ch for ch, t in eeg_data.channel_types.items() if t == 'eeg'][:5]
+        if not eeg_chs:
+            return
+        
+        fft_values = []
+        hilbert_values = []
+        
+        # Sample 10 segments across the recording for better estimation
+        duration = eeg_data.duration_sec
+        num_samples = min(10, int(duration / 5))  # Sample every ~5 seconds, max 10
+        
+        for i in range(num_samples):
+            start = (duration / (num_samples + 1)) * (i + 1)
+            try:
+                seg_duration = min(5.0, duration - start)
+                if seg_duration <= 0:
+                    continue
+                    
+                data, times, _ = get_channel_data(eeg_data, eeg_chs, start, seg_duration)
+                data = data * 1e6  # to µV
+                
+                # FFT values
+                freqs, fft_v = compute_fft(data, eeg_data.sfreq)
+                mask = freqs <= 60
+                fft_v = fft_v[:, mask]
+                fft_values.append(np.max(fft_v))
+                
+                # Hilbert envelope max (use first channel)
+                amp, _ = compute_hilbert(data[0])
+                hilbert_values.extend([np.max(np.abs(data[0])), np.max(amp)])
+            except Exception as e:
+                pass
+        
+        # Use 95th percentile for robust estimation (handles outliers)
+        if fft_values:
+            max_fft = np.percentile(fft_values, 95) * 1.3
+        else:
+            max_fft = 50
+            
+        if hilbert_values:
+            max_hilbert = np.percentile(hilbert_values, 95) * 1.3
+        else:
+            max_hilbert = 100
+        
+        # Store calculated ranges
+        if is_secondary:
+            S.fft_y_max2 = max_fft
+            S.hilbert_amp_max2 = max_hilbert
+        else:
+            S.fft_y_max = max_fft
+            S.hilbert_amp_max = max_hilbert
+            
+        print(f"Calculated ranges for EEG{'2' if is_secondary else '1'}: FFT={max_fft:.1f}, Hilbert={max_hilbert:.1f}")
+    except Exception as e:
+        print(f"Error calculating ranges: {e}")
+
 
 def _update_fft_generic(fft_plot, eeg_data, channels, use_secondary=False):
     """Generic FFT update function for both EEG1 and EEG2."""
@@ -272,6 +347,16 @@ def _update_fft_generic(fft_plot, eeg_data, channels, use_secondary=False):
         colors = _SECONDARY_COLORS[:5] if use_secondary else _PRIMARY_COLORS[:5]
         fills = _SECONDARY_FFT_FILLS if use_secondary else _PRIMARY_FFT_FILLS
         
+        # Use pre-calculated fixed range, or compute if not available
+        y_max = S.fft_y_max2 if use_secondary else S.fft_y_max
+        if y_max is None or y_max <= 0:
+            y_max = np.max(fft_v) * 1.2 if fft_v.size > 0 else 50
+            # Store for next time
+            if use_secondary:
+                S.fft_y_max2 = y_max
+            else:
+                S.fft_y_max = y_max
+        
         with fft_plot:
             fft_plot.figure.data = []
             for i, ch in enumerate(chs[:5]):
@@ -280,6 +365,8 @@ def _update_fft_generic(fft_plot, eeg_data, channels, use_secondary=False):
                     line=dict(color=colors[i % len(colors)], width=1.5),
                     fill='tozeroy', fillcolor=fills[i % len(fills)]
                 ))
+            # Apply fixed y-axis range (calculated once per EEG)
+            fft_plot.figure.update_layout(yaxis=dict(range=[0, y_max], fixedrange=True))
             fft_plot.update()
     except Exception as e:
         print(f"FFT{'2' if use_secondary else ''} error: {e}")
@@ -315,12 +402,25 @@ def _update_hilbert_generic(hilbert_plot, eeg_data, selected_channels, hilbert_c
         else:
             signal_color, envelope_color, phase_color = THEME_SECONDARY, THEME_PRIMARY, THEME_WARN
         
+        # Use pre-calculated fixed range, or compute if not available
+        amp_max = S.hilbert_amp_max2 if use_secondary else S.hilbert_amp_max
+        if amp_max is None or amp_max <= 0:
+            amp_max = np.max(np.abs(data)) * 1.2 if data.size > 0 else 100
+            # Store for next time
+            if use_secondary:
+                S.hilbert_amp_max2 = amp_max
+            else:
+                S.hilbert_amp_max = amp_max
+        
         with hilbert_plot:
             hilbert_plot.figure.data = []
             hilbert_plot.figure.add_trace(go.Scatter(x=times, y=data, name='Signal', line=dict(color=signal_color, width=1)), row=1, col=1)
             hilbert_plot.figure.add_trace(go.Scatter(x=times, y=amp, name='Envelope', line=dict(color=envelope_color, width=2)), row=1, col=1)
             hilbert_plot.figure.add_trace(go.Scatter(x=times, y=-amp, showlegend=False, line=dict(color=envelope_color, width=2)), row=1, col=1)
             hilbert_plot.figure.add_trace(go.Scatter(x=times, y=phase, name='Phase', line=dict(color=phase_color, width=1)), row=2, col=1)
+            # Apply fixed y-axis ranges (calculated once per EEG)
+            hilbert_plot.figure.update_yaxes(range=[-amp_max, amp_max], row=1, col=1)
+            hilbert_plot.figure.update_yaxes(range=[-np.pi * 1.1, np.pi * 1.1], row=2, col=1)  # Phase is always -π to π
             hilbert_plot.update()
     except Exception as e:
         print(f"Hilbert{'2' if use_secondary else ''} error: {e}")
@@ -403,7 +503,22 @@ def update_brain():
     """Update primary brain topography plot."""
     _update_brain_generic(S.brain_plot, S.eeg_data, S.selected_channels, S.current_amplitudes, use_secondary=False)
 
+def clamp_view_to_both_eegs():
+    """Clamp view_start to be valid for both EEGs in compare mode."""
+    if S.eeg_data:
+        max_start1 = max(0, S.eeg_data.duration_sec - S.view_duration)
+        S.view_start = min(S.view_start, max_start1)
+    
+    if S.compare_mode and S.eeg_data2:
+        max_start2 = max(0, S.eeg_data2.duration_sec - S.view_duration)
+        S.view_start = min(S.view_start, max_start2)
+    
+    S.view_start = max(0, S.view_start)
+
 def update_all():
+    # Ensure view position is valid for both EEGs
+    clamp_view_to_both_eegs()
+    
     update_eeg()
     update_fft()
     update_hilbert()
@@ -521,6 +636,7 @@ def refresh_info():
 # Navigation
 def nav_start():
     S.view_start = 0
+    S.is_playing = False
     update_all()
 
 def nav_back():
@@ -535,6 +651,7 @@ def nav_fwd():
 def nav_end():
     if S.eeg_data:
         S.view_start = S.eeg_data.duration_sec - S.view_duration
+    S.is_playing = False
     update_all()
 
 def set_win(d):
@@ -543,11 +660,38 @@ def set_win(d):
 
 async def toggle_play():
     S.is_playing = not S.is_playing
+    S.playback_reverse = False
+    if S.is_playing:
+        await run_playback()
+
+async def toggle_play_reverse():
+    S.is_playing = not S.is_playing
+    S.playback_reverse = True
+    if S.is_playing:
+        await run_playback()
+
+async def toggle_play_fast():
+    S.is_playing = not S.is_playing
+    S.playback_reverse = False
+    old_speed = S.playback_speed
+    S.playback_speed = 4.0
+    if S.is_playing:
+        await run_playback()
+    S.playback_speed = old_speed
+
+async def run_playback():
     while S.is_playing and S.eeg_data:
-        S.view_start += S.view_duration * 0.08
-        if S.view_start >= S.eeg_data.duration_sec - S.view_duration:
-            S.is_playing = False
-            break
+        step = S.view_duration * 0.08 * S.playback_speed
+        if S.playback_reverse:
+            S.view_start = max(0, S.view_start - step)
+            if S.view_start <= 0:
+                S.is_playing = False
+                break
+        else:
+            S.view_start = min(S.eeg_data.duration_sec - S.view_duration, S.view_start + step)
+            if S.view_start >= S.eeg_data.duration_sec - S.view_duration:
+                S.is_playing = False
+                break
         update_all()
         await asyncio.sleep(0.1)
 
@@ -651,6 +795,8 @@ def main_content():
                             S.eeg_data2 = loaded
                             ui.notify(f'EEG 2: {loaded.filename}', type='positive')
                             S.compare_mode = True
+                            # Calculate fixed axis ranges for EEG 2
+                            calculate_fixed_ranges(loaded, is_secondary=True)
                         else:
                             S.eeg_data = loaded
                             eeg_chs = [ch for ch, t in loaded.channel_types.items() if t == 'eeg']
@@ -662,6 +808,8 @@ def main_content():
                             ui.notify(f'EEG 1: {loaded.filename}', type='positive')
                             refresh_channels()
                             refresh_hilbert_select()
+                            # Calculate fixed axis ranges for EEG 1
+                            calculate_fixed_ranges(loaded, is_secondary=False)
                         
                         refresh_info()
                         update_all()
@@ -846,20 +994,40 @@ def main_content():
                     ui.label('▌EEG 2').style(f'color:#f472b6; font-family: JetBrains Mono; font-size: 0.8rem; letter-spacing: 1px;').classes('mb-1')
                     S.eeg_plot2 = ui.plotly(make_eeg_fig(use_eeg2=True)).classes('w-full')
             
-            # Navigation (shared)
+            # Navigation (shared) - Layout like cleaner
             with ui.card().classes('dark-card p-2'):
-                with ui.row().classes('items-center justify-center gap-2'):
-                    ui.button(icon='skip_previous', on_click=nav_start).props('round dense size=sm')
-                    ui.button(icon='fast_rewind', on_click=nav_back).props('round dense size=sm')
-                    ui.button(icon='play_arrow', on_click=toggle_play).props('round dense size=sm color=red')
-                    ui.button(icon='fast_forward', on_click=nav_fwd).props('round dense size=sm')
-                    ui.button(icon='skip_next', on_click=nav_end).props('round dense size=sm')
+                with ui.row().classes('items-center justify-center gap-1'):
+                    # Go to start
+                    ui.button(icon='first_page', on_click=nav_start).props('flat dense round size=sm').tooltip('Go to start')
+                    
+                    # Play reverse
+                    ui.button(icon='fast_rewind', on_click=toggle_play_reverse).props('flat dense round size=sm').tooltip('Play reverse')
+                    
+                    # Previous segment
+                    ui.button(icon='chevron_left', on_click=nav_back).props('flat dense round size=sm').tooltip('Previous segment')
+                    
+                    # Play/Pause
+                    ui.button(icon='play_arrow', on_click=toggle_play).props('flat dense round size=sm color=red').tooltip('Play/Pause')
+                    
+                    # Next segment
+                    ui.button(icon='chevron_right', on_click=nav_fwd).props('flat dense round size=sm').tooltip('Next segment')
+                    
+                    # Fast forward
+                    ui.button(icon='fast_forward', on_click=toggle_play_fast).props('flat dense round size=sm').tooltip('Fast forward (4x)')
+                    
+                    # Go to end
+                    ui.button(icon='last_page', on_click=nav_end).props('flat dense round size=sm').tooltip('Go to end')
+                    
                     ui.separator().props('vertical').classes('mx-2')
-                    ui.button('2s', on_click=lambda: set_win(2)).props('dense size=xs')
-                    ui.button('5s', on_click=lambda: set_win(5)).props('dense size=xs')
-                    ui.button('10s', on_click=lambda: set_win(10)).props('dense size=xs')
-                    ui.button('20s', on_click=lambda: set_win(20)).props('dense size=xs')
+                    
+                    # Window duration buttons
+                    ui.button('2s', on_click=lambda: set_win(2)).props('dense outline size=xs')
+                    ui.button('5s', on_click=lambda: set_win(5)).props('dense outline size=xs')
+                    ui.button('10s', on_click=lambda: set_win(10)).props('dense outline size=xs')
+                    ui.button('20s', on_click=lambda: set_win(20)).props('dense outline size=xs')
+                    
                     ui.separator().props('vertical').classes('mx-2')
+                    
                     S.time_label = ui.label('0:00.0 / 0:00.0').classes('text-sm font-mono opacity-70')
             
             # TOPOGRAPHY ROW

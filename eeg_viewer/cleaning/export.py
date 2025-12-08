@@ -31,6 +31,76 @@ def _convert_numpy_types(obj):
     return obj
 
 
+import re
+
+def get_pipeline_compatible_name(filename: str) -> str:
+    """
+    Generate a pipeline-compatible filename from the original filename.
+    
+    Pipeline expects: Subject_Condition.set (e.g., S01_DMT.set)
+    
+    Extracts subject ID and condition from filenames like:
+    - S01-DMT.bdf -> S01_DMT
+    - S01_DMT.set -> S01_DMT
+    - S01-DMT-raw.fif -> S01_DMT
+    - sub-01_task-DMT_eeg.bdf -> sub-01_DMT
+    - Subject01_condition_DMT.bdf -> Subject01_DMT
+    
+    If pattern not recognized, returns cleaned version of original name.
+    """
+    # Remove extension
+    base = Path(filename).stem
+    
+    # Remove common suffixes added by processing
+    for suffix in ['_raw', '-raw', '_cleaned', '-cleaned', '_epo', '-epo', '_ICA_pruned', '_ica']:
+        base = re.sub(rf'{suffix}$', '', base, flags=re.IGNORECASE)
+    
+    # Try to extract subject and condition
+    conditions = ['DMT', 'EC', 'EO']
+    
+    # Pattern 1: S01-DMT or S01_DMT format
+    match = re.match(r'^(S\d+)[-_](\w+)', base, re.IGNORECASE)
+    if match:
+        subject = match.group(1).upper()
+        rest = match.group(2).upper()
+        # Check if rest contains a condition
+        for cond in conditions:
+            if cond in rest:
+                return f"{subject}_{cond}"
+    
+    # Pattern 2: sub-XX_task-CONDITION format (BIDS-like)
+    match = re.match(r'^(sub-\d+).*?(DMT|EC|EO)', base, re.IGNORECASE)
+    if match:
+        subject = match.group(1)
+        condition = match.group(2).upper()
+        return f"{subject}_{condition}"
+    
+    # Pattern 3: Any filename containing a condition
+    base_upper = base.upper()
+    for cond in conditions:
+        if cond in base_upper:
+            # Try to extract subject number
+            subj_match = re.search(r'(S?\d+)', base)
+            if subj_match:
+                subj = subj_match.group(1)
+                if not subj.upper().startswith('S'):
+                    subj = f"S{subj.zfill(2)}"
+                return f"{subj.upper()}_{cond}"
+            else:
+                # No subject number found, use cleaned base name
+                # Remove timestamps and extra info
+                clean = re.sub(r'_?\d{8}[-_]\d{6}', '', base)  # Remove timestamps
+                clean = re.sub(r'[-_]+(cleaned|raw|epo|ica)[-_]*', '_', clean, flags=re.IGNORECASE)
+                clean = re.sub(r'[-_]+', '_', clean).strip('_')
+                return clean
+    
+    # No condition found - return cleaned original name
+    clean = re.sub(r'_?\d{8}[-_]\d{6}', '', base)  # Remove timestamps
+    clean = re.sub(r'[-_]+(cleaned|raw|epo|ica)[-_]*', '_', clean, flags=re.IGNORECASE)
+    clean = re.sub(r'[-_]+', '_', clean).strip('_')
+    return clean if clean else base
+
+
 class ExportFormat(Enum):
     """Supported export formats."""
     FIF = "fif"      # MNE native format

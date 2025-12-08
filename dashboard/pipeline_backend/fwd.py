@@ -90,7 +90,12 @@ def get_bem():
 # =============================================================================
 
 def scan_files(data_root):
-    """Scan for .set files in the data directory."""
+    """Scan for .set files in the data directory.
+    
+    Supports two structures:
+    1. Subdirectory structure: data_root/DMT/*.set, data_root/EC/*.set, data_root/EO/*.set
+    2. Flat structure: data_root/*DMT*.set, data_root/*EC*.set, data_root/*EO*.set
+    """
     eo_dir = data_root / "EO"
     ec_dir = data_root / "EC"
     dmt_dir = data_root / "DMT"
@@ -98,6 +103,17 @@ def scan_files(data_root):
     dmt_files = sorted(dmt_dir.glob("*.set")) if dmt_dir.exists() else []
     ec_files = sorted(ec_dir.glob("*.set")) if ec_dir.exists() else []
     eo_files = sorted(eo_dir.glob("*.set")) if eo_dir.exists() else []
+    
+    # Also check flat structure (files in root with condition in filename)
+    if not dmt_files and not ec_files and not eo_files:
+        for f in sorted(data_root.glob("*.set")):
+            name = f.name.upper()
+            if 'DMT' in name:
+                dmt_files.append(f)
+            elif 'EC' in name:
+                ec_files.append(f)
+            elif 'EO' in name:
+                eo_files.append(f)
     
     return {
         "DMT": dmt_files,
@@ -127,9 +143,18 @@ lambda2 = 1. / snr ** 2
 def _prepare_epochs(epochs):
     """Prepare epochs for source localization."""
     epochs = epochs.copy()
+    
+    # Drop non-EEG channels (Status, STI, etc.)
+    non_eeg = [ch for ch in epochs.ch_names if ch.upper() in ['STATUS', 'STI 014', 'STI014', 'TRIGGER']]
+    if non_eeg:
+        epochs.drop_channels(non_eeg)
+    
+    # Pick only EEG channels
     epochs.pick('eeg')
     epochs.apply_baseline((None, None), verbose=False)
-    epochs.set_montage('standard_1020')
+    
+    # Set montage, ignoring channels not in standard 10-20
+    epochs.set_montage('standard_1020', on_missing='ignore')
     epochs.set_eeg_reference(projection=True, verbose=False)
     epochs.apply_proj()
     return epochs
@@ -525,7 +550,12 @@ def save_metadata(output_folder, data_root):
         return
     
     epochs_raw = mne.io.read_epochs_eeglab(str(sample_file), montage_units='dm', verbose=False)
-    epochs = epochs_raw.set_montage('standard_1020')
+    # Drop non-EEG channels and set montage
+    non_eeg = [ch for ch in epochs_raw.ch_names if ch.upper() in ['STATUS', 'STI 014', 'STI014', 'TRIGGER']]
+    if non_eeg:
+        epochs_raw.drop_channels(non_eeg)
+    epochs_raw.pick('eeg')
+    epochs = epochs_raw.set_montage('standard_1020', on_missing='ignore')
     ch_names = epochs.get_montage().ch_names
     montage_coords_2d = np.array(list(epochs.get_montage()._get_ch_pos().values()))[:, :2]
     
