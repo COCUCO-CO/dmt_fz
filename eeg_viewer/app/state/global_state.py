@@ -33,6 +33,7 @@ class State:
         
         # Hilbert
         self.hilbert_channel = ""
+        self.hilbert_channel2 = ""  # Channel for Hilbert 2
         
         # Epochs
         self.epoch_duration = 2.0
@@ -47,6 +48,7 @@ class State:
         self.fft_diff_y_max = None  # Max Y for FFT difference plot
         self.hilbert_amp_max = None  # Max amplitude for Hilbert envelope
         self.hilbert_amp_max2 = None  # Max amplitude for Hilbert2 envelope
+        self.hilbert_diff_y_max = None  # Max Y for Hilbert difference plot
         
         # UI references
         self.eeg_plot = None
@@ -56,6 +58,8 @@ class State:
         self.fft_diff_plot = None  # FFT difference plot (EEG1 - EEG2)
         self.hilbert_plot = None
         self.hilbert_plot2 = None
+        self.hilbert_diff_plot = None  # Hilbert difference plot (EEG1 - EEG2)
+        self.hilbert_select_container2 = None  # Channel selector for Hilbert 2
         self.brain_plot = None
         self.brain_plot2 = None
         self.time_label = None

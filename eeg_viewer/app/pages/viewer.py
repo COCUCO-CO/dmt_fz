@@ -171,6 +171,31 @@ def make_hilbert_fig(use_eeg2=False):
     return fig
 
 
+def make_hilbert_diff_fig():
+    """Create Hilbert difference figure (EEG1 - EEG2) with envelope and phase subplots."""
+    diff_color = '#a78bfa'  # Purple for difference
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True,
+                        subplot_titles=('<b>ΔENVELOPE</b>', '<b>ΔPHASE</b>'),
+                        vertical_spacing=0.22)
+    fig.update_layout(
+        template='plotly_dark',
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor=PLOT_BG,
+        margin=dict(l=60, r=10, t=35, b=50),
+        height=180,
+        font=dict(family='JetBrains Mono, monospace', size=10, color=THEME_TEXT),
+        showlegend=True,
+        legend=dict(orientation='h', y=1.15, font=dict(size=8, color=THEME_TEXT_DIM)),
+        hovermode='x unified',
+        hoverlabel=dict(bgcolor=THEME_CARD, font=dict(family='JetBrains Mono', size=10))
+    )
+    fig.update_annotations(font=dict(size=9, color=diff_color, family='JetBrains Mono'))
+    fig.update_xaxes(gridcolor=PLOT_GRID, tickfont=dict(size=9, color=THEME_TEXT_DIM), fixedrange=True)
+    fig.update_yaxes(gridcolor=PLOT_GRID, tickfont=dict(size=9, color=THEME_TEXT_DIM), fixedrange=True,
+                    zeroline=True, zerolinecolor='rgba(255,255,255,0.3)', zerolinewidth=1)
+    return fig
+
+
 def make_brain_fig(use_eeg2=False):
     """Create brain topography figure with head outline."""
     fig = go.Figure()
@@ -594,6 +619,7 @@ def update_all():
         update_hilbert2()
         update_brain2()
         update_fft_diff()  # Update FFT difference plot
+        update_hilbert_diff()  # Update Hilbert difference plot
 
 def update_eeg2():
     """Update EEG 2 plot with same time window and channels as EEG 1."""
@@ -682,7 +708,89 @@ def update_fft_diff():
 
 def update_hilbert2():
     """Update Hilbert 2 plot."""
-    _update_hilbert_generic(S.hilbert_plot2, S.eeg_data2, S.selected_channels, S.hilbert_channel, use_secondary=True)
+    ch2 = S.hilbert_channel2 if S.hilbert_channel2 in S.selected_channels else (S.selected_channels[0] if S.selected_channels else None)
+    _update_hilbert_generic(S.hilbert_plot2, S.eeg_data2, S.selected_channels, ch2, use_secondary=True)
+
+def update_hilbert_diff():
+    """Update Hilbert difference plot (EEG1 - EEG2)."""
+    if not S.hilbert_diff_plot or not S.compare_mode or not S.eeg_data or not S.eeg_data2:
+        return
+    
+    if not S.selected_channels:
+        return
+    
+    # Use the channel selected for Hilbert 1
+    ch = S.hilbert_channel if S.hilbert_channel in S.selected_channels else (S.selected_channels[0] if S.selected_channels else None)
+    if not ch:
+        return
+    
+    # Check channel exists in both EEGs
+    if ch not in S.eeg_data.channel_types or ch not in S.eeg_data2.channel_types:
+        return
+    
+    try:
+        # Get Hilbert for EEG1
+        data1, times1, _ = get_channel_data(S.eeg_data, [ch], S.view_start, S.view_duration)
+        data1 = process_data(data1, S.eeg_data.sfreq)[0] * 1e6
+        amp1, phase1 = compute_hilbert(data1)
+        
+        # Get Hilbert for EEG2
+        data2, times2, _ = get_channel_data(S.eeg_data2, [ch], S.view_start, S.view_duration)
+        data2 = process_data(data2, S.eeg_data2.sfreq)[0] * 1e6
+        amp2, phase2 = compute_hilbert(data2)
+        
+        # Interpolate if lengths differ (different sample rates)
+        if len(times1) != len(times2):
+            from scipy import interpolate
+            f_amp = interpolate.interp1d(times2, amp2, kind='linear', fill_value='extrapolate')
+            f_phase = interpolate.interp1d(times2, phase2, kind='linear', fill_value='extrapolate')
+            amp2 = f_amp(times1)
+            phase2 = f_phase(times1)
+            times2 = times1
+        
+        # Calculate differences
+        amp_diff = amp1 - amp2
+        phase_diff = phase1 - phase2
+        # Wrap phase difference to [-π, π]
+        phase_diff = np.arctan2(np.sin(phase_diff), np.cos(phase_diff))
+        
+        # Colors
+        env_color = '#a78bfa'  # Purple
+        phase_color = '#c4b5fd'  # Light purple
+        
+        # Use stored Y max if available, otherwise calculate
+        if S.hilbert_diff_y_max is None or S.hilbert_diff_y_max <= 0:
+            amp_max = np.max(np.abs(amp_diff)) * 1.3 if amp_diff.size > 0 else 10
+            amp_max = max(amp_max, 1)
+            S.hilbert_diff_y_max = amp_max
+            print(f"[HILBERT DIFF] Calculated Y range: ±{amp_max:.1f}")
+        else:
+            amp_max = S.hilbert_diff_y_max
+        
+        with S.hilbert_diff_plot:
+            S.hilbert_diff_plot.figure.data = []
+            
+            # Envelope difference
+            S.hilbert_diff_plot.figure.add_trace(go.Scatter(
+                x=times1, y=amp_diff, name=f'{ch} ΔEnv',
+                line=dict(color=env_color, width=1.5),
+                fill='tozeroy', fillcolor='rgba(167,139,250,0.15)',
+                hovertemplate='%{y:.2f} µV<extra>EEG1-EEG2</extra>'
+            ), row=1, col=1)
+            
+            # Phase difference
+            S.hilbert_diff_plot.figure.add_trace(go.Scatter(
+                x=times1, y=phase_diff, name=f'{ch} ΔPhase',
+                line=dict(color=phase_color, width=1),
+                hovertemplate='%{y:.3f} rad<extra>EEG1-EEG2</extra>'
+            ), row=2, col=1)
+            
+            # Fixed Y axis ranges
+            S.hilbert_diff_plot.figure.update_yaxes(range=[-amp_max, amp_max], row=1, col=1)
+            S.hilbert_diff_plot.figure.update_yaxes(range=[-np.pi * 1.1, np.pi * 1.1], row=2, col=1)
+            S.hilbert_diff_plot.update()
+    except Exception as e:
+        print(f"Hilbert diff error: {e}")
 
 def update_brain2():
     """Update brain topography 2 plot."""
@@ -716,39 +824,46 @@ def toggle_ch(ch):
     S.fft_y_max = None
     S.fft_y_max2 = None
     S.fft_diff_y_max = None
+    S.hilbert_diff_y_max = None
     refresh_channels()
     refresh_hilbert_select()
+    refresh_hilbert_select2()
     update_all()
 
 def select_all_ch():
     if S.eeg_data:
         S.selected_channels = [ch for ch, t in S.eeg_data.channel_types.items() if t == 'eeg']
-        # Reset FFT Y ranges to recalculate for new channel selection
+        # Reset FFT/Hilbert Y ranges to recalculate for new channel selection
         S.fft_y_max = None
         S.fft_y_max2 = None
         S.fft_diff_y_max = None
+        S.hilbert_diff_y_max = None
         refresh_channels()
         refresh_hilbert_select()
+        refresh_hilbert_select2()
         update_all()
 
 def select_10_ch():
     if S.eeg_data:
         S.selected_channels = [ch for ch, t in S.eeg_data.channel_types.items() if t == 'eeg'][:10]
-        # Reset FFT Y ranges to recalculate for new channel selection
+        # Reset FFT/Hilbert Y ranges to recalculate for new channel selection
         S.fft_y_max = None
         S.fft_y_max2 = None
         S.fft_diff_y_max = None
+        S.hilbert_diff_y_max = None
         refresh_channels()
         refresh_hilbert_select()
+        refresh_hilbert_select2()
         update_all()
 
 def clear_ch():
     S.selected_channels = []
     S.current_amplitudes.clear()
-    # Reset FFT Y ranges
+    # Reset FFT/Hilbert Y ranges
     S.fft_y_max = None
     S.fft_y_max2 = None
     S.fft_diff_y_max = None
+    S.hilbert_diff_y_max = None
     refresh_channels()
     update_all()
 
@@ -762,8 +877,23 @@ def refresh_hilbert_select():
             def on_sel(e):
                 S.hilbert_channel = e.value
                 update_hilbert()
+                update_hilbert_diff()  # Also update diff when channel changes
             val = S.hilbert_channel if S.hilbert_channel in S.selected_channels else S.selected_channels[0]
             ui.select(options=S.selected_channels, value=val, on_change=on_sel).props('dense dark').classes('w-24')
+
+def refresh_hilbert_select2():
+    """Refresh Hilbert 2 channel selector."""
+    if not S.hilbert_select_container2:
+        return
+    S.hilbert_select_container2.clear()
+    with S.hilbert_select_container2:
+        if S.selected_channels:
+            ui.label('ch:').style(f'color:{THEME_TEXT_DIM}; font-family: JetBrains Mono; font-size: 0.7rem;')
+            def on_sel2(e):
+                S.hilbert_channel2 = e.value
+                update_hilbert2()
+            val = S.hilbert_channel2 if S.hilbert_channel2 in S.selected_channels else S.selected_channels[0]
+            ui.select(options=S.selected_channels, value=val, on_change=on_sel2).props('dense dark').classes('w-24')
 
 def refresh_info():
     if not S.info_container:
@@ -942,6 +1072,7 @@ def main_content():
                         S.fft_y_max2 = None
                         S.fft_diff_y_max = None
                         S.hilbert_amp_max2 = None
+                        S.hilbert_diff_y_max = None
                         update_all()
                         refresh_info()
                         ui.notify('EEG 2 cleared', type='info')
@@ -958,8 +1089,10 @@ def main_content():
                             ui.notify(f'EEG 2: {loaded.filename}', type='positive')
                             S.compare_mode = True
                             # Calculate fixed axis ranges for EEG 2
-                            S.fft_diff_y_max = None  # Reset diff range for new EEG2
+                            S.fft_diff_y_max = None  # Reset diff ranges for new EEG2
+                            S.hilbert_diff_y_max = None
                             calculate_fixed_ranges(loaded, is_secondary=True)
+                            refresh_hilbert_select2()  # Refresh channel selector for Hilbert 2
                         else:
                             S.eeg_data = loaded
                             eeg_chs = [ch for ch, t in loaded.channel_types.items() if t == 'eeg']
@@ -972,6 +1105,7 @@ def main_content():
                             S.fft_y_max = None
                             S.fft_diff_y_max = None
                             S.hilbert_amp_max = None
+                            S.hilbert_diff_y_max = None
                             ui.notify(f'EEG 1: {loaded.filename}', type='positive')
                             refresh_channels()
                             refresh_hilbert_select()
@@ -1147,6 +1281,7 @@ def main_content():
                         S.fft_diff_y_max = None
                         S.hilbert_amp_max = None
                         S.hilbert_amp_max2 = None
+                        S.hilbert_diff_y_max = None
                         update_all()
                         ui.notify('Filters applied', type='positive')
                     ui.button('Apply', on_click=apply_filt, icon='check').props('dense')
@@ -1243,8 +1378,20 @@ def main_content():
                     S.hilbert_plot = ui.plotly(make_hilbert_fig()).classes('w-full')
                 
                 with ui.card().classes('dark-card p-3 flex-1 min-w-0').bind_visibility_from(S, 'compare_mode'):
-                    ui.label('▌HILBERT 2').style(f'color:#f472b6; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-1')
+                    with ui.row().classes('items-center gap-2 mb-1'):
+                        ui.label('▌HILBERT 2').style(f'color:#f472b6; font-family: JetBrains Mono; font-size: 0.8rem;')
+                        S.hilbert_select_container2 = ui.row().classes('items-center gap-1')
+                        refresh_hilbert_select2()
                     S.hilbert_plot2 = ui.plotly(make_hilbert_fig(use_eeg2=True)).classes('w-full')
+            
+            # HILBERT DIFFERENCE ROW - only visible in compare mode, full width
+            with ui.card().classes('dark-card p-3 w-full').bind_visibility_from(S, 'compare_mode'):
+                with ui.row().classes('items-center gap-2 mb-1'):
+                    ui.label('▌HILBERT DIFF').style('color:#a78bfa; font-family: JetBrains Mono; font-size: 0.8rem;')
+                    ui.label('(EEG1 − EEG2)').style(f'color:{THEME_TEXT_DIM}; font-family: JetBrains Mono; font-size: 0.7rem;')
+                    ui.label('↑ positive = EEG1 higher').style('color:#06b6d4; font-size: 0.65rem; margin-left: auto;')
+                    ui.label('↓ negative = EEG2 higher').style('color:#f472b6; font-size: 0.65rem;')
+                S.hilbert_diff_plot = ui.plotly(make_hilbert_diff_fig()).classes('w-full')
             
             # EPOCHS
             with ui.card().classes('dark-card p-3'):
