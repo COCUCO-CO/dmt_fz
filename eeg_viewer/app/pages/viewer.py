@@ -12,6 +12,7 @@ from config import (
 )
 from eeg_loader import load_eeg_file, get_channel_data, scan_eeg_directory
 from app.state import S
+from app.visualization.components.debug_console import render_debug_toggle, render_debug_console
 from app.visualization.styles.css import STYLE
 from app.visualization import make_eeg_fig, make_fft_fig, make_hilbert_fig, make_brain_fig
 from app.core.signal import (
@@ -458,6 +459,7 @@ def main_with_nav():
         ui.label('▶').style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.75rem; letter-spacing: 2px;')
         ui.label('EEG_VIEWER').classes('text-base font-medium ml-2').style(f'color: {THEME_PRIMARY}; font-family: JetBrains Mono; letter-spacing: 1px;')
         ui.label('v1.0').classes('text-xs ml-2').style(f'color: {THEME_TEXT_DIM}; font-family: JetBrains Mono;')
+        render_debug_toggle()
         with ui.row().classes('ml-auto gap-2'):
             ui.button('VIEWER', on_click=lambda: ui.navigate.to('/')).props('flat dense').style(f'color:{THEME_PRIMARY};')
             ui.button('CLEANER', on_click=lambda: ui.navigate.to('/cleaner')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
@@ -658,4 +660,6 @@ def main_content():
                     ep_lbl = ui.label('Epochs: 0').classes('text-sm')
                     ui.button('Generate', on_click=lambda: ep_lbl.set_text(f'Epochs: {gen_epochs()}'), icon='auto_awesome').props('dense')
                     ui.button('Save Dataset', on_click=save_epochs, icon='save').props('dense color=green')
+    
+    render_debug_console()
 

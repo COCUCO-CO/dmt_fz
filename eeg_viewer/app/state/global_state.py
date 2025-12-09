@@ -168,9 +168,40 @@ class AnalysisState:
         self.layer_info = {'encoder': [], 'decoder': []}
 
 
+class DebugState:
+    """Global debug console state - stores data only, no UI references."""
+    def __init__(self):
+        self.enabled = False
+        self.log_history = []  # List of dicts: {msg, type, source, time}
+        self.max_history = 500
+        self.console_height = 200  # Default height in pixels (100-500)
+        self.last_rendered_count = 0  # Track how many messages were last rendered
+    
+    def add_log(self, msg: str, msg_type: str = 'info', source: str = ''):
+        """Add a log entry to history."""
+        from datetime import datetime
+        self.log_history.append({
+            'msg': msg,
+            'type': msg_type,
+            'source': source,
+            'time': datetime.now().strftime('%H:%M:%S')
+        })
+        if len(self.log_history) > self.max_history:
+            self.log_history = self.log_history[-self.max_history:]
+    
+    def has_new_messages(self) -> bool:
+        """Check if there are new messages since last render."""
+        return len(self.log_history) > self.last_rendered_count
+    
+    def mark_rendered(self):
+        """Mark current message count as rendered."""
+        self.last_rendered_count = len(self.log_history)
+
+
 # Global state instances
 S = State()
 PS = PipelineState()
 MS = ModelState()
 AS = AnalysisState()
+DS = DebugState()
 

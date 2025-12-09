@@ -10,6 +10,7 @@ from config import (
     THEME_WARN, THEME_ERROR, THEME_TEXT, THEME_TEXT_DIM
 )
 from app.state import AS
+from app.visualization.components.debug_console import render_debug_toggle, render_debug_console
 from app.visualization.styles.css import STYLE
 
 AUTOENCODER_DIR = Path(__file__).parent.parent.parent / "machine_learning" / "autoencoder"
@@ -733,6 +734,7 @@ def analysis_page():
         ui.label('▶').style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.75rem;')
         ui.label('EEG_VIEWER').classes('text-base font-medium ml-2').style(f'color: {THEME_PRIMARY}; font-family: JetBrains Mono;')
         ui.label('// ANALYSIS').classes('text-sm ml-3').style(f'color:{THEME_WARN}; font-family: JetBrains Mono;')
+        render_debug_toggle()
         with ui.row().classes('ml-auto gap-2'):
             ui.button('VIEWER', on_click=lambda: ui.navigate.to('/')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
             ui.button('CLEANER', on_click=lambda: ui.navigate.to('/cleaner')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
@@ -1686,5 +1688,5 @@ def analysis_page():
                 import traceback
                 analysis_log(f"Error processing sample: {e}", 'error')
                 analysis_log(traceback.format_exc(), 'error')
-
-
+    
+    render_debug_console()

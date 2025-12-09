@@ -11,6 +11,7 @@ from config import (
     THEME_WARN, THEME_ERROR, THEME_TEXT, THEME_TEXT_DIM
 )
 from app.state import PS
+from app.visualization.components.debug_console import render_debug_toggle, render_debug_console
 from app.visualization.styles.css import STYLE
 
 PIPELINE_DIR = Path(__file__).parent.parent.parent / "dashboard" / "pipeline_backend"
@@ -136,6 +137,7 @@ def pipeline_page():
         ui.label('▶').style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.75rem;')
         ui.label('EEG_PIPELINE').classes('text-base font-medium ml-2').style(f'color: {THEME_PRIMARY}; font-family: JetBrains Mono;')
         ui.label('v1.0').classes('text-xs ml-2').style(f'color: {THEME_TEXT_DIM}; font-family: JetBrains Mono;')
+        render_debug_toggle()
         with ui.row().classes('ml-auto gap-2'):
             ui.button('VIEWER', on_click=lambda: ui.navigate.to('/')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
             ui.button('CLEANER', on_click=lambda: ui.navigate.to('/cleaner')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
@@ -1302,6 +1304,8 @@ def pipeline_page():
                                             def clear_log():
                                                 anim_log.clear()
                                             ui.button('Clear Log', on_click=clear_log, icon='delete').props('dense flat')
+    
+    render_debug_console()
 
 
 # =============================================================================

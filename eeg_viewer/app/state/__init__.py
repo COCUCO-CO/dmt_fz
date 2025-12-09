@@ -11,7 +11,8 @@ from .global_state import (
     PipelineState, 
     ModelState, 
     AnalysisState,
-    S, PS, MS, AS,  # Global instances
+    DebugState,
+    S, PS, MS, AS, DS,  # Global instances
 )
 
 # Aliases for backwards compatibility with tests
@@ -27,7 +28,8 @@ __all__ = [
     'PipelineState',
     'ModelState',
     'AnalysisState',
+    'DebugState',
     # Global instances
-    'S', 'PS', 'MS', 'AS',
+    'S', 'PS', 'MS', 'AS', 'DS',
 ]
 
