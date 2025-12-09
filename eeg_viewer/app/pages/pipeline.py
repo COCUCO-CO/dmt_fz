@@ -599,20 +599,92 @@ def pipeline_page():
                                     ui.label('▌VISUALIZATION').style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.9rem; letter-spacing: 1px;')
                                     
                                     viz_band = ui.select(['Delta', 'Theta', 'Alpha', 'Beta', 'Gamma'], value='Alpha', label='Band').props('dense dark').classes('w-24')
-                                    viz_subject = ui.select([], label='Subject').props('dense dark').classes('w-32')
+                                    viz_condition = ui.select([], label='Condition').props('dense dark').classes('w-28')
+                                    viz_subject = ui.select([], label='Subject').props('dense dark').classes('w-24')
                                     viz_epoch = ui.number(value=0, min=0, max=100, label='Epoch').props('dense').classes('w-20')
                                     
-                                    def load_subjects_from_path(path):
-                                        """Load subjects from given path"""
+                                    def scan_conditions(path):
+                                        """Scan path for available conditions/subdirectories"""
                                         from pathlib import Path
                                         p = Path(path)
-                                        viz_subject.options = []
+                                        
+                                        # Find all phases/syncro files recursively
                                         all_files = list(p.rglob('syncro-*.pkl')) + list(p.rglob('phases-*.pkl'))
-                                        subjects = sorted(list(set([f.stem.split('-')[1] if '-' in f.stem else f.stem for f in all_files])))[:30]
+                                        
+                                        # Detect available conditions from subdirectories and filenames
+                                        conditions = set()
+                                        for f in all_files:
+                                            parent = f.parent.name
+                                            if parent.upper() in ['DMT', 'EC', 'EO']:
+                                                conditions.add(parent.upper())
+                                            parts = f.stem.split('-')
+                                            if len(parts) >= 3:
+                                                conditions.add(parts[-1].upper())
+                                        
+                                        # Store all files for later use
+                                        viz_state['all_files'] = all_files
+                                        viz_state['conditions'] = sorted(list(conditions))
+                                        
+                                        return sorted(list(conditions))
+                                    
+                                    def update_subjects_for_condition(condition):
+                                        """Update subject list based on selected condition"""
+                                        all_files = viz_state.get('all_files', [])
+                                        
+                                        # Filter files by condition
+                                        if condition:
+                                            filtered_files = [f for f in all_files if 
+                                                f.parent.name.upper() == condition.upper() or 
+                                                f.stem.upper().endswith(f'-{condition.upper()}')]
+                                        else:
+                                            filtered_files = all_files
+                                        
+                                        # Extract unique subject IDs (without condition suffix)
+                                        subjects = set()
+                                        for f in filtered_files:
+                                            parts = f.stem.split('-')
+                                            if len(parts) >= 2:
+                                                subjects.add(parts[1])  # Just the subject ID: S01, S02, etc.
+                                        
+                                        subjects = sorted(list(subjects))[:50]
                                         viz_subject.options = subjects
                                         if subjects:
-                                            viz_subject.value = subjects[0]
-                                        ui.notify(f'Found {len(subjects)} subjects in {p.name}', type='info')
+                                            # Keep current subject if available, otherwise select first
+                                            if viz_subject.value not in subjects:
+                                                viz_subject.value = subjects[0]
+                                        else:
+                                            viz_subject.value = None
+                                        
+                                        return subjects
+                                    
+                                    def load_subjects_from_path(path):
+                                        """Load conditions and subjects from given path"""
+                                        from pathlib import Path
+                                        p = Path(path)
+                                        
+                                        # Scan for conditions
+                                        conditions = scan_conditions(p)
+                                        
+                                        # Update condition selector
+                                        viz_condition.options = conditions
+                                        if conditions:
+                                            if viz_condition.value not in conditions:
+                                                viz_condition.value = conditions[0]
+                                            # Update subjects for current condition
+                                            subjects = update_subjects_for_condition(viz_condition.value)
+                                            ui.notify(f'Found {len(conditions)} conditions, {len(subjects)} subjects in {p.name}', type='info')
+                                        else:
+                                            viz_condition.value = None
+                                            viz_subject.options = []
+                                            ui.notify(f'No data found in {p.name}', type='warning')
+                                    
+                                    def on_condition_change():
+                                        """Update subjects when condition changes"""
+                                        if viz_condition.value:
+                                            update_subjects_for_condition(viz_condition.value)
+                                            refresh_all_plots()
+                                    
+                                    viz_condition.on('update:model-value', lambda e: on_condition_change())
                                     
                                     def load_subjects():
                                         path = viz_state.get('custom_path') or current_run_dir[0]
@@ -626,19 +698,41 @@ def pipeline_page():
                                     # Function to refresh all plots when parameters change
                                     def refresh_all_plots():
                                         """Refresh all visualizations with current parameters"""
-                                        # Load data for current subject
+                                        # Load data for current subject and condition
                                         data_path = viz_state.get('custom_path') or current_run_dir[0]
-                                        if data_path and viz_subject.value:
+                                        subj_id = viz_subject.value  # e.g., "S01"
+                                        condition = viz_condition.value  # e.g., "DMT"
+                                        
+                                        if data_path and subj_id and condition:
                                             import pickle
                                             from pathlib import Path
                                             try:
-                                                files = list(Path(data_path).rglob(f'*{viz_subject.value}*.pkl'))
+                                                # Search for files matching subject and condition
+                                                search_pattern = f'*{subj_id}*{condition}*.pkl'
+                                                
+                                                # Prioritize phases-*.pkl files (have kuramoto_stc, phases_stc, etc.)
+                                                all_files = list(Path(data_path).rglob(search_pattern))
+                                                phases_files = [f for f in all_files if f.name.startswith('phases-') or f.name.startswith('syncro-')]
+                                                files = phases_files if phases_files else all_files
+                                                
+                                                # Filter by condition subdirectory or filename
+                                                cond_files = [f for f in files if 
+                                                    f.parent.name.upper() == condition.upper() or 
+                                                    condition.upper() in f.stem.upper()]
+                                                if cond_files:
+                                                    files = cond_files
+                                                
                                                 if files:
                                                     with open(files[0], 'rb') as f:
                                                         viz_state['data'] = pickle.load(f)
                                                     viz_state['file'] = files[0]
+                                                    viz_state['current_condition'] = condition
+                                                    viz_state['current_subject'] = subj_id
                                                     viz_status.text = f'Loaded: {files[0].name}'
                                                     viz_status.style(f'color:{THEME_PRIMARY}; font-size: 0.7rem;')
+                                                else:
+                                                    viz_status.text = f'No file found for {subj_id}-{condition}'
+                                                    viz_status.style(f'color:{THEME_WARN}; font-size: 0.7rem;')
                                             except Exception as e:
                                                 viz_status.text = f'Error: {e}'
                                         
@@ -694,8 +788,25 @@ def pipeline_page():
                                                     # Try to load data from custom path or run dir
                                                     data = viz_state.get('data')
                                                     data_path = viz_state.get('custom_path') or current_run_dir[0]
-                                                    if data_path and viz_subject.value:
-                                                        files = list(data_path.rglob(f'*{viz_subject.value}*.pkl'))
+                                                    subj_id = viz_subject.value  # e.g., "S01"
+                                                    condition = viz_condition.value  # e.g., "DMT"
+                                                    
+                                                    if data_path and subj_id and condition:
+                                                        # Search for files matching subject and condition
+                                                        search_pattern = f'*{subj_id}*{condition}*.pkl'
+                                                        
+                                                        # Prioritize phases-*.pkl files (have kuramoto_stc, phases_stc, etc.)
+                                                        all_files = list(data_path.rglob(search_pattern))
+                                                        phases_files = [f for f in all_files if f.name.startswith('phases-') or f.name.startswith('syncro-')]
+                                                        files = phases_files if phases_files else all_files
+                                                        
+                                                        # Filter by condition subdirectory or filename
+                                                        cond_files = [f for f in files if 
+                                                            f.parent.name.upper() == condition.upper() or 
+                                                            condition.upper() in f.stem.upper()]
+                                                        if cond_files:
+                                                            files = cond_files
+                                                        
                                                         if files:
                                                             with open(files[0], 'rb') as f:
                                                                 data = pickle.load(f)
