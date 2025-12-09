@@ -647,9 +647,15 @@ def update_fft_diff():
         # Colors - gradient from cyan (EEG1 higher) to pink (EEG2 higher)
         diff_colors = ['#06b6d4', '#22d3ee', '#a78bfa', '#f472b6', '#ec4899']
         
-        # Calculate y range
-        max_abs = np.max(np.abs(fft_diff)) * 1.2 if fft_diff.size > 0 else 10
-        max_abs = max(max_abs, 1)
+        # Use stored Y max if available, otherwise calculate from current data
+        if S.fft_diff_y_max is None or S.fft_diff_y_max <= 0:
+            # Calculate and store
+            max_abs = np.max(np.abs(fft_diff)) * 1.3 if fft_diff.size > 0 else 10
+            max_abs = max(max_abs, 1)
+            S.fft_diff_y_max = max_abs
+            print(f"[FFT DIFF] Calculated Y range: ±{max_abs:.1f}")
+        else:
+            max_abs = S.fft_diff_y_max
         
         with S.fft_diff_plot:
             S.fft_diff_plot.figure.data = []
@@ -666,7 +672,7 @@ def update_fft_diff():
                     hovertemplate=f'{ch}: %{{y:.2f}} µV<extra>EEG1-EEG2</extra>'
                 ))
             
-            # Symmetric Y axis around zero
+            # Symmetric Y axis around zero (fixed range)
             S.fft_diff_plot.figure.update_layout(
                 yaxis=dict(range=[-max_abs, max_abs], fixedrange=True, autorange=False)
             )
@@ -709,6 +715,7 @@ def toggle_ch(ch):
     # Reset FFT Y ranges to recalculate for new channel selection
     S.fft_y_max = None
     S.fft_y_max2 = None
+    S.fft_diff_y_max = None
     refresh_channels()
     refresh_hilbert_select()
     update_all()
@@ -719,6 +726,7 @@ def select_all_ch():
         # Reset FFT Y ranges to recalculate for new channel selection
         S.fft_y_max = None
         S.fft_y_max2 = None
+        S.fft_diff_y_max = None
         refresh_channels()
         refresh_hilbert_select()
         update_all()
@@ -729,6 +737,7 @@ def select_10_ch():
         # Reset FFT Y ranges to recalculate for new channel selection
         S.fft_y_max = None
         S.fft_y_max2 = None
+        S.fft_diff_y_max = None
         refresh_channels()
         refresh_hilbert_select()
         update_all()
@@ -739,6 +748,7 @@ def clear_ch():
     # Reset FFT Y ranges
     S.fft_y_max = None
     S.fft_y_max2 = None
+    S.fft_diff_y_max = None
     refresh_channels()
     update_all()
 
@@ -930,6 +940,7 @@ def main_content():
                         S.compare_mode = False
                         # Reset axis ranges so they recalculate
                         S.fft_y_max2 = None
+                        S.fft_diff_y_max = None
                         S.hilbert_amp_max2 = None
                         update_all()
                         refresh_info()
@@ -947,6 +958,7 @@ def main_content():
                             ui.notify(f'EEG 2: {loaded.filename}', type='positive')
                             S.compare_mode = True
                             # Calculate fixed axis ranges for EEG 2
+                            S.fft_diff_y_max = None  # Reset diff range for new EEG2
                             calculate_fixed_ranges(loaded, is_secondary=True)
                         else:
                             S.eeg_data = loaded
@@ -958,6 +970,7 @@ def main_content():
                             S.current_amplitudes = {}
                             # Reset axis ranges so they recalculate for new EEG
                             S.fft_y_max = None
+                            S.fft_diff_y_max = None
                             S.hilbert_amp_max = None
                             ui.notify(f'EEG 1: {loaded.filename}', type='positive')
                             refresh_channels()
@@ -1131,6 +1144,7 @@ def main_content():
                         # Reset FFT/Hilbert Y ranges to recalculate with new filter settings
                         S.fft_y_max = None
                         S.fft_y_max2 = None
+                        S.fft_diff_y_max = None
                         S.hilbert_amp_max = None
                         S.hilbert_amp_max2 = None
                         update_all()

@@ -44,6 +44,7 @@ class State:
         # Fixed axis ranges (calculated on load)
         self.fft_y_max = None  # Max Y for FFT plot
         self.fft_y_max2 = None  # Max Y for FFT2 plot
+        self.fft_diff_y_max = None  # Max Y for FFT difference plot
         self.hilbert_amp_max = None  # Max amplitude for Hilbert envelope
         self.hilbert_amp_max2 = None  # Max amplitude for Hilbert2 envelope
         
