@@ -12,7 +12,7 @@ from config import (
 )
 from eeg_loader import load_eeg_file, get_channel_data, scan_eeg_directory
 from app.state import S
-from app.visualization.components.debug_console import render_debug_toggle, render_debug_console
+from app.visualization.components.debug_console import render_debug_toggle, render_debug_console, render_training_badge
 from app.visualization.styles.css import STYLE
 from app.visualization import make_eeg_fig, make_fft_fig, make_hilbert_fig, make_brain_fig
 from app.core.signal import (
@@ -20,6 +20,15 @@ from app.core.signal import (
     compute_fft, compute_hilbert,
     process_data as _process_data_core
 )
+
+# Color palettes for EEG/FFT plots
+# Primary EEG uses white/light gray for clean look
+_PRIMARY_COLORS = ['#e0e0e0'] * 30  # White/light gray for all channels
+_SECONDARY_COLORS = ['#f472b6'] * 30  # Pink for comparison EEG
+
+# FFT uses colored fills for visual distinction
+_PRIMARY_FFT_FILLS = ['rgba(0, 255, 136, 0.2)'] * 5  # Terminal green with transparency
+_SECONDARY_FFT_FILLS = ['rgba(244, 114, 182, 0.2)'] * 5  # Pink with transparency
 
 
 def process_data(data, sfreq):
@@ -460,6 +469,7 @@ def main_with_nav():
         ui.label('EEG_VIEWER').classes('text-base font-medium ml-2').style(f'color: {THEME_PRIMARY}; font-family: JetBrains Mono; letter-spacing: 1px;')
         ui.label('v1.0').classes('text-xs ml-2').style(f'color: {THEME_TEXT_DIM}; font-family: JetBrains Mono;')
         render_debug_toggle()
+        render_training_badge()
         with ui.row().classes('ml-auto gap-2'):
             ui.button('VIEWER', on_click=lambda: ui.navigate.to('/')).props('flat dense').style(f'color:{THEME_PRIMARY};')
             ui.button('CLEANER', on_click=lambda: ui.navigate.to('/cleaner')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
@@ -583,8 +593,8 @@ def main_content():
                         update_all()
                     ui.button('Apply', on_click=apply_filt, icon='check').props('dense')
             
-            # TOP ROW: EEG + BRAIN (with comparison support)
-            with ui.row().classes('gap-3 w-full'):
+            # TOP ROW: EEG (with comparison support) - flex-nowrap ensures side by side
+            with ui.row().classes('gap-3 w-full flex-nowrap'):
                 # EEG 1
                 with ui.card().classes('dark-card p-3 flex-1'):
                     with ui.row().classes('items-center justify-between mb-1'):
@@ -616,8 +626,8 @@ def main_content():
                     ui.separator().props('vertical').classes('mx-2')
                     S.time_label = ui.label('0:00.0 / 0:00.0').classes('text-sm font-mono opacity-70')
             
-            # TOPOGRAPHY ROW
-            with ui.row().classes('gap-3 w-full'):
+            # TOPOGRAPHY ROW - flex-nowrap ensures side by side
+            with ui.row().classes('gap-3 w-full flex-nowrap'):
                 with ui.card().classes('dark-card p-3 flex-1'):
                     ui.label('▌TOPO 1').style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-1')
                     S.brain_plot = ui.plotly(make_brain_fig()).classes('w-full')
@@ -626,8 +636,8 @@ def main_content():
                     ui.label('▌TOPO 2').style(f'color:#f472b6; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-1')
                     S.brain_plot2 = ui.plotly(make_brain_fig(use_eeg2=True)).classes('w-full')
             
-            # FFT ROW
-            with ui.row().classes('gap-3 w-full'):
+            # FFT ROW - flex-nowrap ensures side by side
+            with ui.row().classes('gap-3 w-full flex-nowrap'):
                 with ui.card().classes('dark-card p-3 flex-1'):
                     ui.label('▌FFT 1').style(f'color:{THEME_SECONDARY}; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-1')
                     S.fft_plot = ui.plotly(make_fft_fig()).classes('w-full')
@@ -636,8 +646,8 @@ def main_content():
                     ui.label('▌FFT 2').style(f'color:#f472b6; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-1')
                     S.fft_plot2 = ui.plotly(make_fft_fig(use_eeg2=True)).classes('w-full')
             
-            # HILBERT ROW
-            with ui.row().classes('gap-3 w-full'):
+            # HILBERT ROW - flex-nowrap ensures side by side
+            with ui.row().classes('gap-3 w-full flex-nowrap'):
                 with ui.card().classes('dark-card p-3 flex-1'):
                     with ui.row().classes('items-center gap-2 mb-1'):
                         ui.label('▌HILBERT 1').style(f'color:{THEME_WARN}; font-family: JetBrains Mono; font-size: 0.8rem;')

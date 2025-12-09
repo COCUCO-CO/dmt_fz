@@ -57,7 +57,7 @@ from config import (
     EEG_RAW_DIR, EEG_CLEAN_DIR, SUPPORTED_FORMATS
 )
 from eeg_loader import load_eeg_file, scan_eeg_directory
-from app.visualization.components.debug_console import render_debug_toggle, render_debug_console
+from app.visualization.components.debug_console import render_debug_toggle, render_debug_console, render_training_badge
 
 import plotly.graph_objects as go
 
@@ -422,9 +422,10 @@ def cleaner_page():
         )
         ui.label('v1.1').classes('text-xs ml-2 opacity-50')
         
-        ui.element('div').classes('flex-1')
-        
         render_debug_toggle()
+        render_training_badge()
+        
+        ui.element('div').classes('flex-1')
         
         # Header actions
         with ui.row().classes('gap-2 items-center'):

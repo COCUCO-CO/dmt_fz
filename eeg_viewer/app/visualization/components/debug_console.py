@@ -6,12 +6,14 @@ Features:
 - Real-time updates without page refresh
 - Resizable console height
 - Persists logs across page navigation
+- Global TRAINING badge that shows on all pages
 
 Usage:
-    from app.visualization.components.debug_console import render_debug_toggle, render_debug_console, debug_log
+    from app.visualization.components.debug_console import render_debug_toggle, render_debug_console, debug_log, render_training_badge
     
     # In page header (before nav buttons):
     render_debug_toggle()
+    render_training_badge()  # Shows pulsing badge when training is active
     
     # At end of page function:
     render_debug_console()
@@ -21,7 +23,7 @@ Usage:
 """
 import sys
 from nicegui import ui
-from app.state import DS
+from app.state import DS, MS
 from config import (
     THEME_BG, THEME_CARD, THEME_BORDER, THEME_PRIMARY, 
     THEME_SECONDARY, THEME_WARN, THEME_ERROR, THEME_TEXT, THEME_TEXT_DIM
@@ -133,6 +135,46 @@ def render_debug_toggle():
     ).tooltip('Toggle Debug Console')
     
     return btn
+
+
+def render_training_badge():
+    """
+    Render a pulsing TRAINING badge that shows when model is training.
+    This is global - shows on all pages when MS.training is True.
+    Call inside header row after render_debug_toggle().
+    """
+    # Container that updates based on training state
+    badge_container = ui.element('div').classes('ml-2')
+    
+    def update_badge():
+        badge_container.clear()
+        if MS.training:
+            with badge_container:
+                with ui.element('div').classes('flex items-center gap-1').style(
+                    'animation: pulse 1.5s ease-in-out infinite;'
+                ):
+                    ui.icon('circle', size='xs').style('color: #ff5555;')
+                    ui.label('TRAINING...').style(
+                        f'color: {THEME_WARN}; font-family: JetBrains Mono; '
+                        f'font-size: 0.7rem; font-weight: bold; letter-spacing: 1px;'
+                    )
+                # Add CSS animation
+                ui.add_head_html('''
+                    <style>
+                        @keyframes pulse {
+                            0%, 100% { opacity: 1; }
+                            50% { opacity: 0.5; }
+                        }
+                    </style>
+                ''')
+    
+    # Initial update
+    update_badge()
+    
+    # Timer to check training state periodically
+    ui.timer(1.0, update_badge)
+    
+    return badge_container
 
 
 # Colors for different message types

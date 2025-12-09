@@ -3,6 +3,9 @@ from pathlib import Path
 import asyncio
 import subprocess
 import json
+import sys
+import os
+import re
 from nicegui import ui
 
 from config import (
@@ -10,10 +13,10 @@ from config import (
     THEME_WARN, THEME_ERROR, THEME_TEXT, THEME_TEXT_DIM
 )
 from app.state import MS
-from app.visualization.components.debug_console import render_debug_toggle, render_debug_console
+from app.visualization.components.debug_console import render_debug_toggle, render_debug_console, render_training_badge
 from app.visualization.styles.css import STYLE
 
-AUTOENCODER_DIR = Path(__file__).parent.parent.parent / "machine_learning" / "autoencoder"
+AUTOENCODER_DIR = Path(__file__).parent.parent.parent.parent / "machine_learning" / "autoencoder"
 AUTOENCODER_CACHE_DIR = Path(__file__).parent.parent / "cache" / "autoencoder"
 
 def detect_dataset_type(path: Path) -> dict:
@@ -160,12 +163,17 @@ def detect_dataset_type(path: Path) -> dict:
 
 
 def model_log(msg: str, msg_type: str = 'info'):
-    """Add message to model training log."""
+    """Add message to model training log and global debug console."""
+    from app.visualization.components.debug_console import debug_log
+    
     # Store in history for persistence
     MS.log_history.append((msg, msg_type))
     # Keep only last 500 messages
     if len(MS.log_history) > 500:
         MS.log_history = MS.log_history[-500:]
+    
+    # Also send to global debug console
+    debug_log(msg, msg_type, 'model')
     
     if MS.log_container:
         colors = {
@@ -179,10 +187,10 @@ def model_log(msg: str, msg_type: str = 'info'):
 
 
 def update_status_indicator(status: str):
-    """Update the training status indicator."""
+    """Update the training status. The global render_training_badge() handles UI."""
     MS.status = status
-    if MS.status_indicator:
-        MS.status_indicator.classes(replace=f'status-{status}')
+    # Update training flag for global badge
+    MS.training = (status == 'training')
 
 
 def create_default_config(dataset_path: str, dataset_info: dict) -> dict:
@@ -336,14 +344,8 @@ def model_page():
         ui.label('EEG_VIEWER').classes('text-base font-medium ml-2').style(f'color: {THEME_PRIMARY}; font-family: JetBrains Mono; letter-spacing: 1px;')
         ui.label('// MODEL').classes('text-xs ml-2').style(f'color: #f472b6; font-family: JetBrains Mono;')
         
-        # Status indicator
-        with ui.row().classes('items-center gap-2 ml-4'):
-            MS.status_indicator = ui.html('<div></div>', sanitize=False).classes(f'status-{MS.status}')
-            status_labels = {'idle': 'IDLE', 'training': 'TRAINING...', 'completed': 'COMPLETED', 'error': 'ERROR'}
-            status_colors = {'idle': THEME_TEXT_DIM, 'training': '#f59e0b', 'completed': '#10b981', 'error': '#ef4444'}
-            ui.label(status_labels.get(MS.status, 'IDLE')).style(f'color:{status_colors.get(MS.status, THEME_TEXT_DIM)}; font-size: 0.7rem; font-family: JetBrains Mono;').bind_text_from(MS, 'status', lambda s: {'idle': 'IDLE', 'training': 'TRAINING...', 'completed': 'COMPLETED', 'error': 'ERROR'}.get(s, 'IDLE'))
-        
         render_debug_toggle()
+        render_training_badge()  # Global training indicator - shows on all pages
         with ui.row().classes('ml-auto gap-2'):
             ui.button('VIEWER', on_click=lambda: ui.navigate.to('/')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
             ui.button('CLEANER', on_click=lambda: ui.navigate.to('/cleaner')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')

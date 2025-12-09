@@ -11,13 +11,14 @@ from config import (
     THEME_WARN, THEME_ERROR, THEME_TEXT, THEME_TEXT_DIM
 )
 from app.state import PS
-from app.visualization.components.debug_console import render_debug_toggle, render_debug_console
+from app.visualization.components.debug_console import render_debug_toggle, render_debug_console, render_training_badge
 from app.visualization.styles.css import STYLE
 
-PIPELINE_DIR = Path(__file__).parent.parent.parent / "dashboard" / "pipeline_backend"
-PIPELINE_OUTPUTS = Path(__file__).parent.parent.parent / "pipeline_outputs"
-RESULTS_BASE = Path(__file__).parent.parent.parent / "fwd-inv-stc"
-DEFAULT_INPUT_DIR = Path(__file__).parent.parent.parent / "EEG_CLEAN"
+# Pipeline scripts are in the main project's pipeline/ directory
+PIPELINE_DIR = Path(__file__).parent.parent.parent.parent / "pipeline"
+PIPELINE_OUTPUTS = Path(__file__).parent.parent.parent.parent / "pipeline_outputs"
+RESULTS_BASE = Path(__file__).parent.parent.parent.parent / "fwd-inv-stc"
+DEFAULT_INPUT_DIR = Path(__file__).parent.parent.parent.parent / "EEG_CLEAN"
 
 def get_run_dirs():
     """List existing pipeline runs"""
@@ -138,6 +139,7 @@ def pipeline_page():
         ui.label('EEG_PIPELINE').classes('text-base font-medium ml-2').style(f'color: {THEME_PRIMARY}; font-family: JetBrains Mono;')
         ui.label('v1.0').classes('text-xs ml-2').style(f'color: {THEME_TEXT_DIM}; font-family: JetBrains Mono;')
         render_debug_toggle()
+        render_training_badge()
         with ui.row().classes('ml-auto gap-2'):
             ui.button('VIEWER', on_click=lambda: ui.navigate.to('/')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
             ui.button('CLEANER', on_click=lambda: ui.navigate.to('/cleaner')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
@@ -145,7 +147,8 @@ def pipeline_page():
             ui.button('MODEL', on_click=lambda: ui.navigate.to('/model')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
             ui.button('ANALYSIS', on_click=lambda: ui.navigate.to('/analysis')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
     
-    with ui.row().classes('w-full p-4 gap-4').style('height: calc(100vh - 50px); align-items: stretch;'):
+    # Main content - use min-height and overflow to allow proper scrolling with debug console
+    with ui.row().classes('w-full p-4 gap-4').style('min-height: calc(100vh - 50px); align-items: flex-start;'):
         
         # LEFT: Pipeline Controls
         with ui.column().classes('gap-4').style('width: 450px;'):
@@ -408,15 +411,15 @@ def pipeline_page():
                     ui.label('~3-5 min').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
         
         # RIGHT: Tabbed Panel (Console, Files, System, Visualize)
-        with ui.column().classes('flex-1').style('min-height: 0; display: flex; flex-direction: column;'):
-            with ui.card().classes('dark-card p-2 w-full flex-1').style('display: flex; flex-direction: column; min-height: 0;'):
+        with ui.column().classes('flex-1').style('display: flex; flex-direction: column;'):
+            with ui.card().classes('dark-card p-2 w-full flex-1').style('display: flex; flex-direction: column;'):
                 with ui.tabs().classes('w-full').style(f'background: {THEME_BG};') as tabs:
                     tab_console = ui.tab('CONSOLE', icon='terminal').style(f'color:{THEME_PRIMARY};')
                     tab_files = ui.tab('FILES', icon='folder').style(f'color:{THEME_SECONDARY};')
                     tab_system = ui.tab('SYSTEM', icon='memory').style(f'color:{THEME_WARN};')
                     tab_viz = ui.tab('VISUALIZE', icon='analytics').style(f'color:#a78bfa;')
                 
-                with ui.tab_panels(tabs, value=tab_console).classes('w-full').style('flex: 1; min-height: 0; overflow: hidden;'):
+                with ui.tab_panels(tabs, value=tab_console).classes('w-full').style('flex: 1; overflow: visible;'):
                     # CONSOLE TAB
                     with ui.tab_panel(tab_console).classes('p-2').style('height: 100%; display: flex; flex-direction: column;'):
                         with ui.row().classes('items-center gap-3 mb-2'):
@@ -564,13 +567,13 @@ def pipeline_page():
                         update_system_stats()
                     
                     # VISUALIZE TAB - Unified Visualization Dashboard
-                    with ui.tab_panel(tab_viz).classes('p-0').style('height: 100%; overflow: hidden;'):
+                    with ui.tab_panel(tab_viz).classes('p-0').style('overflow: visible;'):
                         # State for visualization - use nonlocal dict to persist across tab switches
                         if not hasattr(PS, 'viz_state'):
                             PS.viz_state = {'data': None, 'file': None, 'loaded': False}
                         viz_state = PS.viz_state
                         
-                        with ui.column().classes('w-full h-full').style('display: flex; flex-direction: column; overflow: hidden;'):
+                        with ui.column().classes('w-full').style('display: flex; flex-direction: column;'):
                             # FIXED HEADER - Data Selection with custom path support (outside scroll area)
                             with ui.card().classes('dark-card p-3 w-full').style('flex-shrink: 0;'):
                                 # Custom data path
@@ -760,8 +763,8 @@ def pipeline_page():
                                     viz_subject.on('update:model-value', lambda e: refresh_all_plots())
                                     viz_epoch.on('update:model-value', lambda e: refresh_all_plots())
                             
-                            # VISUALIZATION CONTENT - scroll area fills remaining space
-                            with ui.scroll_area().classes('w-full flex-1').style('min-height: 0;'):
+                            # VISUALIZATION CONTENT - show all content (parent tab_panel handles scroll)
+                            with ui.column().classes('w-full'):
                                 with ui.column().classes('w-full p-3 gap-3'):
                                     # MAIN VISUALIZATION AREA - 3D Brain + Stats
                                     with ui.row().classes('w-full gap-3'):

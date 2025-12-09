@@ -4,7 +4,6 @@ data:
   conditions:
   - DMT
   - EC
-  - EO
   graph:
     directed: false
     edge_threshold: 0.3
@@ -87,7 +86,7 @@ paths:
   checkpoints: /media/storage_hdd/dmt_fz/eeg_viewer/app/cache/autoencoder/checkpoints
   dataset_cache: /media/storage_hdd/dmt_fz/eeg_viewer/app/cache/autoencoder/dataset_cache
   output_dir: /media/storage_hdd/dmt_fz/eeg_viewer/app/cache/autoencoder/output
-  phases_dir: /media/storage_hdd/dmt_fz/fwd-inv-stc
+  phases_dir: /media/storage_hdd/dmt_fz/pipeline_outputs/run_20251203_104909
   tensorboard: /media/storage_hdd/dmt_fz/eeg_viewer/app/cache/autoencoder/runs
 pin_memory: true
 seed: 42
