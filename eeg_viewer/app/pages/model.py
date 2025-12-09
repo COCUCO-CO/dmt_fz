@@ -3,13 +3,7 @@ from pathlib import Path
 import asyncio
 import subprocess
 import json
-import sys
-import os
-import re
-import yaml
-import numpy as np
 from nicegui import ui
-import plotly.graph_objects as go
 
 from config import (
     THEME_BG, THEME_CARD, THEME_BORDER, THEME_PRIMARY, THEME_SECONDARY,
@@ -18,8 +12,8 @@ from config import (
 from app.state import MS
 from app.visualization.styles.css import STYLE
 
-AUTOENCODER_DIR = Path(__file__).parent.parent.parent.parent / "machine_learning" / "autoencoder"
-AUTOENCODER_CACHE_DIR = Path(__file__).parent.parent.parent / "cache" / "autoencoder"
+AUTOENCODER_DIR = Path(__file__).parent.parent.parent / "machine_learning" / "autoencoder"
+AUTOENCODER_CACHE_DIR = Path(__file__).parent.parent / "cache" / "autoencoder"
 
 def detect_dataset_type(path: Path) -> dict:
     """
@@ -180,14 +174,7 @@ def model_log(msg: str, msg_type: str = 'info'):
             'error': THEME_ERROR
         }
         with MS.log_container:
-            # Add line break before major sections
-            if any(x in msg for x in ['Starting', 'Training completed', '====', 'Epoch 001 ']):
-                ui.label('').style('height: 8px;')
             ui.label(msg).style(f'color:{colors.get(msg_type, THEME_TEXT)}; font-family: JetBrains Mono; font-size: 0.75rem;')
-        
-        # Auto-scroll to bottom
-        if hasattr(MS, 'log_scroll') and MS.log_scroll:
-            MS.log_scroll.scroll_to(percent=1.0)
 
 
 def update_status_indicator(status: str):
@@ -994,8 +981,8 @@ def model_page():
                         load_reconstruction(10)
                     
                     # CONSOLE TAB
-                    with ui.tab_panel(tab_console).classes('p-2').style('height: 100%; display: flex; flex-direction: column; overflow: hidden;'):
-                        with ui.row().classes('items-center gap-3 mb-2 shrink-0'):
+                    with ui.tab_panel(tab_console).classes('p-2').style('height: 100%; display: flex; flex-direction: column;'):
+                        with ui.row().classes('items-center gap-3 mb-2'):
                             ui.label('// TRAINING_LOG').classes('terminal-header')
                             
                             def clear_log():
@@ -1004,8 +991,7 @@ def model_page():
                                 MS.log_history = []
                             ui.button('CLEAR', on_click=clear_log, icon='delete').props('flat dense size=sm').classes('ml-auto')
                         
-                        MS.log_scroll = ui.scroll_area().classes('w-full').style('background: #050505; border-radius: 4px; flex: 1; min-height: 0;')
-                        with MS.log_scroll:
+                        with ui.scroll_area().classes('w-full flex-1').style('background: #050505; border-radius: 4px; min-height: 200px;'):
                             MS.log_container = ui.column().classes('w-full p-3 gap-0')
                             with MS.log_container:
                                 # Restore previous logs if any

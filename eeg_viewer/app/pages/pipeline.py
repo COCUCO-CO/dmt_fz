@@ -13,10 +13,10 @@ from config import (
 from app.state import PS
 from app.visualization.styles.css import STYLE
 
-PIPELINE_DIR = Path(__file__).parent.parent.parent.parent / "pipeline"
-PIPELINE_OUTPUTS = Path(__file__).parent.parent.parent.parent / "eeg_viewer" / "pipeline_outputs"
+PIPELINE_DIR = Path(__file__).parent.parent.parent / "dashboard" / "pipeline_backend"
+PIPELINE_OUTPUTS = Path(__file__).parent.parent.parent / "pipeline_outputs"
 RESULTS_BASE = Path(__file__).parent.parent.parent / "fwd-inv-stc"
-DEFAULT_INPUT_DIR = Path(__file__).parent.parent.parent.parent / "EEG_CLEAN"
+DEFAULT_INPUT_DIR = Path(__file__).parent.parent.parent / "EEG_CLEAN"
 
 def get_run_dirs():
     """List existing pipeline runs"""
@@ -37,14 +37,7 @@ def pipeline_log(msg):
     """Add message to pipeline log"""
     if PS.log_container:
         with PS.log_container:
-            # Add line break before new steps/sections
-            if any(x in msg for x in ['[RUN]', 'Starting:', '[INFO]', '[SETUP]', '===', 'COMPLETED', 'FAILED']):
-                ui.label('').style('height: 12px;')
             ui.label(msg).style(f'color:{THEME_TEXT}; font-family: JetBrains Mono; font-size: 0.75rem;')
-        # Force UI update and scroll to bottom
-        PS.log_container.update()
-        if hasattr(PS, 'log_scroll') and PS.log_scroll:
-            PS.log_scroll.scroll_to(percent=1.0)
 
 async def run_pipeline_step(script_name, args_list, step_name, output_dir=None, input_dir=None):
     """Run a pipeline script with arguments"""
@@ -80,76 +73,30 @@ async def run_pipeline_step(script_name, args_list, step_name, output_dir=None, 
         pipeline_log(f"[{step_name}] Output dir: {output_dir}")
     
     try:
-        # Use larger buffer limit for tqdm progress bars
         process = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=str(PIPELINE_DIR.parent.parent),
-            env=env,
-            limit=1024*1024  # 1MB buffer limit
+            env=env
         )
         
         PS.current_process = process
         
-        # Read both stdout and stderr with chunked reading to handle long lines
-        async def read_stream(stream, is_stderr=False):
-            buffer = b''
+        # Read both stdout and stderr
+        async def read_stream(stream, prefix=""):
             while True:
-                try:
-                    chunk = await stream.read(8192)  # Read in 8KB chunks
-                    if not chunk:
-                        # Process remaining buffer
-                        if buffer:
-                            try:
-                                text = buffer.decode('utf-8', errors='replace').strip()
-                                if text and not any(x in text for x in ['%|', 'it/s]', '█', '▌', '\r']):
-                                    if is_stderr:
-                                        pipeline_log(f"[WARN] {text[:500]}")
-                                    else:
-                                        pipeline_log(text[:500])
-                            except:
-                                pass
-                        break
-                    
-                    buffer += chunk
-                    
-                    # Process complete lines
-                    while b'\n' in buffer:
-                        line, buffer = buffer.split(b'\n', 1)
-                        try:
-                            text = line.decode('utf-8', errors='replace').strip()
-                            if text:
-                                # Skip tqdm progress bars (they clutter the log)
-                                is_progress_bar = any(x in text for x in ['%|', 'it/s]', '0%|', '100%|', '█', '▌', '\r'])
-                                if is_progress_bar:
-                                    continue
-                                
-                                # Truncate very long lines
-                                if len(text) > 500:
-                                    text = text[:500] + '...'
-                                
-                                if is_stderr:
-                                    pipeline_log(f"[WARN] {text}")
-                                else:
-                                    pipeline_log(text)
-                                await asyncio.sleep(0.01)
-                        except:
-                            pass
-                    
-                    # Prevent buffer from growing too large (discard if > 100KB)
-                    if len(buffer) > 100*1024:
-                        buffer = b''
-                        
-                except Exception as e:
-                    # Continue on read errors
-                    await asyncio.sleep(0.1)
-                    continue
+                line = await stream.readline()
+                if not line:
+                    break
+                text = line.decode().strip()
+                if text:
+                    pipeline_log(f"{prefix}{text}")
         
         # Read both streams concurrently
         await asyncio.gather(
-            read_stream(process.stdout, is_stderr=False),
-            read_stream(process.stderr, is_stderr=True)
+            read_stream(process.stdout),
+            read_stream(process.stderr, "[ERR] ")
         )
         
         await process.wait()
@@ -196,11 +143,10 @@ def pipeline_page():
             ui.button('MODEL', on_click=lambda: ui.navigate.to('/model')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
             ui.button('ANALYSIS', on_click=lambda: ui.navigate.to('/analysis')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
     
-    with ui.row().classes('w-full p-4 gap-4').style('height: calc(100vh - 50px); align-items: stretch; overflow: hidden;'):
+    with ui.row().classes('w-full p-4 gap-4').style('height: calc(100vh - 50px); align-items: stretch;'):
         
-        # LEFT: Pipeline Controls (scrollable independently)
-        with ui.scroll_area().style('width: 450px; height: 100%;'):
-          with ui.column().classes('gap-4 pr-2'):
+        # LEFT: Pipeline Controls
+        with ui.column().classes('gap-4').style('width: 450px;'):
             
             # INPUT/OUTPUT CONFIGURATION
             with ui.card().classes('dark-card p-4 w-full').style(f'border: 1px solid {THEME_PRIMARY};'):
@@ -214,29 +160,16 @@ def pipeline_page():
                     def scan_input_dir():
                         p = Path(input_dir_field.value)
                         if p.exists():
-                            # Check for subdirectory structure (DMT/, EC/, EO/)
                             conds = [d.name for d in p.iterdir() if d.is_dir() and d.name in ['DMT', 'EC', 'EO']]
-                            
-                            if conds:
-                                # Subdirectory structure
-                                files = sum(len(list((p / c).glob('*.set'))) for c in conds)
-                                ui.notify(f'Found: {conds}, {files} .set files', type='info')
-                                pipeline_log(f"[INPUT] Scanned {p}: {conds}, {files} .set files")
-                            else:
-                                # Flat structure (files in root with condition in filename)
-                                all_set = list(p.glob('*.set'))
-                                dmt = len([f for f in all_set if 'DMT' in f.name.upper()])
-                                ec = len([f for f in all_set if 'EC' in f.name.upper()])
-                                eo = len([f for f in all_set if 'EO' in f.name.upper()])
-                                total = dmt + ec + eo
-                                ui.notify(f'Flat: DMT={dmt}, EC={ec}, EO={eo} .set files', type='info')
-                                pipeline_log(f"[INPUT] Scanned {p}: Flat - DMT={dmt}, EC={ec}, EO={eo} .set files")
+                            files = sum(len(list((p / c).glob('*.set'))) for c in conds if (p / c).exists())
+                            ui.notify(f'Found: {conds}, {files} files', type='info')
+                            pipeline_log(f"[INPUT] Scanned {p}: {conds}, {files} .set files")
                         else:
                             ui.notify('Directory not found', type='warning')
                     
                     ui.button(icon='search', on_click=scan_input_dir).props('flat dense size=sm')
                 
-                ui.label('Directorio con DMT/, EC/, EO/ o archivos .set con condición en nombre').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem; margin-left: 68px;')
+                ui.label('Directorio con subcarpetas DMT/, EC/, EO/ y archivos .set').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem; margin-left: 68px;')
                 
                 # Mutable container for input dir
                 current_input_dir = [DEFAULT_INPUT_DIR]
@@ -349,26 +282,9 @@ def pipeline_page():
                     ui.button('RUN fwd.py', on_click=run_fwd, icon='play_arrow').props('dense').style(f'background:{THEME_PRIMARY}; color:black;')
                     ui.label('~3-4h (o menos con max_epochs)').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
             
-            # STEP 2: SAVE_LOAD_PICKLE.PY (Consolidate phases)
+            # STEP 2: MULTI2POOL2.PY
             with ui.card().classes('dark-card p-4 w-full'):
-                ui.label('// STEP_2: CONSOLIDATE_PHASES').classes('terminal-header')
-                ui.label('save_load_pickle.py - Merge phases-*.pkl into subject_phases_{cond}.pkl').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
-                ui.label('→ run_*/{cond}/subject_phases_{cond}.pkl').style(f'color:{THEME_PRIMARY}; font-size: 0.65rem;')
-                
-                with ui.row().classes('gap-2 mt-3'):
-                    async def run_consolidate():
-                        if not current_run_dir[0]:
-                            ui.notify('Primero creá un NEW RUN', type='warning')
-                            return
-                        args = ['--conditions'] + get_conditions()
-                        await run_pipeline_step('save_load_pickle.py', args, 'Consolidate Phases', current_run_dir[0])
-                    
-                    ui.button('RUN save_load_pickle.py', on_click=run_consolidate, icon='play_arrow').props('dense').style(f'background:#06b6d4; color:black;')
-                    ui.label('~1-2 min').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
-            
-            # STEP 3: MULTI2POOL2.PY
-            with ui.card().classes('dark-card p-4 w-full'):
-                ui.label('// STEP_3: NETWORK_FILTERING').classes('terminal-header')
+                ui.label('// STEP_2: NETWORK_FILTERING').classes('terminal-header')
                 ui.label('multi2pool2.py - Filter by brain networks (DMN, FPN, etc)').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
                 ui.label('→ run_*/order_all-{subj}.pkl').style(f'color:{THEME_PRIMARY}; font-size: 0.65rem;')
                 
@@ -382,26 +298,9 @@ def pipeline_page():
                     ui.button('RUN multi2pool2.py', on_click=run_multi, icon='play_arrow').props('dense').style(f'background:{THEME_SECONDARY}; color:black;')
                     ui.label('~2-5 min').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
             
-            # STEP 4: CALCULATE_SYNCRO.PY
+            # STEP 3: GENERATE_ORDER.PY
             with ui.card().classes('dark-card p-4 w-full'):
-                ui.label('// STEP_4: SYNC_METRICS').classes('terminal-header')
-                ui.label('calculate_syncro.py - Calculate sync matrices & Kuramoto').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
-                ui.label('→ run_*/{cond}/syncro-{subj}.pkl').style(f'color:{THEME_PRIMARY}; font-size: 0.65rem;')
-                
-                with ui.row().classes('gap-2 mt-3'):
-                    async def run_syncro():
-                        if not current_run_dir[0]:
-                            ui.notify('Primero creá un NEW RUN', type='warning')
-                            return
-                        args = ['--workers', str(int(workers_num.value or 7)), '--conditions'] + get_conditions()
-                        await run_pipeline_step('calculate_syncro.py', args, 'Sync Metrics', current_run_dir[0])
-                    
-                    ui.button('RUN calculate_syncro.py', on_click=run_syncro, icon='play_arrow').props('dense').style(f'background:#10b981; color:black;')
-                    ui.label('~10-30 min').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
-            
-            # STEP 5: GENERATE_ORDER.PY
-            with ui.card().classes('dark-card p-4 w-full'):
-                ui.label('// STEP_5: KURAMOTO_ORDER').classes('terminal-header')
+                ui.label('// STEP_3: KURAMOTO_ORDER').classes('terminal-header')
                 ui.label('generate_order.py - Calculate Kuramoto order parameter').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
                 ui.label('→ run_*/order-{subj}.pkl').style(f'color:{THEME_PRIMARY}; font-size: 0.65rem;')
                 
@@ -416,42 +315,9 @@ def pipeline_page():
                     ui.button('RUN generate_order.py', on_click=run_order, icon='play_arrow').props('dense').style(f'background:{THEME_WARN}; color:black;')
                     ui.label('~1 min').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
             
-            # STEP 6: BUILD_ORDER_DATA.PY
+            # STEP 4: CLUSTERING.PY
             with ui.card().classes('dark-card p-4 w-full'):
-                ui.label('// STEP_6: AGGREGATE_DATA').classes('terminal-header')
-                ui.label('build_order_data.py - Aggregate Kuramoto metrics').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
-                ui.label('-> r_kuramoto_nets_*.pkl').style(f'color:{THEME_PRIMARY}; font-size: 0.65rem;')
-                
-                with ui.row().classes('gap-2 mt-3'):
-                    async def run_build_order():
-                        if not current_run_dir[0]:
-                            ui.notify('Primero creá un NEW RUN', type='warning')
-                            return
-                        args = ['--build-all', '--workers', str(int(workers_num.value or 7))]
-                        await run_pipeline_step('build_order_data.py', args, 'Aggregate Data', current_run_dir[0])
-                    
-                    ui.button('RUN build_order_data.py', on_click=run_build_order, icon='play_arrow').props('dense').style(f'background:#60a5fa; color:black;')
-                    ui.label('~2-5 min').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
-            
-            # STEP 7: PEARSON.PY
-            with ui.card().classes('dark-card p-4 w-full'):
-                ui.label('// STEP_7: CORRELATIONS').classes('terminal-header')
-                ui.label('pearson.py - Correlate with questionnaires').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
-                ui.label('-> pearson_results/').style(f'color:{THEME_PRIMARY}; font-size: 0.65rem;')
-                
-                with ui.row().classes('gap-2 mt-3'):
-                    async def run_pearson():
-                        if not current_run_dir[0]:
-                            ui.notify('Primero creá un NEW RUN', type='warning')
-                            return
-                        await run_pipeline_step('pearson.py', [], 'Correlations', current_run_dir[0])
-                    
-                    ui.button('RUN pearson.py', on_click=run_pearson, icon='play_arrow').props('dense').style(f'background:#a78bfa; color:black;')
-                    ui.label('~3-5 min').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
-            
-            # STEP 8: CLUSTERING.PY (Optional)
-            with ui.card().classes('dark-card p-4 w-full'):
-                ui.label('// STEP_8: CLUSTERING (OPTIONAL)').classes('terminal-header')
+                ui.label('// STEP_4: CLUSTERING').classes('terminal-header')
                 ui.label('clustering.py - Brain state identification').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
                 ui.label('→ run_*/clustering_results/').style(f'color:{THEME_PRIMARY}; font-size: 0.65rem;')
                 
@@ -505,9 +371,42 @@ def pipeline_page():
                     
                     ui.button('RUN clustering.py', on_click=run_clustering, icon='play_arrow').props('dense').style(f'background:#ff6b9d; color:black;')
                     ui.label('Quick: ~30min, Full: ~4h').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
+            
+            # STEP 5: BUILD_ORDER_DATA.PY
+            with ui.card().classes('dark-card p-4 w-full'):
+                ui.label('// STEP_5: AGGREGATE_DATA').classes('terminal-header')
+                ui.label('build_order_data.py - Aggregate Kuramoto metrics').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                ui.label('-> r_kuramoto_nets_*.pkl').style(f'color:{THEME_PRIMARY}; font-size: 0.65rem;')
+                
+                with ui.row().classes('gap-2 mt-3'):
+                    async def run_build_order():
+                        if not current_run_dir[0]:
+                            ui.notify('Primero creá un NEW RUN', type='warning')
+                            return
+                        args = ['--build-all', '--workers', str(int(workers_num.value or 7))]
+                        await run_pipeline_step('build_order_data.py', args, 'Aggregate Data', current_run_dir[0])
+                    
+                    ui.button('RUN build_order_data.py', on_click=run_build_order, icon='play_arrow').props('dense').style(f'background:#60a5fa; color:black;')
+                    ui.label('~2-5 min').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
+            
+            # STEP 6: PEARSON.PY
+            with ui.card().classes('dark-card p-4 w-full'):
+                ui.label('// STEP_6: CORRELATIONS').classes('terminal-header')
+                ui.label('pearson.py - Correlate with questionnaires').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                ui.label('-> pearson_results/').style(f'color:{THEME_PRIMARY}; font-size: 0.65rem;')
+                
+                with ui.row().classes('gap-2 mt-3'):
+                    async def run_pearson():
+                        if not current_run_dir[0]:
+                            ui.notify('Primero creá un NEW RUN', type='warning')
+                            return
+                        await run_pipeline_step('pearson.py', [], 'Correlations', current_run_dir[0])
+                    
+                    ui.button('RUN pearson.py', on_click=run_pearson, icon='play_arrow').props('dense').style(f'background:#a78bfa; color:black;')
+                    ui.label('~3-5 min').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
         
         # RIGHT: Tabbed Panel (Console, Files, System, Visualize)
-        with ui.column().classes('flex-1').style('height: 100%; min-height: 0; display: flex; flex-direction: column; overflow: hidden;'):
+        with ui.column().classes('flex-1').style('min-height: 0; display: flex; flex-direction: column;'):
             with ui.card().classes('dark-card p-2 w-full flex-1').style('display: flex; flex-direction: column; min-height: 0;'):
                 with ui.tabs().classes('w-full').style(f'background: {THEME_BG};') as tabs:
                     tab_console = ui.tab('CONSOLE', icon='terminal').style(f'color:{THEME_PRIMARY};')
@@ -517,8 +416,8 @@ def pipeline_page():
                 
                 with ui.tab_panels(tabs, value=tab_console).classes('w-full').style('flex: 1; min-height: 0; overflow: hidden;'):
                     # CONSOLE TAB
-                    with ui.tab_panel(tab_console).classes('p-2').style('height: 100%; display: flex; flex-direction: column; overflow: hidden;'):
-                        with ui.row().classes('items-center gap-3 mb-2 shrink-0'):
+                    with ui.tab_panel(tab_console).classes('p-2').style('height: 100%; display: flex; flex-direction: column;'):
+                        with ui.row().classes('items-center gap-3 mb-2'):
                             ui.label('// OUTPUT_LOG').classes('terminal-header')
                             
                             # Status indicator
@@ -559,8 +458,7 @@ def pipeline_page():
                                     PS.log_container.clear()
                             ui.button('CLEAR', on_click=clear_log, icon='delete').props('flat dense size=sm')
                         
-                        PS.log_scroll = ui.scroll_area().classes('w-full').style('background: #050505; border-radius: 4px; flex: 1; min-height: 0;')
-                        with PS.log_scroll:
+                        with ui.scroll_area().classes('w-full flex-1').style('background: #050505; border-radius: 4px; min-height: 200px;'):
                             PS.log_container = ui.column().classes('w-full p-3 gap-0')
                             with PS.log_container:
                                 ui.label('Pipeline ready. Select a step and click RUN.').style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.75rem;')
@@ -732,31 +630,13 @@ def pipeline_page():
                                             import pickle
                                             from pathlib import Path
                                             try:
-                                                p = Path(data_path)
-                                                subj = viz_subject.value
-                                                
-                                                # Prefer phases-*.pkl (has phases_stc for Hilbert viz)
-                                                # Fall back to syncro-*.pkl (has kuramoto data)
-                                                phases_files = list(p.rglob(f'phases-*{subj}*.pkl'))
-                                                syncro_files = list(p.rglob(f'syncro-*{subj}*.pkl'))
-                                                
-                                                # Load phases file for phase visualizations
-                                                if phases_files:
-                                                    with open(phases_files[0], 'rb') as f:
+                                                files = list(Path(data_path).rglob(f'*{viz_subject.value}*.pkl'))
+                                                if files:
+                                                    with open(files[0], 'rb') as f:
                                                         viz_state['data'] = pickle.load(f)
-                                                    viz_state['file'] = phases_files[0]
-                                                    viz_status.text = f'Loaded: {phases_files[0].name}'
+                                                    viz_state['file'] = files[0]
+                                                    viz_status.text = f'Loaded: {files[0].name}'
                                                     viz_status.style(f'color:{THEME_PRIMARY}; font-size: 0.7rem;')
-                                                elif syncro_files:
-                                                    # syncro files have kuramoto but no phases
-                                                    with open(syncro_files[0], 'rb') as f:
-                                                        viz_state['data'] = pickle.load(f)
-                                                    viz_state['file'] = syncro_files[0]
-                                                    viz_status.text = f'Loaded: {syncro_files[0].name} (no phases)'
-                                                    viz_status.style(f'color:{THEME_WARN}; font-size: 0.7rem;')
-                                                else:
-                                                    viz_status.text = f'No files for {subj}'
-                                                    viz_status.style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
                                             except Exception as e:
                                                 viz_status.text = f'Error: {e}'
                                         
@@ -809,8 +689,18 @@ def pipeline_page():
                                                     from viz_scripts import brain_3d
                                                     import pickle
                                                     
-                                                    # Use already loaded data from refresh_all_plots
+                                                    # Try to load data from custom path or run dir
                                                     data = viz_state.get('data')
+                                                    data_path = viz_state.get('custom_path') or current_run_dir[0]
+                                                    if data_path and viz_subject.value:
+                                                        files = list(data_path.rglob(f'*{viz_subject.value}*.pkl'))
+                                                        if files:
+                                                            with open(files[0], 'rb') as f:
+                                                                data = pickle.load(f)
+                                                            viz_state['data'] = data
+                                                            viz_state['file'] = files[0]
+                                                            viz_status.text = f'Loaded: {files[0].name}'
+                                                            viz_status.style(f'color:{THEME_PRIMARY}; font-size: 0.7rem;')
                                                     
                                                     with brain_plot_container:
                                                         if plot_type == 'network':
@@ -1217,7 +1107,7 @@ def pipeline_page():
                                             anim_output_dir = ui.input(value='', placeholder='/path/to/output or auto').props('dense').classes('flex-1')
                                             ui.label('Output dir (leave empty for auto)').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
                                         
-                                        anim_log = ui.column().classes('w-full').style('max-height: 800px; overflow-y: auto; background: #050505; border-radius: 4px; padding: 8px;')
+                                        anim_log = ui.column().classes('w-full').style('max-height: 150px; overflow-y: auto; background: #050505; border-radius: 4px; padding: 8px;')
                                         
                                         async def generate_frames():
                                             """Generate visualization frames"""
@@ -1326,7 +1216,7 @@ def pipeline_page():
                                                             # Show first frame as preview
                                                             with ui.card().classes('mt-2 p-2').style('background: #1a1a1a;'):
                                                                 ui.label('Preview (first frame):').style(f'color:{THEME_TEXT_DIM}; font-size: 0.6rem;')
-                                                                ui.image(str(frames[0])).classes('w-full').style('max-height: 1024px; max-width: 1024px; object-fit: contain;')
+                                                                ui.image(str(frames[0])).classes('w-full').style('max-height: 300px; object-fit: contain;')
                                                     else:
                                                         ui.label(f'Process exited with code {process.returncode}').style(f'color:{THEME_WARN}; font-size: 0.7rem;')
                                             except Exception as e:
@@ -1398,7 +1288,7 @@ def pipeline_page():
                                                         if output_video.exists():
                                                             with ui.card().classes('mt-2 p-2 w-full').style('background: #1a1a1a;'):
                                                                 ui.label('Generated video:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.6rem;')
-                                                                ui.video(str(output_video)).classes('w-full').style('max-height: 1024px; max-width: 1024px;')
+                                                                ui.video(str(output_video)).classes('w-full').style('max-height: 400px;')
                                                     else:
                                                         ui.label(f'ffmpeg error: {stderr.decode()[:200]}').style(f'color:{THEME_ERROR}; font-size: 0.65rem;')
                                             except Exception as e:

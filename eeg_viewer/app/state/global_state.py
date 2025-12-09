@@ -21,8 +21,6 @@ class State:
         self.view_duration = 5.0
         self.is_playing = False
         self.scale_factor = 1.0
-        self.playback_speed = 1.0
-        self.playback_reverse = False
         
         # Filter settings
         self.notch_freq = 50.0
@@ -33,7 +31,6 @@ class State:
         
         # Hilbert
         self.hilbert_channel = ""
-        self.hilbert_channel2 = ""  # Channel for Hilbert 2
         
         # Epochs
         self.epoch_duration = 2.0
@@ -42,24 +39,13 @@ class State:
         # Current amplitudes
         self.current_amplitudes = {}
         
-        # Fixed axis ranges (calculated on load)
-        self.fft_y_max = None  # Max Y for FFT plot
-        self.fft_y_max2 = None  # Max Y for FFT2 plot
-        self.fft_diff_y_max = None  # Max Y for FFT difference plot
-        self.hilbert_amp_max = None  # Max amplitude for Hilbert envelope
-        self.hilbert_amp_max2 = None  # Max amplitude for Hilbert2 envelope
-        self.hilbert_diff_y_max = None  # Max Y for Hilbert difference plot
-        
         # UI references
         self.eeg_plot = None
         self.eeg_plot2 = None
         self.fft_plot = None
         self.fft_plot2 = None
-        self.fft_diff_plot = None  # FFT difference plot (EEG1 - EEG2)
         self.hilbert_plot = None
         self.hilbert_plot2 = None
-        self.hilbert_diff_plot = None  # Hilbert difference plot (EEG1 - EEG2)
-        self.hilbert_select_container2 = None  # Channel selector for Hilbert 2
         self.brain_plot = None
         self.brain_plot2 = None
         self.time_label = None
@@ -77,7 +63,6 @@ class PipelineState:
         self.start_time = None
         self.current_process = None
         self.log_container = None
-        self.log_scroll = None
         self.status_label = None
         self.progress = 0
         self.refresh_files = None  # Function to refresh file browser
@@ -105,7 +90,6 @@ class ModelState:
         self.current_process = None
         self.history = {'train_loss': [], 'val_loss': [], 'recon_loss': [], 'kl_loss': [], 'epoch': []}
         self.log_container = None
-        self.log_scroll = None
         self.loss_plot = None
         self.config = {}
         
