@@ -106,6 +106,47 @@ def make_fft_fig(use_eeg2=False):
     return fig
 
 
+def make_fft_diff_fig():
+    """Create FFT difference figure (EEG1 - EEG2)."""
+    fig = go.Figure()
+    # Use a distinct color for difference plot
+    diff_color = '#a78bfa'  # Purple for difference
+    band_colors = ['rgba(167,139,250,0.06)', 'rgba(167,139,250,0.08)', 'rgba(167,139,250,0.06)', 'rgba(167,139,250,0.08)', 'rgba(167,139,250,0.06)']
+    for i, (band, (lo, hi)) in enumerate(FREQ_BANDS.items()):
+        fig.add_vrect(x0=lo, x1=hi, fillcolor=band_colors[i % len(band_colors)], line_width=0)
+        fig.add_annotation(x=(lo+hi)/2, y=1.02, yref='paper', text=band, showarrow=False,
+                          font=dict(size=11, color=THEME_TEXT_DIM, family='JetBrains Mono'))
+    fig.update_layout(
+        template='plotly_dark',
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor=PLOT_BG,
+        margin=dict(l=60, r=10, t=30, b=50),
+        height=180,
+        font=dict(family='JetBrains Mono, monospace', size=10, color=THEME_TEXT),
+        xaxis=dict(
+            title=dict(text='FREQ [Hz]', font=dict(size=9, color=diff_color)),
+            gridcolor=PLOT_GRID,
+            range=[0, 60],
+            fixedrange=True,
+            tickfont=dict(size=9, color=THEME_TEXT_DIM)
+        ),
+        yaxis=dict(
+            title=dict(text='ΔPWR [µV]', font=dict(size=9, color=diff_color)),
+            gridcolor=PLOT_GRID,
+            fixedrange=True,
+            tickfont=dict(size=9, color=THEME_TEXT_DIM),
+            zeroline=True,
+            zerolinecolor='rgba(255,255,255,0.3)',
+            zerolinewidth=1
+        ),
+        showlegend=True,
+        legend=dict(orientation='h', y=1.15, font=dict(size=8, color=THEME_TEXT_DIM)),
+        hovermode='x unified',
+        hoverlabel=dict(bgcolor=THEME_CARD, font=dict(family='JetBrains Mono', size=10))
+    )
+    return fig
+
+
 def make_hilbert_fig(use_eeg2=False):
     """Create Hilbert figure with envelope and phase subplots."""
     title_color = '#f472b6' if use_eeg2 else THEME_WARN
@@ -552,6 +593,7 @@ def update_all():
         update_fft2()
         update_hilbert2()
         update_brain2()
+        update_fft_diff()  # Update FFT difference plot
 
 def update_eeg2():
     """Update EEG 2 plot with same time window and channels as EEG 1."""
@@ -560,6 +602,77 @@ def update_eeg2():
 def update_fft2():
     """Update FFT 2 plot."""
     _update_fft_generic(S.fft_plot2, S.eeg_data2, S.selected_channels, use_secondary=True)
+
+def update_fft_diff():
+    """Update FFT difference plot (EEG1 - EEG2)."""
+    if not S.fft_diff_plot or not S.compare_mode or not S.eeg_data or not S.eeg_data2:
+        return
+    
+    if not S.selected_channels:
+        return
+    
+    # Get channels that exist in both EEGs
+    valid_channels = [ch for ch in S.selected_channels[:5] 
+                     if ch in S.eeg_data.channel_types and ch in S.eeg_data2.channel_types]
+    if not valid_channels:
+        return
+    
+    try:
+        # Get FFT for EEG1
+        data1, times1, chs1 = get_channel_data(S.eeg_data, valid_channels, S.view_start, S.view_duration)
+        data1 = process_data(data1, S.eeg_data.sfreq) * 1e6
+        freqs1, fft_v1 = compute_fft(data1, S.eeg_data.sfreq)
+        mask1 = freqs1 <= 60
+        freqs1, fft_v1 = freqs1[mask1], fft_v1[:, mask1]
+        
+        # Get FFT for EEG2
+        data2, times2, chs2 = get_channel_data(S.eeg_data2, valid_channels, S.view_start, S.view_duration)
+        data2 = process_data(data2, S.eeg_data2.sfreq) * 1e6
+        freqs2, fft_v2 = compute_fft(data2, S.eeg_data2.sfreq)
+        mask2 = freqs2 <= 60
+        freqs2, fft_v2 = freqs2[mask2], fft_v2[:, mask2]
+        
+        # Interpolate if sample rates differ (to align frequency bins)
+        if len(freqs1) != len(freqs2):
+            from scipy import interpolate
+            # Use EEG1 frequencies as reference
+            for i in range(len(valid_channels)):
+                f_interp = interpolate.interp1d(freqs2, fft_v2[i], kind='linear', fill_value='extrapolate')
+                fft_v2[i] = f_interp(freqs1)
+            freqs2 = freqs1
+        
+        # Calculate difference: EEG1 - EEG2
+        fft_diff = fft_v1 - fft_v2
+        
+        # Colors - gradient from cyan (EEG1 higher) to pink (EEG2 higher)
+        diff_colors = ['#06b6d4', '#22d3ee', '#a78bfa', '#f472b6', '#ec4899']
+        
+        # Calculate y range
+        max_abs = np.max(np.abs(fft_diff)) * 1.2 if fft_diff.size > 0 else 10
+        max_abs = max(max_abs, 1)
+        
+        with S.fft_diff_plot:
+            S.fft_diff_plot.figure.data = []
+            
+            for i, ch in enumerate(valid_channels):
+                diff_data = fft_diff[i]
+                
+                # Create fill based on sign (positive = EEG1 higher, negative = EEG2 higher)
+                S.fft_diff_plot.figure.add_trace(go.Scatter(
+                    x=freqs1, y=diff_data, name=ch,
+                    line=dict(color=diff_colors[i % len(diff_colors)], width=1.5),
+                    fill='tozeroy',
+                    fillcolor=f'rgba({114 if i % 2 == 0 else 244}, {182 if i % 2 == 0 else 114}, {244 if i % 2 == 0 else 182}, 0.1)',
+                    hovertemplate=f'{ch}: %{{y:.2f}} µV<extra>EEG1-EEG2</extra>'
+                ))
+            
+            # Symmetric Y axis around zero
+            S.fft_diff_plot.figure.update_layout(
+                yaxis=dict(range=[-max_abs, max_abs], fixedrange=True, autorange=False)
+            )
+            S.fft_diff_plot.update()
+    except Exception as e:
+        print(f"FFT diff error: {e}")
 
 def update_hilbert2():
     """Update Hilbert 2 plot."""
@@ -1096,6 +1209,15 @@ def main_content():
                 with ui.card().classes('dark-card p-3 flex-1 min-w-0').bind_visibility_from(S, 'compare_mode'):
                     ui.label('▌FFT 2').style(f'color:#f472b6; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-1')
                     S.fft_plot2 = ui.plotly(make_fft_fig(use_eeg2=True)).classes('w-full')
+            
+            # FFT DIFFERENCE ROW - only visible in compare mode, full width
+            with ui.card().classes('dark-card p-3 w-full').bind_visibility_from(S, 'compare_mode'):
+                with ui.row().classes('items-center gap-2 mb-1'):
+                    ui.label('▌FFT DIFF').style('color:#a78bfa; font-family: JetBrains Mono; font-size: 0.8rem;')
+                    ui.label('(EEG1 − EEG2)').style(f'color:{THEME_TEXT_DIM}; font-family: JetBrains Mono; font-size: 0.7rem;')
+                    ui.label('↑ positive = EEG1 higher').style('color:#06b6d4; font-size: 0.65rem; margin-left: auto;')
+                    ui.label('↓ negative = EEG2 higher').style('color:#f472b6; font-size: 0.65rem;')
+                S.fft_diff_plot = ui.plotly(make_fft_diff_fig()).classes('w-full')
             
             # HILBERT ROW - side by side, equal width
             with ui.row().classes('gap-3 w-full flex-nowrap'):

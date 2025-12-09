@@ -52,6 +52,7 @@ class State:
         self.eeg_plot2 = None
         self.fft_plot = None
         self.fft_plot2 = None
+        self.fft_diff_plot = None  # FFT difference plot (EEG1 - EEG2)
         self.hilbert_plot = None
         self.hilbert_plot2 = None
         self.brain_plot = None
