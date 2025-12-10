@@ -187,13 +187,13 @@ def model_log(msg: str, msg_type: str = 'info'):
                 if any(x in msg for x in ['Starting', 'Training completed', '====', 'Epoch 001 ']):
                     ui.label('').style('height: 8px;')
                 ui.label(msg).style(f'color:{colors.get(msg_type, THEME_TEXT)}; font-family: JetBrains Mono; font-size: 0.75rem;')
+            
+            # Auto-scroll to bottom
+            if hasattr(MS, 'log_scroll') and MS.log_scroll:
+                MS.log_scroll.scroll_to(percent=1.0)
         except RuntimeError:
             # Client disconnected (tab switched), log is still stored in history
             pass
-        
-        # Auto-scroll to bottom
-        if hasattr(MS, 'log_scroll') and MS.log_scroll:
-            MS.log_scroll.scroll_to(percent=1.0)
 
 
 def update_status_indicator(status: str):
