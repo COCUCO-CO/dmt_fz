@@ -85,6 +85,7 @@ class PipelineState:
         # Persistence for tab switching
         self.log_history = []  # Store log messages for restoration
         self.running_task_name = ""  # Name of currently running task (for global indicator)
+        self.selected_run = None  # Persists selected run directory across tab switches
         
         # Pipeline parameters
         self.max_subjects = 0  # 0 = all

@@ -288,7 +288,16 @@ def do_the_math(file_name, condition, output_folder, forward_n_jobs=None, filter
     labels = get_labels()
     
     file_path = Path(file_name)
-    subject_number = file_path.name.replace("_ICA_pruned.set", "").replace("_", "-")
+    # Extract clean subject ID (e.g., "S01" from "S01-DMT.set" or "S01_DMT_ICA_pruned.set")
+    import re
+    base_name = file_path.stem  # Remove extension first
+    base_name = base_name.replace("_ICA_pruned", "").replace("_", "-")
+    subject_match = re.match(r'^(S\d+)', base_name, re.IGNORECASE)
+    if subject_match:
+        subject_id = subject_match.group(1).upper()  # e.g., "S01"
+    else:
+        subject_id = base_name  # Fallback to cleaned name
+    subject_number = f"{subject_id}-{condition}"  # e.g., "S01-DMT"
     
     log(f"\n{'='*70}")
     log(f"[SUBJECT] {subject_number} ({condition})")

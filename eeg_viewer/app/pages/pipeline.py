@@ -281,7 +281,8 @@ def pipeline_page():
                     ui.label('OUTPUT:').style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.75rem; min-width: 60px;')
                     
                     run_label = ui.label('(crear NEW RUN)').style(f'color:{THEME_TEXT_DIM}; font-family: JetBrains Mono; font-size: 0.8rem;')
-                    current_run_dir = [None]
+                    # Use PS.selected_run for persistence across tab switches
+                    current_run_dir = [PS.selected_run]
                     
                     def refresh_run_label():
                         if current_run_dir[0]:
@@ -291,9 +292,14 @@ def pipeline_page():
                             run_label.text = '(crear NEW RUN)'
                             run_label.style(f'color:{THEME_TEXT_DIM}; font-family: JetBrains Mono; font-size: 0.8rem;')
                     
+                    # Restore label if we have a persisted run
+                    if PS.selected_run:
+                        refresh_run_label()
+                    
                     async def new_run():
                         run_dir = await asyncio.get_event_loop().run_in_executor(None, create_new_run)
                         current_run_dir[0] = run_dir
+                        PS.selected_run = run_dir  # Persist selection
                         refresh_run_label()
                         if PS.refresh_files: PS.refresh_files()
                         ui.notify(f'Nuevo run: {run_dir.name}', type='positive')
@@ -303,10 +309,13 @@ def pipeline_page():
                     
                     existing_runs = get_run_dirs()
                     if existing_runs:
-                        run_select = ui.select(existing_runs, label='continuar:').props('dense').classes('w-36')
+                        # Set initial value if we have a persisted run
+                        initial_run = PS.selected_run.name if PS.selected_run and PS.selected_run.name in existing_runs else None
+                        run_select = ui.select(existing_runs, value=initial_run, label='continuar:').props('dense').classes('w-36')
                         def use_existing():
                             if run_select.value:
                                 current_run_dir[0] = PIPELINE_OUTPUTS / run_select.value
+                                PS.selected_run = current_run_dir[0]  # Persist selection
                                 refresh_run_label()
                                 if PS.refresh_files: PS.refresh_files()
                                 pipeline_log(f"[RUN] Using existing: {current_run_dir[0]}")
@@ -742,7 +751,7 @@ def pipeline_page():
                                     viz_epoch = ui.number(value=0, min=0, max=100, label='Epoch').props('dense').classes('w-20')
                                     
                                     def load_subjects_from_path(path):
-                                        """Load subjects from given path"""
+                                        """Load subjects from given path and auto-refresh plots"""
                                         from pathlib import Path
                                         p = Path(path)
                                         viz_subject.options = []
@@ -751,7 +760,12 @@ def pipeline_page():
                                         viz_subject.options = subjects
                                         if subjects:
                                             viz_subject.value = subjects[0]
-                                        ui.notify(f'Found {len(subjects)} subjects in {p.name}', type='info')
+                                            ui.notify(f'Found {len(subjects)} subjects in {p.name}', type='info')
+                                            # Auto-refresh plots with first subject
+                                            if 'refresh_all_plots' in viz_state:
+                                                viz_state['refresh_all_plots']()
+                                        else:
+                                            ui.notify(f'No subjects found in {p.name}', type='warning')
                                     
                                     def load_subjects():
                                         path = viz_state.get('custom_path') or current_run_dir[0]
@@ -817,6 +831,9 @@ def pipeline_page():
                                                 viz_state['update_hilbert_3d']()
                                         except:
                                             pass  # Some functions might not be defined yet
+                                    
+                                    # Store reference for load_subjects_from_path to use
+                                    viz_state['refresh_all_plots'] = refresh_all_plots
                                     
                                     # Connect selectors to auto-refresh
                                     viz_band.on('update:model-value', lambda e: refresh_all_plots())
