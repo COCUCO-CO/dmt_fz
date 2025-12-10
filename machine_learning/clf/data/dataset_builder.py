@@ -713,11 +713,18 @@ def create_dataset_from_config(config: Dict[str, Any],
             val_subjects = set(unique_subjects)
             test_subjects = set(unique_subjects)
         else:
+            # Check if stratify is possible (need at least 2 samples per class)
+            from collections import Counter
+            label_counts = Counter(subject_labels)
+            can_stratify = split_config['stratify'] and all(c >= 2 for c in label_counts.values())
+            if split_config['stratify'] and not can_stratify:
+                logger.warning(f"Cannot stratify: some classes have <2 subjects. Disabling stratification.")
+            
             # First split: train vs (val+test)
             train_subjects_arr, temp_subjects_arr = train_test_split(
                 subjects_array,
                 train_size=train_ratio,
-                stratify=subject_labels if split_config['stratify'] else None,
+                stratify=subject_labels if can_stratify else None,
                 random_state=split_config['random_state']
             )
             
@@ -731,10 +738,14 @@ def create_dataset_from_config(config: Dict[str, Any],
                 val_subjects_arr = temp_subjects_arr
                 test_subjects_arr = temp_subjects_arr
             else:
+                # Check if stratify is possible for second split
+                temp_label_counts = Counter(temp_labels)
+                can_stratify_temp = can_stratify and all(c >= 2 for c in temp_label_counts.values())
+                
                 val_subjects_arr, test_subjects_arr = train_test_split(
                     temp_subjects_arr,
                     train_size=val_size,
-                    stratify=temp_labels if split_config['stratify'] else None,
+                    stratify=temp_labels if can_stratify_temp else None,
                     random_state=split_config['random_state']
                 )
             

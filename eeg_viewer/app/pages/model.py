@@ -197,10 +197,8 @@ def model_log(msg: str, msg_type: str = 'info'):
 
 
 def update_status_indicator(status: str):
-    """Update the training status indicator."""
+    """Update the training status (used by global indicator)."""
     MS.status = status
-    if MS.status_indicator:
-        MS.status_indicator.classes(replace=f'status-{status}')
 
 
 def create_default_config(dataset_path: str, dataset_info: dict) -> dict:
@@ -356,13 +354,6 @@ def model_page():
         
         # Global running indicator (shows pipeline or model training status)
         render_running_indicator()
-        
-        # Status indicator (model-specific)
-        with ui.row().classes('items-center gap-2 ml-4'):
-            MS.status_indicator = ui.html('<div></div>', sanitize=False).classes(f'status-{MS.status}')
-            status_labels = {'idle': 'IDLE', 'training': 'TRAINING...', 'completed': 'COMPLETED', 'error': 'ERROR'}
-            status_colors = {'idle': THEME_TEXT_DIM, 'training': '#f59e0b', 'completed': '#10b981', 'error': '#ef4444'}
-            ui.label(status_labels.get(MS.status, 'IDLE')).style(f'color:{status_colors.get(MS.status, THEME_TEXT_DIM)}; font-size: 0.7rem; font-family: JetBrains Mono;').bind_text_from(MS, 'status', lambda s: {'idle': 'IDLE', 'training': 'TRAINING...', 'completed': 'COMPLETED', 'error': 'ERROR'}.get(s, 'IDLE'))
         
         with ui.row().classes('ml-auto gap-2'):
             ui.button('VIEWER', on_click=lambda: ui.navigate.to('/')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
@@ -734,14 +725,20 @@ def model_page():
                                         MS.history['recon_loss'].append(recon)
                                         MS.history['kl_loss'].append(kl)
                                         
-                                        # Update loss plot
-                                        update_loss_plot()
+                                        # Update loss plot (may fail if tab switched)
+                                        try:
+                                            update_loss_plot()
+                                        except RuntimeError:
+                                            pass
                                     
                                     val_match = val_pattern.search(line)
                                     if val_match:
                                         val_loss = float(val_match.group(1))
                                         MS.history['val_loss'].append(val_loss)
-                                        update_loss_plot()
+                                        try:
+                                            update_loss_plot()
+                                        except RuntimeError:
+                                            pass
                             
                             await process.wait()
                             
