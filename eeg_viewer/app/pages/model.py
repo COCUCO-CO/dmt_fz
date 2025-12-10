@@ -17,6 +17,7 @@ from config import (
 )
 from app.state import MS
 from app.visualization.styles.css import STYLE
+from app.visualization.components.running_indicator import render_running_indicator
 
 AUTOENCODER_DIR = Path(__file__).parent.parent.parent.parent / "machine_learning" / "autoencoder"
 AUTOENCODER_CACHE_DIR = Path(__file__).parent.parent.parent / "cache" / "autoencoder"
@@ -165,25 +166,30 @@ def detect_dataset_type(path: Path) -> dict:
 
 
 def model_log(msg: str, msg_type: str = 'info'):
-    """Add message to model training log."""
+    """Add message to model training log - persists even when tab switches."""
     # Store in history for persistence
     MS.log_history.append((msg, msg_type))
     # Keep only last 500 messages
     if len(MS.log_history) > 500:
         MS.log_history = MS.log_history[-500:]
     
+    # Try to update UI if container exists and client is connected
     if MS.log_container:
-        colors = {
-            'info': THEME_TEXT,
-            'success': THEME_PRIMARY,
-            'warning': THEME_WARN,
-            'error': THEME_ERROR
-        }
-        with MS.log_container:
-            # Add line break before major sections
-            if any(x in msg for x in ['Starting', 'Training completed', '====', 'Epoch 001 ']):
-                ui.label('').style('height: 8px;')
-            ui.label(msg).style(f'color:{colors.get(msg_type, THEME_TEXT)}; font-family: JetBrains Mono; font-size: 0.75rem;')
+        try:
+            colors = {
+                'info': THEME_TEXT,
+                'success': THEME_PRIMARY,
+                'warning': THEME_WARN,
+                'error': THEME_ERROR
+            }
+            with MS.log_container:
+                # Add line break before major sections
+                if any(x in msg for x in ['Starting', 'Training completed', '====', 'Epoch 001 ']):
+                    ui.label('').style('height: 8px;')
+                ui.label(msg).style(f'color:{colors.get(msg_type, THEME_TEXT)}; font-family: JetBrains Mono; font-size: 0.75rem;')
+        except RuntimeError:
+            # Client disconnected (tab switched), log is still stored in history
+            pass
         
         # Auto-scroll to bottom
         if hasattr(MS, 'log_scroll') and MS.log_scroll:
@@ -348,7 +354,10 @@ def model_page():
         ui.label('EEG_VIEWER').classes('text-base font-medium ml-2').style(f'color: {THEME_PRIMARY}; font-family: JetBrains Mono; letter-spacing: 1px;')
         ui.label('// MODEL').classes('text-xs ml-2').style(f'color: #f472b6; font-family: JetBrains Mono;')
         
-        # Status indicator
+        # Global running indicator (shows pipeline or model training status)
+        render_running_indicator()
+        
+        # Status indicator (model-specific)
         with ui.row().classes('items-center gap-2 ml-4'):
             MS.status_indicator = ui.html('<div></div>', sanitize=False).classes(f'status-{MS.status}')
             status_labels = {'idle': 'IDLE', 'training': 'TRAINING...', 'completed': 'COMPLETED', 'error': 'ERROR'}
@@ -657,19 +666,23 @@ def model_page():
                             yaml.dump(MS.config, f, default_flow_style=False)
                         
                         MS.training = True
+                        MS.running_task_name = 'train.py'  # For global indicator
                         MS.history = {'train_loss': [], 'val_loss': [], 'recon_loss': [], 'kl_loss': [], 'epoch': []}
                         MS.log_history = []  # Clear log history
                         
                         # Clear previous logs and reset plot
-                        if MS.log_container:
-                            MS.log_container.clear()
-                        update_loss_plot()  # Reset the plot with empty data
-                        
-                        # Update status indicator
-                        update_status_indicator('training')
-                        
-                        training_status.text = 'Training...'
-                        training_status.style(f'color:{THEME_PRIMARY}; font-size: 0.75rem;')
+                        try:
+                            if MS.log_container:
+                                MS.log_container.clear()
+                            update_loss_plot()  # Reset the plot with empty data
+                            
+                            # Update status indicator
+                            update_status_indicator('training')
+                            
+                            training_status.text = 'Training...'
+                            training_status.style(f'color:{THEME_PRIMARY}; font-size: 0.75rem;')
+                        except RuntimeError:
+                            pass
                         model_log(f"Starting training with config: {config_path}", 'info')
                         
                         # Run training in subprocess
@@ -734,33 +747,47 @@ def model_page():
                             
                             if process.returncode == 0:
                                 model_log("Training completed successfully!", 'success')
-                                training_status.text = 'Completed'
-                                training_status.style(f'color:{THEME_PRIMARY}; font-size: 0.75rem;')
-                                update_status_indicator('completed')
+                                try:
+                                    training_status.text = 'Completed'
+                                    training_status.style(f'color:{THEME_PRIMARY}; font-size: 0.75rem;')
+                                    update_status_indicator('completed')
+                                except RuntimeError:
+                                    pass
                             else:
                                 model_log(f"Training failed with code {process.returncode}", 'error')
-                                training_status.text = 'Failed'
-                                training_status.style(f'color:{THEME_ERROR}; font-size: 0.75rem;')
-                                update_status_indicator('error')
+                                try:
+                                    training_status.text = 'Failed'
+                                    training_status.style(f'color:{THEME_ERROR}; font-size: 0.75rem;')
+                                    update_status_indicator('error')
+                                except RuntimeError:
+                                    pass
                         
                         except Exception as e:
                             model_log(f"Error: {e}", 'error')
-                            training_status.text = 'Error'
-                            training_status.style(f'color:{THEME_ERROR}; font-size: 0.75rem;')
-                            update_status_indicator('error')
+                            try:
+                                training_status.text = 'Error'
+                                training_status.style(f'color:{THEME_ERROR}; font-size: 0.75rem;')
+                                update_status_indicator('error')
+                            except RuntimeError:
+                                pass
                         
                         finally:
                             MS.training = False
+                            MS.running_task_name = ""
                             MS.current_process = None
                     
                     async def stop_training():
                         if MS.current_process:
                             MS.current_process.terminate()
                             model_log("Training stopped by user", 'warning')
-                            training_status.text = 'Stopped'
-                            training_status.style(f'color:{THEME_WARN}; font-size: 0.75rem;')
+                            try:
+                                training_status.text = 'Stopped'
+                                training_status.style(f'color:{THEME_WARN}; font-size: 0.75rem;')
+                                update_status_indicator('idle')
+                            except RuntimeError:
+                                pass
                             MS.training = False
-                            update_status_indicator('idle')
+                            MS.running_task_name = ""
                     
                     ui.button('Train', on_click=start_training, icon='play_arrow').props('dense').style(f'background:{THEME_PRIMARY}; color:black;')
                     ui.button('Stop', on_click=stop_training, icon='stop').props('dense color=negative')

@@ -12,6 +12,7 @@ from config import (
 )
 from app.state import PS
 from app.visualization.styles.css import STYLE
+from app.visualization.components.running_indicator import render_running_indicator
 
 PIPELINE_DIR = Path(__file__).parent.parent.parent.parent / "pipeline"
 PIPELINE_OUTPUTS = Path(__file__).parent.parent.parent.parent / "eeg_viewer" / "pipeline_outputs"
@@ -34,17 +35,25 @@ def create_new_run():
     return run_dir
 
 def pipeline_log(msg):
-    """Add message to pipeline log"""
+    """Add message to pipeline log - persists even when tab switches"""
+    # Always store in history for persistence
+    PS.log_history.append(msg)
+    
+    # Try to update UI if container exists and client is connected
     if PS.log_container:
-        with PS.log_container:
-            # Add line break before new steps/sections
-            if any(x in msg for x in ['[RUN]', 'Starting:', '[INFO]', '[SETUP]', '===', 'COMPLETED', 'FAILED']):
-                ui.label('').style('height: 12px;')
-            ui.label(msg).style(f'color:{THEME_TEXT}; font-family: JetBrains Mono; font-size: 0.75rem;')
-        # Force UI update and scroll to bottom
-        PS.log_container.update()
-        if hasattr(PS, 'log_scroll') and PS.log_scroll:
-            PS.log_scroll.scroll_to(percent=1.0)
+        try:
+            with PS.log_container:
+                # Add line break before new steps/sections
+                if any(x in msg for x in ['[RUN]', 'Starting:', '[INFO]', '[SETUP]', '===', 'COMPLETED', 'FAILED']):
+                    ui.label('').style('height: 12px;')
+                ui.label(msg).style(f'color:{THEME_TEXT}; font-family: JetBrains Mono; font-size: 0.75rem;')
+            # Force UI update and scroll to bottom
+            PS.log_container.update()
+            if hasattr(PS, 'log_scroll') and PS.log_scroll:
+                PS.log_scroll.scroll_to(percent=1.0)
+        except RuntimeError:
+            # Client disconnected (tab switched), log is still stored in history
+            pass
 
 async def run_pipeline_step(script_name, args_list, step_name, output_dir=None, input_dir=None):
     """Run a pipeline script with arguments"""
@@ -52,17 +61,25 @@ async def run_pipeline_step(script_name, args_list, step_name, output_dir=None, 
     import os as _os
     
     if PS.running:
-        ui.notify('Pipeline already running', type='warning')
+        try:
+            ui.notify('Pipeline already running', type='warning')
+        except RuntimeError:
+            pass
         return
     
     PS.running = True
     PS.current_step = step_name
+    PS.running_task_name = script_name  # For global indicator
     PS.start_time = datetime.now()
     
     script_path = PIPELINE_DIR / script_name
     if not script_path.exists():
-        ui.notify(f'Script not found: {script_path}', type='negative')
+        try:
+            ui.notify(f'Script not found: {script_path}', type='negative')
+        except RuntimeError:
+            pass
         PS.running = False
+        PS.running_task_name = ""
         return
     
     # Use -u for unbuffered output so we see logs in real-time
@@ -156,19 +173,29 @@ async def run_pipeline_step(script_name, args_list, step_name, output_dir=None, 
         
         if process.returncode == 0:
             pipeline_log(f"[{step_name}] Completed successfully")
-            ui.notify(f'{step_name} completed!', type='positive')
+            try:
+                ui.notify(f'{step_name} completed!', type='positive')
+            except RuntimeError:
+                pass
         else:
             pipeline_log(f"[{step_name}] Failed with code {process.returncode}")
-            ui.notify(f'{step_name} failed', type='negative')
+            try:
+                ui.notify(f'{step_name} failed', type='negative')
+            except RuntimeError:
+                pass
             
     except Exception as e:
         import traceback
         pipeline_log(f"[{step_name}] ERROR: {str(e)}")
         pipeline_log(traceback.format_exc())
-        ui.notify(f'Error: {e}', type='negative')
+        try:
+            ui.notify(f'Error: {e}', type='negative')
+        except RuntimeError:
+            pass
     finally:
         PS.running = False
         PS.current_step = ""
+        PS.running_task_name = ""
         PS.start_time = None
         PS.current_process = None
 
@@ -189,6 +216,10 @@ def pipeline_page():
         ui.label('▶').style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.75rem;')
         ui.label('EEG_PIPELINE').classes('text-base font-medium ml-2').style(f'color: {THEME_PRIMARY}; font-family: JetBrains Mono;')
         ui.label('v1.0').classes('text-xs ml-2').style(f'color: {THEME_TEXT_DIM}; font-family: JetBrains Mono;')
+        
+        # Global running indicator
+        render_running_indicator()
+        
         with ui.row().classes('ml-auto gap-2'):
             ui.button('VIEWER', on_click=lambda: ui.navigate.to('/')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
             ui.button('CLEANER', on_click=lambda: ui.navigate.to('/cleaner')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
@@ -557,14 +588,22 @@ def pipeline_page():
                             def clear_log():
                                 if PS.log_container:
                                     PS.log_container.clear()
+                                PS.log_history.clear()  # Also clear history
                             ui.button('CLEAR', on_click=clear_log, icon='delete').props('flat dense size=sm')
                         
                         PS.log_scroll = ui.scroll_area().classes('w-full').style('background: #050505; border-radius: 4px; flex: 1; min-height: 0;')
                         with PS.log_scroll:
                             PS.log_container = ui.column().classes('w-full p-3 gap-0')
                             with PS.log_container:
-                                ui.label('Pipeline ready. Select a step and click RUN.').style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.75rem;')
-                                ui.label(f'Pipeline directory: {PIPELINE_DIR}').style(f'color:{THEME_TEXT_DIM}; font-family: JetBrains Mono; font-size: 0.7rem;')
+                                # Restore logs from history if available
+                                if PS.log_history:
+                                    for msg in PS.log_history:
+                                        if any(x in msg for x in ['[RUN]', 'Starting:', '[INFO]', '[SETUP]', '===', 'COMPLETED', 'FAILED']):
+                                            ui.label('').style('height: 12px;')
+                                        ui.label(msg).style(f'color:{THEME_TEXT}; font-family: JetBrains Mono; font-size: 0.75rem;')
+                                else:
+                                    ui.label('Pipeline ready. Select a step and click RUN.').style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.75rem;')
+                                    ui.label(f'Pipeline directory: {PIPELINE_DIR}').style(f'color:{THEME_TEXT_DIM}; font-family: JetBrains Mono; font-size: 0.7rem;')
                     
                     # FILES TAB
                     with ui.tab_panel(tab_files).classes('p-2').style('height: 100%; display: flex; flex-direction: column;'):

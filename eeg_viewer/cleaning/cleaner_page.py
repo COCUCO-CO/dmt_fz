@@ -57,6 +57,7 @@ from config import (
     EEG_RAW_DIR, EEG_CLEAN_DIR, SUPPORTED_FORMATS
 )
 from eeg_loader import load_eeg_file, scan_eeg_directory
+from app.visualization.components.running_indicator import render_running_indicator
 
 import plotly.graph_objects as go
 
@@ -420,6 +421,9 @@ def cleaner_page():
             f'color: {THEME_PRIMARY}; font-family: JetBrains Mono;'
         )
         ui.label('v1.1').classes('text-xs ml-2 opacity-50')
+        
+        # Global running indicator
+        render_running_indicator()
         
         ui.element('div').classes('flex-1')
         

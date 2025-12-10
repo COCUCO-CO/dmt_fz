@@ -82,6 +82,10 @@ class PipelineState:
         self.progress = 0
         self.refresh_files = None  # Function to refresh file browser
         
+        # Persistence for tab switching
+        self.log_history = []  # Store log messages for restoration
+        self.running_task_name = ""  # Name of currently running task (for global indicator)
+        
         # Pipeline parameters
         self.max_subjects = 0  # 0 = all
         self.conditions = ["DMT", "EC", "EO"]
@@ -112,6 +116,7 @@ class ModelState:
         # Persistence for tab switching
         self.status = 'idle'  # 'idle', 'training', 'completed', 'error'
         self.log_history = []  # Store log messages
+        self.running_task_name = ""  # Name of currently running task (for global indicator)
         self.status_indicator = None
         self.update_plots = None
         self.tabs = None
