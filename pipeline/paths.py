@@ -1,6 +1,7 @@
 from pathlib import Path
 import platform
 import sys
+import os
 
 # Intentar cargar configuración personalizada (opcional)
 try:
@@ -15,7 +16,8 @@ except ImportError:
 
 # Si no hay configuración personalizada, usar detección automática
 if CUSTOM_BASE_DIR is None:
-    # BASE_DIR apunta al directorio padre (dmt/) desde pipeline/
+    # BASE_DIR apunta al proyecto raíz (dmt_fz/) desde pipeline/
+    # Subir 1 nivel: paths.py -> pipeline -> dmt_fz
     BASE_DIR = Path(__file__).resolve().parent.parent
     
     # Información del sistema operativo
@@ -31,10 +33,37 @@ if CUSTOM_BASE_DIR is None:
     else:
         print(f"[PATHS] {system} detected: Using {BASE_DIR}")
 
+# =============================================================================
+# INPUT/OUTPUT DIRECTORY CONFIGURATION
+# =============================================================================
+# Check for environment variables (set by UI)
+# This allows each pipeline run to have its own input/output directories
+
+# INPUT: where to read EEG data from
+_custom_input = os.environ.get('PIPELINE_INPUT_DIR')
+if _custom_input:
+    EEG_CLEAN_DIR = Path(_custom_input)
+    print(f"[PATHS] Using custom input dir: {EEG_CLEAN_DIR}")
+else:
+    EEG_CLEAN_DIR = BASE_DIR / "EEG_CLEAN"
+
+# OUTPUT: where pipeline results go
+_custom_output = os.environ.get('PIPELINE_OUTPUT_DIR')
+if _custom_output:
+    PIPELINE_OUTPUT_BASE = Path(_custom_output)
+    print(f"[PATHS] Using custom output dir: {PIPELINE_OUTPUT_BASE}")
+else:
+    PIPELINE_OUTPUT_BASE = None
+
 # Configuración de directorios (Path maneja automáticamente / vs \ según el OS)
-EEG_CLEAN_DIR = BASE_DIR / "EEG_CLEAN"
 EEG_DIR = BASE_DIR / "EEG"
-RESULTS_DIR = BASE_DIR / "fwd-inv-stc"
+
+# RESULTS_DIR: where pipeline outputs go
+if PIPELINE_OUTPUT_BASE:
+    RESULTS_DIR = PIPELINE_OUTPUT_BASE
+else:
+    RESULTS_DIR = BASE_DIR / "fwd-inv-stc"
+
 SPECTRAL_DIR = BASE_DIR / "spectral_sources"
 EEGNET_DIR = BASE_DIR / "EEGNet"
 RESULTS_PLOTS_DIR = BASE_DIR / "results_plots"

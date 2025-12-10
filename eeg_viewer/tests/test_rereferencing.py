@@ -215,3 +215,4 @@ class TestGetCurrentReference:
         # Should indicate some reference was applied
         assert len(ref) > 0
 
+

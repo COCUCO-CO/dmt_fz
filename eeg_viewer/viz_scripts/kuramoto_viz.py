@@ -157,6 +157,30 @@ def extract_phases(data, band, epoch=0, key='phases_stc'):
 
 
 # ============================================================================
+# HELPER FOR NO DATA
+# ============================================================================
+
+def create_no_data_figure(message="No data available", height=350):
+    """Create a figure showing 'no data' message"""
+    fig = go.Figure()
+    fig.add_annotation(
+        x=0.5, y=0.5,
+        xref='paper', yref='paper',
+        text=message,
+        showarrow=False,
+        font=dict(size=16, color='#888'),
+    )
+    fig.update_layout(
+        template='plotly_dark',
+        paper_bgcolor='#0a0a0a',
+        plot_bgcolor='#0a0a0a',
+        height=height,
+        xaxis=dict(visible=False),
+        yaxis=dict(visible=False)
+    )
+    return fig
+
+# ============================================================================
 # VISUALIZATION FUNCTIONS
 # ============================================================================
 
@@ -165,14 +189,12 @@ def create_timeline_figure(data, band='Alpha'):
     Timeline of Kuramoto order parameter across epochs
     Shows evolution of synchronization over time
     """
-    fig = go.Figure()
-    
     values = extract_kuramoto_values(data, band)
     
     if values is None or len(values) == 0:
-        # Demo data
-        np.random.seed(42)
-        values = 0.4 + 0.2 * np.random.rand(50) + 0.1 * np.sin(np.linspace(0, 4*np.pi, 50))
+        return create_no_data_figure(f"No Kuramoto data for {band}\nLoad data first", 350)
+    
+    fig = go.Figure()
     
     epochs = list(range(len(values)))
     mean_val = np.mean(values)
@@ -230,14 +252,9 @@ def create_band_comparison_figure(data):
         values = extract_kuramoto_values(data, band)
         
         if values is None or len(values) < 3:
-            # Generate demo data
-            np.random.seed(hash(band) % 2**32)
-            base = {'Delta': 0.45, 'Theta': 0.52, 'Alpha': 0.58, 'Beta': 0.42, 'Gamma': 0.35}
-            values = base.get(band, 0.4) + 0.15 * np.random.randn(30)
-            values = np.clip(values, 0, 1)
-        else:
-            has_data = True
+            continue  # Skip bands without data
         
+        has_data = True
         fig.add_trace(go.Box(
             y=values,
             name=band,
@@ -247,9 +264,10 @@ def create_band_comparison_figure(data):
             fillcolor=f"rgba{tuple(list(int(BAND_COLORS.get(band, '#888888')[i:i+2], 16) for i in (1, 3, 5)) + [0.5])}"
         ))
     
-    title = 'Kuramoto Order by Frequency Band'
     if not has_data:
-        title += ' (Demo Data)'
+        return create_no_data_figure("No Kuramoto data available\nRun pipeline first", 400)
+    
+    title = 'Kuramoto Order by Frequency Band'
     
     fig.update_layout(
         title=dict(text=title, font=dict(size=14)),
@@ -273,12 +291,7 @@ def create_heatmap_figure(data, band='Alpha', epoch=0):
     mat = extract_syncro_matrix(data, band, epoch)
     
     if mat is None or mat.ndim != 2:
-        # Generate demo matrix
-        np.random.seed(42)
-        n = 50
-        mat = np.random.rand(n, n) * 0.5 + 0.25
-        mat = (mat + mat.T) / 2
-        np.fill_diagonal(mat, 1.0)
+        return create_no_data_figure(f"No sync matrix for {band} epoch {epoch}\nRun calculate_syncro.py first", 450)
     
     fig = go.Figure()
     
@@ -312,12 +325,7 @@ def create_phase_distribution_figure(data, band='Alpha', epoch=0, sample=0):
     phases = extract_phases(data, band, epoch)
     
     if phases is None:
-        # Generate demo phases
-        np.random.seed(42)
-        n_osc = 24
-        mean_phase = np.random.rand() * 2 * np.pi
-        phases = mean_phase + 0.8 * np.random.randn(n_osc, 100)
-        phases = phases[:, sample]
+        return create_no_data_figure(f"No phase data for {band}\nRun fwd.py first", 400)
     else:
         if phases.ndim == 2:
             phases = phases[:, min(sample, phases.shape[1]-1)]
@@ -403,12 +411,7 @@ def create_roi_connectivity_figure(data, band='Alpha', threshold=0.5, epoch=0):
     mat = extract_syncro_matrix(data, band, epoch)
     
     if mat is None or mat.ndim != 2:
-        # Generate demo matrix
-        np.random.seed(42)
-        n = 50
-        mat = np.random.rand(n, n) * 0.5 + 0.25
-        mat = (mat + mat.T) / 2
-        np.fill_diagonal(mat, 0)
+        return create_no_data_figure(f"No connectivity data for {band}\nRun calculate_syncro.py first", 400)
     
     n = mat.shape[0]
     
@@ -486,10 +489,7 @@ def create_epoch_evolution_figure(data, band='Alpha'):
     values = extract_kuramoto_values(data, band)
     
     if values is None or len(values) < 5:
-        # Generate demo data
-        np.random.seed(42)
-        values = 0.5 + 0.15 * np.sin(np.linspace(0, 6*np.pi, 60)) + 0.1 * np.random.randn(60)
-        values = np.clip(values, 0, 1)
+        return create_no_data_figure(f"No Kuramoto evolution data for {band}\nNeed at least 5 epochs", 500)
     
     values = np.array(values)
     epochs = np.arange(len(values))
@@ -598,11 +598,7 @@ def create_multi_subject_comparison(run_dir, band='Alpha', conditions=['DMT', 'E
                         data_found = True
         
         if not cond_values:
-            # Demo data
-            np.random.seed(hash(cond) % 2**32)
-            base = {'DMT': 0.55, 'EC': 0.48, 'EO': 0.42}
-            cond_values = base.get(cond, 0.45) + 0.12 * np.random.randn(15)
-            cond_values = np.clip(cond_values, 0, 1)
+            continue  # Skip conditions without data
         
         fig.add_trace(go.Box(
             y=cond_values,
@@ -612,9 +608,10 @@ def create_multi_subject_comparison(run_dir, band='Alpha', conditions=['DMT', 'E
             line=dict(width=2)
         ))
     
-    title = f'Kuramoto Comparison - {band}'
     if not data_found:
-        title += ' (Demo Data)'
+        return create_no_data_figure(f"No data found for {band} in {run_dir}\nRun pipeline first", 400)
+    
+    title = f'Kuramoto Comparison - {band}'
     
     fig.update_layout(
         title=dict(text=title, font=dict(size=14)),
@@ -638,18 +635,15 @@ def create_all_bands_timeline(data):
     fig = go.Figure()
     
     max_epochs = 0
+    has_data = False
     
     for band in BANDS:
         values = extract_kuramoto_values(data, band)
         
         if values is None or len(values) < 3:
-            # Generate demo data
-            np.random.seed(hash(band) % 2**32)
-            base = {'Delta': 0.45, 'Theta': 0.52, 'Alpha': 0.58, 'Beta': 0.42, 'Gamma': 0.35}
-            n = 50
-            values = base.get(band, 0.4) + 0.1 * np.random.randn(n)
-            values = np.clip(values, 0, 1)
+            continue  # Skip bands without data
         
+        has_data = True
         epochs = list(range(len(values)))
         max_epochs = max(max_epochs, len(epochs))
         
@@ -660,6 +654,9 @@ def create_all_bands_timeline(data):
             name=f'{band} (μ={np.mean(values):.3f})',
             hovertemplate=f'{band}<br>Epoch %{{x}}<br>r = %{{y:.3f}}<extra></extra>'
         ))
+    
+    if not has_data:
+        return create_no_data_figure("No Kuramoto data for any band\nRun pipeline first", 400)
     
     fig.update_layout(
         title=dict(text='Kuramoto Timeline - All Bands', font=dict(size=14)),
@@ -697,32 +694,7 @@ def create_hilbert_2d_figure(data, band='Alpha', epoch=0, n_oscillators=24):
     phases = extract_phases(data, band, epoch)
     
     if phases is None:
-        # Generate demo Hilbert data
-        np.random.seed(42)
-        t = np.linspace(0, 2, 500)
-        n_osc = n_oscillators
-        
-        # Simulate oscillators with different phases
-        base_freq = 10  # Hz
-        amplitudes = []
-        inst_phases = []
-        
-        for i in range(n_osc):
-            phase_offset = 2 * np.pi * i / n_osc + 0.5 * np.random.randn()
-            freq_jitter = base_freq + 2 * np.random.randn()
-            signal = np.sin(2 * np.pi * freq_jitter * t + phase_offset)
-            
-            # Hilbert envelope (simulated)
-            envelope = 0.8 + 0.2 * np.sin(2 * np.pi * 0.5 * t) + 0.1 * np.random.randn(len(t))
-            envelope = np.clip(envelope, 0.3, 1.2)
-            amplitudes.append(envelope)
-            
-            # Instantaneous phase
-            inst_phase = 2 * np.pi * freq_jitter * t + phase_offset
-            inst_phases.append(np.mod(inst_phase, 2 * np.pi))
-        
-        amplitudes = np.array(amplitudes)
-        inst_phases = np.array(inst_phases)
+        return create_no_data_figure(f"No phase data for {band} epoch {epoch}\nRun fwd.py first", 550)
     else:
         # Use real data
         if phases.ndim == 1:
@@ -876,38 +848,25 @@ def create_hilbert_3d_figure(data, band='Alpha', epoch=0, roi_idx=0, subject='S0
             except:
                 pass
     
-    # Generate demo data if needed
-    if phases is None or amplitudes is None:
-        np.random.seed(42 + epoch)
-        fs = 500.0
-        duration = 2.0
-        n_samples = int(fs * duration)
-        t = np.arange(n_samples) / fs
-        
-        # Simulate analytic signal
-        freq = 10 + 2 * np.random.randn()
-        phase_offset = np.random.rand() * 2 * np.pi
-        
-        # Phase: linear + slow modulation
-        phases = 2 * np.pi * freq * t + phase_offset + 0.3 * np.sin(2 * np.pi * 0.5 * t)
-        
-        # Amplitude: slow envelope variation
-        amplitudes = 0.05 + 0.03 * np.sin(2 * np.pi * 0.3 * t) + 0.01 * np.random.randn(n_samples)
-        amplitudes = np.abs(amplitudes)
-        
-        roi_name = f'Demo ROI {roi_idx}'
-    else:
-        # Extract single ROI data
-        if phases.ndim == 2:
-            roi_idx = min(roi_idx, phases.shape[0] - 1)
-            phases = phases[roi_idx, :]
-        if amplitudes.ndim == 2:
-            roi_idx = min(roi_idx, amplitudes.shape[0] - 1)
-            amplitudes = amplitudes[roi_idx, :]
-        
-        fs = 500.0
-        n_samples = len(phases)
-        t = np.arange(n_samples) / fs
+    # Return no data figure if no data
+    if phases is None:
+        return create_no_data_figure(f"No phase data for {band} epoch {epoch}\nRun fwd.py first", 550)
+    
+    # Use constant amplitude if not available
+    if amplitudes is None:
+        amplitudes = np.ones_like(phases) * 0.05
+    
+    # Extract single ROI data
+    if phases.ndim == 2:
+        roi_idx = min(roi_idx, phases.shape[0] - 1)
+        phases = phases[roi_idx, :]
+    if amplitudes.ndim == 2:
+        roi_idx = min(roi_idx, amplitudes.shape[0] - 1)
+        amplitudes = amplitudes[roi_idx, :]
+    
+    fs = 500.0
+    n_samples = len(phases)
+    t = np.arange(n_samples) / fs
     
     # Trim edges (like original script)
     start = int(len(t) * 0.15)

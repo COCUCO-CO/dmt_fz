@@ -1,208 +1,241 @@
 """
-Tests for cleaning/state.py - CleaningState and CleaningStep.
-"""
+Tests for app/state module.
 
+Tests the BaseState Observer pattern and all state classes.
+"""
 import pytest
+import sys
 from pathlib import Path
 
-from cleaning.state import CleaningState, CleaningStep, OperationRecord
+# Add project root to path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from app.state import BaseState, StateHolder, ViewerState, PipelineState, ModelState, AnalysisState
 
 
-class TestCleaningStep:
-    """Tests for CleaningStep enum."""
+class TestBaseState:
+    """Tests for BaseState Observer pattern."""
     
-    def test_all_steps_exist(self):
-        """Verify all expected steps exist."""
-        steps = list(CleaningStep)
-        assert len(steps) == 9  # Updated: now includes VISUALIZE
-        assert CleaningStep.LOAD in steps
-        assert CleaningStep.FILTER in steps
-        assert CleaningStep.BAD_CHANNELS in steps
-        assert CleaningStep.REREFERENCE in steps
-        assert CleaningStep.ICA in steps
-        assert CleaningStep.EPOCHS in steps
-        assert CleaningStep.REJECT in steps
-        assert CleaningStep.VISUALIZE in steps  # New step
-        assert CleaningStep.EXPORT in steps
+    def test_subscribe_and_notify(self):
+        """Test that subscribers receive notifications."""
+        state = ViewerState()
+        notifications = []
+        
+        state.subscribe(lambda attr, old, new: notifications.append((attr, old, new)))
+        state.view_duration = 10.0
+        
+        assert len(notifications) == 1
+        assert notifications[0] == ('view_duration', 5.0, 10.0)
     
-    def test_display_name(self):
-        """Test display names are set correctly."""
-        assert "Load" in CleaningStep.LOAD.display_name
-        assert "Filter" in CleaningStep.FILTER.display_name
-        assert "Bad" in CleaningStep.BAD_CHANNELS.display_name
+    def test_multiple_subscribers(self):
+        """Test multiple subscribers receive notifications."""
+        state = ViewerState()
+        count1 = [0]
+        count2 = [0]
+        
+        state.subscribe(lambda a, o, n: count1.__setitem__(0, count1[0] + 1))
+        state.subscribe(lambda a, o, n: count2.__setitem__(0, count2[0] + 1))
+        
+        state.view_start = 5.0
+        
+        assert count1[0] == 1
+        assert count2[0] == 1
     
-    def test_short_name(self):
-        """Test short names are set correctly."""
-        assert CleaningStep.LOAD.short_name == "LOAD"
-        assert CleaningStep.FILTER.short_name == "FILTER"
-        assert CleaningStep.ICA.short_name == "ICA"
-        assert CleaningStep.VISUALIZE.short_name == "VIEW"
-        assert CleaningStep.EXPORT.short_name == "EXPORT"
+    def test_unsubscribe(self):
+        """Test unsubscribe stops notifications."""
+        state = ViewerState()
+        notifications = []
+        
+        unsubscribe = state.subscribe(lambda a, o, n: notifications.append(1))
+        state.view_duration = 10.0
+        assert len(notifications) == 1
+        
+        unsubscribe()
+        state.view_duration = 15.0
+        assert len(notifications) == 1  # No new notification
+    
+    def test_no_notification_if_value_unchanged(self):
+        """Test no notification when value doesn't change."""
+        state = ViewerState()
+        notifications = []
+        
+        state.subscribe(lambda a, o, n: notifications.append(1))
+        state.view_duration = 5.0  # Same as default
+        
+        assert len(notifications) == 0
+    
+    def test_batch_update(self):
+        """Test batch_update triggers single notification."""
+        state = ViewerState()
+        notifications = []
+        
+        state.subscribe(lambda a, o, n: notifications.append((a, n)))
+        state.batch_update(view_start=10.0, view_duration=20.0, is_playing=True)
+        
+        # Should be single batch_update notification
+        assert len(notifications) == 1
+        assert notifications[0][0] == 'batch_update'
+        changes = notifications[0][1]
+        assert 'view_start' in changes
+        assert 'view_duration' in changes
+        assert 'is_playing' in changes
+    
+    def test_snapshot(self):
+        """Test snapshot returns copy of state."""
+        state = ViewerState()
+        state.view_duration = 15.0
+        state.is_playing = True
+        
+        snap = state.snapshot()
+        
+        assert snap['view_duration'] == 15.0
+        assert snap['is_playing'] == True
+        assert 'raw1' not in snap or snap['raw1'] is None
 
 
-class TestCleaningState:
-    """Tests for CleaningState class."""
+class TestStateHolder:
+    """Tests for StateHolder singleton."""
     
-    def test_initial_state(self, cleaning_state):
-        """Test initial state after creation."""
-        assert cleaning_state.raw is None
-        assert not cleaning_state.is_loaded
-        assert cleaning_state.current_step == CleaningStep.LOAD
-        assert len(cleaning_state.completed_steps) == 0
-        assert len(cleaning_state.operations) == 0
-        assert cleaning_state.sfreq == 0.0
-        assert cleaning_state.n_channels == 0
-        assert cleaning_state.duration == 0.0
+    def setup_method(self):
+        """Reset singleton before each test."""
+        StateHolder.reset_instance()
     
-    def test_load_raw(self, cleaning_state, synthetic_raw):
-        """Test loading raw data."""
-        test_path = Path("/fake/path/test.bdf")
-        cleaning_state.load_raw(synthetic_raw, test_path)
-        
-        assert cleaning_state.is_loaded
-        assert cleaning_state.raw is not None
-        assert cleaning_state.filename == "test.bdf"
-        assert cleaning_state.filepath == test_path
-        assert cleaning_state.sfreq == synthetic_raw.info['sfreq']
-        assert cleaning_state.n_channels == len(synthetic_raw.ch_names)
-        assert CleaningStep.LOAD in cleaning_state.completed_steps
-        assert len(cleaning_state.operations) == 1
+    def test_singleton_pattern(self):
+        """Test StateHolder is singleton."""
+        h1 = StateHolder()
+        h2 = StateHolder()
+        assert h1 is h2
     
-    def test_properties_with_data(self, loaded_state):
-        """Test properties return correct values when loaded."""
-        assert loaded_state.is_loaded
-        assert loaded_state.sfreq > 0
-        assert loaded_state.n_channels > 0
-        assert loaded_state.duration > 0
-        assert len(loaded_state.ch_names) > 0
+    def test_register_and_get_state(self):
+        """Test registering and retrieving states."""
+        holder = StateHolder()
+        viewer = ViewerState()
+        
+        holder.register('viewer', viewer)
+        
+        assert holder.get('viewer') is viewer
+        assert holder.viewer is viewer
     
-    def test_update_raw(self, loaded_state):
-        """Test updating raw data."""
-        original_raw = loaded_state.raw.copy()
-        new_raw = loaded_state.raw.copy()
+    def test_attribute_style_access(self):
+        """Test attribute-style state access."""
+        holder = StateHolder()
+        holder.viewer = ViewerState()
+        holder.pipeline = PipelineState()
         
-        loaded_state.update_raw(
-            new_raw,
-            'test_operation',
-            CleaningStep.FILTER,
-            {'param': 'value'},
-            'Test description'
-        )
-        
-        assert loaded_state.can_undo
-        assert len(loaded_state.operations) == 2  # load + update
-        assert loaded_state.operations[-1].operation == 'test_operation'
+        assert isinstance(holder.viewer, ViewerState)
+        assert isinstance(holder.pipeline, PipelineState)
     
-    def test_undo(self, loaded_state):
-        """Test undo functionality."""
-        # Apply an operation
-        original_sfreq = loaded_state.sfreq
-        new_raw = loaded_state.raw.copy()
+    def test_get_nonexistent_returns_default(self):
+        """Test get() returns default for missing state."""
+        holder = StateHolder()
         
-        loaded_state.update_raw(
-            new_raw,
-            'test',
-            CleaningStep.FILTER,
-            {},
-            'Test'
-        )
-        
-        assert loaded_state.can_undo
-        
-        # Undo
-        result = loaded_state.undo()
-        assert result == True
-        assert loaded_state.sfreq == original_sfreq
+        result = holder.get('nonexistent', 'default')
+        assert result == 'default'
     
-    def test_undo_empty(self, cleaning_state):
-        """Test undo when nothing to undo."""
-        assert not cleaning_state.can_undo
-        result = cleaning_state.undo()
-        assert result == False
-    
-    def test_reset_to_original(self, loaded_state):
-        """Test reset to original data."""
-        # Apply some operations
-        loaded_state.bad_channels = ['Fp1', 'Fp2']
-        loaded_state.ica_excluded = [0, 1]
+    def test_attribute_error_for_missing(self):
+        """Test AttributeError for missing state attribute."""
+        holder = StateHolder()
         
-        loaded_state.update_raw(
-            loaded_state.raw.copy(),
-            'test',
-            CleaningStep.FILTER,
-            {},
-            'Test'
-        )
-        
-        # Reset
-        loaded_state.reset_to_original()
-        
-        assert loaded_state.is_loaded
-        assert len(loaded_state.bad_channels) == 0
-        assert len(loaded_state.ica_excluded) == 0
-        assert loaded_state.current_step == CleaningStep.LOAD
-        assert len(loaded_state.completed_steps) == 1
-    
-    def test_step_navigation(self, loaded_state):
-        """Test step navigation."""
-        loaded_state.go_to_step(CleaningStep.ICA)
-        assert loaded_state.current_step == CleaningStep.ICA
-        
-        loaded_state.go_to_step(CleaningStep.FILTER)
-        assert loaded_state.current_step == CleaningStep.FILTER
-    
-    def test_complete_step(self, loaded_state):
-        """Test completing a step."""
-        loaded_state.go_to_step(CleaningStep.FILTER)
-        loaded_state.complete_step(CleaningStep.FILTER)
-        
-        assert CleaningStep.FILTER in loaded_state.completed_steps
-        assert loaded_state.current_step == CleaningStep.BAD_CHANNELS  # Auto-advance
-    
-    def test_preprocessing_summary(self, loaded_state):
-        """Test getting preprocessing summary."""
-        loaded_state.bad_channels = ['Fp1']
-        loaded_state.reference_type = "Average"
-        
-        summary = loaded_state.get_preprocessing_summary()
-        
-        assert 'filename' in summary
-        assert 'bad_channels' in summary
-        assert 'operations' in summary
-        assert summary['bad_channels'] == ['Fp1']
-        assert summary['reference_type'] == "Average"
+        with pytest.raises(AttributeError):
+            _ = holder.nonexistent
 
 
-class TestOperationRecord:
-    """Tests for OperationRecord class."""
+class TestViewerState:
+    """Tests for ViewerState properties and methods."""
     
-    def test_creation(self):
-        """Test creating an operation record."""
-        record = OperationRecord(
-            step=CleaningStep.FILTER,
-            operation='apply_filter',
-            parameters={'hp': 0.1, 'lp': 45},
-            description='Filter applied'
-        )
+    def test_default_values(self):
+        """Test default values are set correctly."""
+        state = ViewerState()
         
-        assert record.step == CleaningStep.FILTER
-        assert record.operation == 'apply_filter'
-        assert record.parameters['hp'] == 0.1
-        assert record.timestamp is not None
+        assert state.view_duration == 5.0
+        assert state.view_start == 0.0
+        assert state.is_playing == False
+        assert state.notch_enabled == False
+        assert state.bandpass_enabled == False
     
-    def test_to_dict(self):
-        """Test converting to dictionary."""
-        record = OperationRecord(
-            step=CleaningStep.FILTER,
-            operation='test',
-            parameters={'key': 'value'},
-            description='Test'
-        )
+    def test_view_end_property(self):
+        """Test view_end computed property."""
+        state = ViewerState()
+        state.view_start = 10.0
+        state.view_duration = 5.0
         
-        d = record.to_dict()
+        assert state.view_end == 15.0
+    
+    def test_has_data_property(self):
+        """Test has_data property."""
+        state = ViewerState()
+        assert state.has_data == False
         
-        assert d['step'] == 'FILTER'
-        assert d['operation'] == 'test'
-        assert d['parameters'] == {'key': 'value'}
-        assert 'timestamp' in d
+        # Can't easily test with real data, but property works
+    
+    def test_reset(self):
+        """Test reset() restores defaults."""
+        state = ViewerState()
+        state.view_start = 100.0
+        state.view_duration = 50.0
+        state.is_playing = True
+        
+        state.reset()
+        
+        assert state.view_start == 0.0
+        assert state.view_duration == 5.0
+        assert state.is_playing == False
+    
+    def test_get_view_samples(self):
+        """Test get_view_samples calculation."""
+        state = ViewerState()
+        state.view_start = 1.0
+        state.view_duration = 2.0
+        
+        start, end = state.get_view_samples(sfreq=100.0)
+        
+        assert start == 100  # 1.0 * 100
+        assert end == 300    # 3.0 * 100
 
+
+class TestPipelineState:
+    """Tests for PipelineState."""
+    
+    def test_default_values(self):
+        """Test default values."""
+        state = PipelineState()
+        
+        assert state.running == False
+        assert state.workers == 7
+        assert state.progress == 0
+        assert state.current_step == ""
+    
+    def test_pipeline_parameters(self):
+        """Test pipeline parameters exist."""
+        state = PipelineState()
+        
+        assert state.max_subjects == 0
+        assert "DMT" in state.conditions
+        assert state.min_k == 2
+        assert state.max_k == 15
+
+
+class TestModelState:
+    """Tests for ModelState."""
+    
+    def test_default_values(self):
+        """Test default values."""
+        state = ModelState()
+        
+        assert state.training == False
+        assert state.model_type == "vae"
+        assert state.status == 'idle'
+        assert state.dataset_path == ""
+
+
+class TestAnalysisState:
+    """Tests for AnalysisState."""
+    
+    def test_default_values(self):
+        """Test default values."""
+        state = AnalysisState()
+        
+        assert state.device == "cpu"
+        assert state.model_type == "graph"
+        assert state.model is None
+        assert state.dataset is None

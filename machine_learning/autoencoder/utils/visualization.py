@@ -114,8 +114,16 @@ def plot_latent_space(latent_vectors: np.ndarray,
         title: Plot title
     """
     # Reduce dimensionality
+    n_samples = latent_vectors.shape[0]
     if method == 'tsne':
-        reducer = TSNE(n_components=2, random_state=42, perplexity=30)
+        # Perplexity must be less than n_samples
+        perplexity = min(30, max(5, n_samples - 1))
+        if n_samples < 5:
+            # Too few samples for t-SNE, fallback to PCA
+            reducer = PCA(n_components=2)
+            method = 'pca'
+        else:
+            reducer = TSNE(n_components=2, random_state=42, perplexity=perplexity)
         embedding = reducer.fit_transform(latent_vectors)
     elif method == 'pca':
         reducer = PCA(n_components=2)

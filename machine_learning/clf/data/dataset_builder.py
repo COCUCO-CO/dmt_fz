@@ -704,28 +704,54 @@ def create_dataset_from_config(config: Dict[str, Any],
         subjects_array = np.array(unique_subjects)
         subject_labels = np.array([subject_dominant_class[s] for s in unique_subjects])
         
-        # First split: train vs (val+test)
-        train_subjects_arr, temp_subjects_arr = train_test_split(
-            subjects_array,
-            train_size=train_ratio,
-            stratify=subject_labels if split_config['stratify'] else None,
-            random_state=split_config['random_state']
-        )
-        
-        # Second split: val vs test
-        temp_labels = np.array([subject_dominant_class[s] for s in temp_subjects_arr])
-        val_size = val_ratio / (val_ratio + test_ratio)
-        
-        val_subjects_arr, test_subjects_arr = train_test_split(
-            temp_subjects_arr,
-            train_size=val_size,
-            stratify=temp_labels if split_config['stratify'] else None,
-            random_state=split_config['random_state']
-        )
-        
-        train_subjects = set(train_subjects_arr)
-        val_subjects = set(val_subjects_arr)
-        test_subjects = set(test_subjects_arr)
+        # Handle edge case: too few subjects to split
+        n_subjects = len(unique_subjects)
+        if n_subjects < 3:
+            logger.warning(f"Only {n_subjects} subject(s) found. Using all data for train/val/test (no proper split possible).")
+            # Use all subjects for all splits when we can't properly split
+            train_subjects = set(unique_subjects)
+            val_subjects = set(unique_subjects)
+            test_subjects = set(unique_subjects)
+        else:
+            # Check if stratify is possible (need at least 2 samples per class)
+            from collections import Counter
+            label_counts = Counter(subject_labels)
+            can_stratify = split_config['stratify'] and all(c >= 2 for c in label_counts.values())
+            if split_config['stratify'] and not can_stratify:
+                logger.warning(f"Cannot stratify: some classes have <2 subjects. Disabling stratification.")
+            
+            # First split: train vs (val+test)
+            train_subjects_arr, temp_subjects_arr = train_test_split(
+                subjects_array,
+                train_size=train_ratio,
+                stratify=subject_labels if can_stratify else None,
+                random_state=split_config['random_state']
+            )
+            
+            # Second split: val vs test
+            temp_labels = np.array([subject_dominant_class[s] for s in temp_subjects_arr])
+            val_size = val_ratio / (val_ratio + test_ratio)
+            
+            # Handle edge case: temp set too small to split
+            if len(temp_subjects_arr) < 2:
+                logger.warning(f"Only {len(temp_subjects_arr)} subject(s) in val+test set. Using same subjects for val and test.")
+                val_subjects_arr = temp_subjects_arr
+                test_subjects_arr = temp_subjects_arr
+            else:
+                # Check if stratify is possible for second split
+                temp_label_counts = Counter(temp_labels)
+                can_stratify_temp = can_stratify and all(c >= 2 for c in temp_label_counts.values())
+                
+                val_subjects_arr, test_subjects_arr = train_test_split(
+                    temp_subjects_arr,
+                    train_size=val_size,
+                    stratify=temp_labels if can_stratify_temp else None,
+                    random_state=split_config['random_state']
+                )
+            
+            train_subjects = set(train_subjects_arr)
+            val_subjects = set(val_subjects_arr)
+            test_subjects = set(test_subjects_arr)
         
         # Collect graphs for each split
         train_graphs = [g for s in train_subjects for g in subject_graphs[s]]

@@ -8,6 +8,26 @@ import plotly.graph_objects as go
 BANDS = ['Delta', 'Theta', 'Alpha', 'Beta', 'Gamma']
 BAND_COLORS = {'Delta': '#6366f1', 'Theta': '#22c55e', 'Alpha': '#eab308', 'Beta': '#f97316', 'Gamma': '#ef4444'}
 
+def _create_no_data_figure(message="No data available", height=350):
+    """Create a figure showing 'no data' message"""
+    fig = go.Figure()
+    fig.add_annotation(
+        x=0.5, y=0.5,
+        xref='paper', yref='paper',
+        text=message,
+        showarrow=False,
+        font=dict(size=16, color='#888'),
+    )
+    fig.update_layout(
+        template='plotly_dark',
+        paper_bgcolor='#0a0a0a',
+        plot_bgcolor='#0a0a0a',
+        height=height,
+        xaxis=dict(visible=False),
+        yaxis=dict(visible=False)
+    )
+    return fig
+
 def create_kuramoto_animation(data, band='Alpha'):
     """Animated Kuramoto timeline."""
     fig = go.Figure()
@@ -22,7 +42,7 @@ def create_kuramoto_animation(data, band='Alpha'):
                 values = [np.mean(e) if hasattr(e, '__iter__') else e for e in k]
     
     if not values:
-        values = list(0.3 + 0.3 * np.random.rand(20))
+        return _create_no_data_figure(f"No Kuramoto data for {band}\nLoad data first", 400)
     
     n = len(values)
     
@@ -69,7 +89,7 @@ def create_matrix_animation(data, band='Alpha'):
             pass
     
     if not matrices:
-        matrices = [np.random.rand(20, 20) for _ in range(10)]
+        return _create_no_data_figure(f"No sync matrices for {band}\nRun calculate_syncro.py first", 400)
     
     n = len(matrices)
     
@@ -113,9 +133,7 @@ def create_all_bands_animation(data):
                 max_n = max(max_n, len(values))
     
     if not band_data:
-        for band in BANDS:
-            band_data[band] = list(0.3 + 0.3 * np.random.rand(20))
-        max_n = 20
+        return _create_no_data_figure("No Kuramoto data for any band\nLoad data first", 400)
     
     # Initial traces
     for band in BANDS:

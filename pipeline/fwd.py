@@ -1,112 +1,183 @@
-import numpy as np
+#!/usr/bin/env python3
+"""
+Pipeline de fuentes EEG → métricas de sincronía.
+Refactorizado para ser importable sin ejecutar código pesado.
+"""
 
+import numpy as np
 import mne
 from mne.datasets import fetch_fsaverage
-from mne.minimum_norm import make_inverse_operator
-from mne.minimum_norm import apply_inverse_epochs
+from mne.minimum_norm import make_inverse_operator, apply_inverse_epochs
 from mne.utils import set_log_level
-
 from mne.filter import filter_data
 from scipy.signal import hilbert
-
 from tqdm import tqdm
 import pickle
-
 from itertools import combinations as comb
 import argparse
 import os
 from multiprocessing import get_context, cpu_count
-
 from pathlib import Path
-
-from paths import EEG_CLEAN_DIR, RESULTS_DIR, ensure_dir
-
-
-#%%
-
+import os.path as op
 import warnings
+
+# Suppress warnings
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 set_log_level("WARNING")
 
+# Global state
+WORKER_COUNT = 1
+_INITIALIZED = False
+_LABELS = None
+_FS_DIR = None
+_SUBJECTS_DIR = None
+_SRC = None
+_BEM = None
+
 
 def log(message="", end="\n"):
+    """Print log message with optional PID prefix for multiprocessing."""
+    import sys
     prefix = f"[PID {os.getpid()}] " if WORKER_COUNT > 1 else ""
-    tqdm.write(f"{prefix}{message}", end=end)
+    print(f"{prefix}{message}", end=end, flush=True)
+    sys.stdout.flush()
 
 
-WORKER_COUNT = 1
+# =============================================================================
+# Lazy initialization - only load heavy resources when needed
+# =============================================================================
+
+def _init_fsaverage():
+    """Initialize fsaverage resources (lazy loading)."""
+    global _INITIALIZED, _LABELS, _FS_DIR, _SUBJECTS_DIR, _SRC, _BEM
+    
+    if _INITIALIZED:
+        return
+    
+    log("[SETUP] Inicializando fsaverage...")
+    _FS_DIR = fetch_fsaverage(verbose=False)
+    _SUBJECTS_DIR = op.dirname(_FS_DIR)
+    _SRC = op.join(_FS_DIR, 'bem', 'fsaverage-ico-5-src.fif')
+    _BEM = op.join(_FS_DIR, 'bem', 'fsaverage-5120-5120-5120-bem-sol.fif')
+    
+    log("[SETUP] Cargando atlas de Schaefer (100 parcelas, 7 redes)")
+    _LABELS = mne.read_labels_from_annot('fsaverage', parc='Schaefer2018_100Parcels_7Networks_order', verbose=False)
+    log(f"[SETUP] Atlas cargado: {len(_LABELS)} parcelas")
+    
+    _INITIALIZED = True
 
 
-#%%
+def get_labels():
+    """Get labels, initializing if needed."""
+    _init_fsaverage()
+    return _LABELS
 
-# Directorios de datos preprocesados (.set)
-data_root = EEG_CLEAN_DIR
-eo_dir = data_root / "EO"
-ec_dir = data_root / "EC"
-dmt_dir = data_root / "DMT"
 
-eyes_open_files_list = sorted(eo_dir.glob("*.set"))
-eyes_closed_files_list = sorted(ec_dir.glob("*.set"))
-dmt_files_list = sorted(dmt_dir.glob("*.set"))
+def get_src():
+    """Get source space path, initializing if needed."""
+    _init_fsaverage()
+    return _SRC
 
-log(f"[SETUP] Archivos DMT (.set): {len(dmt_files_list)} detectados")
-log(f"[SETUP] Archivos EC (.set):  {len(eyes_closed_files_list)} detectados")
-log(f"[SETUP] Archivos EO (.set):  {len(eyes_open_files_list)} detectados")
 
-#%%
+def get_bem():
+    """Get BEM path, initializing if needed."""
+    _init_fsaverage()
+    return _BEM
 
-import os.path as op
 
-verbose = False
+# =============================================================================
+# File scanning
+# =============================================================================
 
-# fsaverage
+def scan_files(data_root):
+    """Scan for .set files in the data directory.
+    
+    Supports two structures:
+    1. Subdirectory structure: data_root/DMT/*.set, data_root/EC/*.set, data_root/EO/*.set
+    2. Flat structure: data_root/*DMT*.set, data_root/*EC*.set, data_root/*EO*.set
+    """
+    eo_dir = data_root / "EO"
+    ec_dir = data_root / "EC"
+    dmt_dir = data_root / "DMT"
+    
+    dmt_files = sorted(dmt_dir.glob("*.set")) if dmt_dir.exists() else []
+    ec_files = sorted(ec_dir.glob("*.set")) if ec_dir.exists() else []
+    eo_files = sorted(eo_dir.glob("*.set")) if eo_dir.exists() else []
+    
+    # Also check flat structure (files in root with condition in filename)
+    if not dmt_files and not ec_files and not eo_files:
+        for f in sorted(data_root.glob("*.set")):
+            name = f.name.upper()
+            if 'DMT' in name:
+                dmt_files.append(f)
+            elif 'EC' in name:
+                ec_files.append(f)
+            elif 'EO' in name:
+                eo_files.append(f)
+    
+    return {
+        "DMT": dmt_files,
+        "EC": ec_files,
+        "EO": eo_files,
+    }
 
-fs_dir = fetch_fsaverage(verbose=verbose) # Download fsaverage files
-subjects_dir = op.dirname(fs_dir)
-subject = 'fsaverage'
-trans = 'fsaverage'  # MNE has a built-in fsaverage transformation
-src = op.join(fs_dir, 'bem', 'fsaverage-ico-5-src.fif') # Source space
-bem = op.join(fs_dir, 'bem', 'fsaverage-5120-5120-5120-bem-sol.fif') # Boundary Element Method (BEM) for forward modeling
 
-# Cargar parcelas de Schaefer (necesario para source localization)
-log("[SETUP] Cargando atlas de Schaefer (100 parcelas, 7 redes)")
-labels = mne.read_labels_from_annot('fsaverage', parc='Schaefer2018_100Parcels_7Networks_order', verbose=verbose)
-log(f"[SETUP] Atlas cargado: {len(labels)} parcelas")
+# =============================================================================
+# EEG Processing Functions
+# =============================================================================
 
-#%%
+freq_bands = {
+    "Delta": [1, 4],
+    "Theta": [4, 8],
+    "Alpha": [8, 13],
+    "Beta":  [13, 30],
+    "Gamma": [30, 45]
+}
+band_list = list(freq_bands.keys())
 
 method = "dSPM"
 snr = 3.
 lambda2 = 1. / snr ** 2
 
+
 def _prepare_epochs(epochs):
+    """Prepare epochs for source localization."""
     epochs = epochs.copy()
+    
+    # Drop non-EEG channels (Status, STI, etc.)
+    non_eeg = [ch for ch in epochs.ch_names if ch.upper() in ['STATUS', 'STI 014', 'STI014', 'TRIGGER']]
+    if non_eeg:
+        epochs.drop_channels(non_eeg)
+    
+    # Pick only EEG channels
     epochs.pick('eeg')
-    epochs.apply_baseline((None, None), verbose=verbose)
-    epochs.set_montage('standard_1020')
-    epochs.set_eeg_reference(projection=True, verbose=verbose)
+    epochs.apply_baseline((None, None), verbose=False)
+    
+    # Set montage, ignoring channels not in standard 10-20
+    epochs.set_montage('standard_1020', on_missing='ignore')
+    epochs.set_eeg_reference(projection=True, verbose=False)
     epochs.apply_proj()
     return epochs
 
-# Define frequencies of interest
-fmin, fmax = 0., 70.
-bandwidth = 4.  # bandwidth of the windows in Hz
 
 def fwd_inv_stc(epochs, forward_n_jobs=None, preprocessed=False):
+    """Compute forward solution, inverse operator, and source time courses."""
+    _init_fsaverage()
+    
     epochs_proc = epochs if preprocessed else _prepare_epochs(epochs)
     
-    noise_cov = mne.compute_covariance(epochs_proc, tmax=0., method=['shrunk', 'empirical'], rank=None, verbose=verbose)
+    noise_cov = mne.compute_covariance(epochs_proc, tmax=0., method=['shrunk', 'empirical'], rank=None, verbose=False)
     fwd = mne.make_forward_solution(
         epochs_proc.info,
-        trans=trans,
-        src=src,
-        bem=bem,
+        trans='fsaverage',
+        src=get_src(),
+        bem=get_bem(),
         eeg=True,
         mindist=5.0,
         n_jobs=forward_n_jobs,
-        verbose=verbose,
+        verbose=False,
     )
-    inverse_operator = make_inverse_operator(epochs_proc.info, fwd, noise_cov, loose=0.2, depth=0.8, verbose=verbose)
+    inverse_operator = make_inverse_operator(epochs_proc.info, fwd, noise_cov, loose=0.2, depth=0.8, verbose=False)
     
     stc = apply_inverse_epochs(
         epochs_proc,
@@ -116,142 +187,138 @@ def fwd_inv_stc(epochs, forward_n_jobs=None, preprocessed=False):
         pick_ori=None,
         label=None,
         return_generator=True,
-        verbose=verbose,
+        verbose=False,
     )
     return stc
 
 
-#%%
-
-freq_bands = {
-    "Delta": [1, 4],
-    "Theta": [4, 8],
-    "Alpha": [8, 13],
-    "Beta":  [13, 30],
-    "Gamma": [30, 45]
-    }
-
-band_list = list(freq_bands.keys())
-
-
 def filtered(signal, band, sfreq=500, n_jobs=None):
-  l_freq = freq_bands[band][0]
-  h_freq = freq_bands[band][1]
-  filtered_signal = filter_data(
-      data=signal,
-      sfreq=sfreq,
-      l_freq=l_freq,
-      h_freq=h_freq,
-      verbose=False,
-      filter_length="auto",
-      n_jobs=n_jobs,
-  )
-  return filtered_signal
+    """Apply bandpass filter."""
+    l_freq = freq_bands[band][0]
+    h_freq = freq_bands[band][1]
+    return filter_data(
+        data=signal,
+        sfreq=sfreq,
+        l_freq=l_freq,
+        h_freq=h_freq,
+        verbose=False,
+        filter_length="auto",
+        n_jobs=n_jobs,
+    )
 
 
 def diff_ang(theta1, theta2, full_p=2*np.pi, abso=True):
-  half_p = 0.5 * full_p
-  fmod1 = np.fmod(theta2 - theta1 + half_p, full_p)
-  fmod2 = np.fmod(fmod1 + full_p, full_p) - half_p
-  if abso==True:
-    return abs(fmod2) #abs(np.fmod(np.fmod(theta2 - theta1 + half_p, full_p) + full_p, full_p) - half_p)
-  else:
-    return fmod2
+    """Calculate angular difference."""
+    half_p = 0.5 * full_p
+    fmod1 = np.fmod(theta2 - theta1 + half_p, full_p)
+    fmod2 = np.fmod(fmod1 + full_p, full_p) - half_p
+    return abs(fmod2) if abso else fmod2
 
 
 def hilbert_transform(band_signals, trim=False):
-  signal_num = len(band_signals)
-  samples = band_signals[0].shape[0]
-  envelope_mat = np.zeros((signal_num, samples), dtype=np.float32)
-  phase_mat = np.zeros((signal_num, samples), dtype=np.float32)
+    """Apply Hilbert transform to get envelope and phase."""
+    signal_num = len(band_signals)
+    samples = band_signals[0].shape[0]
+    envelope_mat = np.zeros((signal_num, samples), dtype=np.float32)
+    phase_mat = np.zeros((signal_num, samples), dtype=np.float32)
 
-  for i, filtered_signal in enumerate(band_signals):
-    analytic_signal = hilbert(filtered_signal)
-    envelope = np.abs(analytic_signal)
-    inst_phase = np.angle(analytic_signal)
-
-    envelope_mat[i,:] = envelope
-    phase_mat[i,:] = inst_phase
-  
-  if trim != False:
-    envelope_mat = envelope_mat[:,trim:(samples-trim)]
-    phase_mat = phase_mat[:,trim:(samples-trim)]
+    for i, filtered_signal in enumerate(band_signals):
+        analytic_signal = hilbert(filtered_signal)
+        envelope_mat[i, :] = np.abs(analytic_signal)
+        phase_mat[i, :] = np.angle(analytic_signal)
+    
+    if trim:
+        envelope_mat = envelope_mat[:, trim:(samples-trim)]
+        phase_mat = phase_mat[:, trim:(samples-trim)]
       
-  return envelope_mat, phase_mat
+    return envelope_mat, phase_mat
 
 
 def calculate_syncro(phase_mat):
-  max_diff = np.pi * phase_mat.shape[1]
-  size = phase_mat.shape[0]
-  syncro_mat = np.zeros((size,size), dtype=np.float32)
-  for i, j in comb(range(size), 2):
-        signal1 = phase_mat[i,:]
-        signal2 = phase_mat[j,:]
-        value = 1 - (diff_ang(signal1,signal2).sum()/max_diff)
-        syncro_mat[i,j] = value
-        syncro_mat[j,i] = value
-  # Diagonal = 1 (una señal tiene sincronización perfecta consigo misma)
-  np.fill_diagonal(syncro_mat, 1.0)
-  return syncro_mat
+    """Calculate synchronization matrix from phase data."""
+    max_diff = np.pi * phase_mat.shape[1]
+    size = phase_mat.shape[0]
+    syncro_mat = np.zeros((size, size), dtype=np.float32)
+    for i, j in comb(range(size), 2):
+        signal1 = phase_mat[i, :]
+        signal2 = phase_mat[j, :]
+        value = 1 - (diff_ang(signal1, signal2).sum() / max_diff)
+        syncro_mat[i, j] = value
+        syncro_mat[j, i] = value
+    np.fill_diagonal(syncro_mat, 1.0)
+    return syncro_mat
 
 
 def eeg_pre(epochs_data, epoch, num_channels=24):
-    eeg_signals = []
-    for channel in range(num_channels):
-      signal = epochs_data[epoch, channel, :]
-      eeg_signals.append(signal)
-    return eeg_signals
+    """Extract EEG signals for an epoch."""
+    return [epochs_data[epoch, channel, :] for channel in range(num_channels)]
 
 
 def stc_pre(epoch_data, labels):
+    """Extract source time course signals for an epoch."""
     stc_signals = []
     for label in labels:
         try:
-          label_data = epoch_data.in_label(label).data
-          stc_signals.append(label_data.mean(axis=0))
+            label_data = epoch_data.in_label(label).data
+            stc_signals.append(label_data.mean(axis=0))
         except:
-          pass
+            pass
     return stc_signals
 
 
 euler_notation = np.vectorize(lambda x: np.exp(1j*x))
 
 def order_parameter(phase):
+    """Calculate Kuramoto order parameter."""
     r = np.abs(euler_notation(phase).mean(axis=0))
     return r.astype(np.float32)
 
 
-#%%
-
-# Carpeta de salida
-output_folder = ensure_dir(RESULTS_DIR)
-for cond in ["DMT", "EC", "EO"]:
-    ensure_dir(output_folder / cond)
+# =============================================================================
+# Main processing functions
+# =============================================================================
 
 markers_list = ["filtered_eeg", "phases_eeg", "amplitudes_eeg", "syncros_eeg", "kuramoto_eeg",
                 "filtered_stc", "phases_stc", "amplitudes_stc", "syncros_stc", "kuramoto_stc"]
 
-band_dict = {band:[] for band in band_list}
-subject_dict = {marker:band_dict for marker in markers_list}
 
-def do_the_math(file_name, condition="DMT", forward_n_jobs=None, filter_n_jobs=None):
-    # Extraer nombre del sujeto del archivo
+def do_the_math(file_name, condition, output_folder, forward_n_jobs=None, filter_n_jobs=None, max_epochs=None):
+    """Process a single subject file."""
+    _init_fsaverage()
+    labels = get_labels()
+    
     file_path = Path(file_name)
-    subject_number = file_path.name.replace("_ICA_pruned.set", "").replace("_", "-")
+    # Extract clean subject ID (e.g., "S01" from "S01-DMT.set" or "S01_DMT_ICA_pruned.set")
+    import re
+    base_name = file_path.stem  # Remove extension first
+    base_name = base_name.replace("_ICA_pruned", "").replace("_", "-")
+    subject_match = re.match(r'^(S\d+)', base_name, re.IGNORECASE)
+    if subject_match:
+        subject_id = subject_match.group(1).upper()  # e.g., "S01"
+    else:
+        subject_id = base_name  # Fallback to cleaned name
+    subject_number = f"{subject_id}-{condition}"  # e.g., "S01-DMT"
     
     log(f"\n{'='*70}")
     log(f"[SUBJECT] {subject_number} ({condition})")
     log(f"{'='*70}")
     
-    # Leer archivo .set de EEGLAB (ya preprocesado con ICA)
+    # Load epochs
     log("[1/4] Cargando épocas de EEGLAB")
-    epochs_raw = mne.io.read_epochs_eeglab(file_name, montage_units='dm', verbose=False)
+    epochs_raw = mne.io.read_epochs_eeglab(str(file_name), montage_units='dm', verbose=False)
     epochs = _prepare_epochs(epochs_raw)
     epochs_data = epochs.get_data()
     num_epochs = epochs_data.shape[0]
-    log(f"        ↳ {num_epochs} épocas disponibles")
     
-    subject_data = {marker: {band:[] for band in band_list} for marker in markers_list}
+    # Limit epochs if specified
+    if max_epochs and max_epochs > 0 and max_epochs < num_epochs:
+        log(f"        ↳ {num_epochs} épocas disponibles (limitando a {max_epochs})")
+        num_epochs = max_epochs
+        epochs_data = epochs_data[:max_epochs]
+    else:
+        log(f"        ↳ {num_epochs} épocas disponibles")
+    
+    subject_data = {marker: {band: [] for band in band_list} for marker in markers_list}
     
     log("[2/4] Calculando STC base y procesando bandas de frecuencia")
     stc_generator = fwd_inv_stc(epochs, forward_n_jobs=forward_n_jobs, preprocessed=True)
@@ -263,6 +330,7 @@ def do_the_math(file_name, condition="DMT", forward_n_jobs=None, filter_n_jobs=N
             log(f"[WARN] El generador de STC finalizó antes de completar las {num_epochs} épocas EEG")
             break
         stc_signals_by_epoch.append(np.asarray(stc_pre(stc_epoch, labels)))
+    
     num_stc_epochs = len(stc_signals_by_epoch)
     log(f"        ↳ Series STC generadas: {num_stc_epochs} (épocas EEG: {num_epochs})")
     if num_stc_epochs != num_epochs:
@@ -272,10 +340,9 @@ def do_the_math(file_name, condition="DMT", forward_n_jobs=None, filter_n_jobs=N
 
     for band in band_list:
         log(f"        • Banda {band}: generando métricas")
-
         log("            ↳ Calculando Hilbert y sincronía (EEG/STC)")
+        
         for epoch in tqdm(range(effective_epochs), desc=f"            Epochs ({band})", leave=False):
-            
             # EEG
             signals_eeg = np.asarray(eeg_pre(epochs_data, epoch))
             filtered_eeg = filtered(signals_eeg, band, n_jobs=filter_n_jobs)
@@ -302,90 +369,112 @@ def do_the_math(file_name, condition="DMT", forward_n_jobs=None, filter_n_jobs=N
             subject_data["syncros_stc"][band].append(syncro_stc)
             subject_data["kuramoto_stc"][band].append(r_stc)
     
-    # Guardar resultado
+    # Save results
     log("[3/4] Persistiendo resultados en disco")
-    fname = output_folder / condition / f"phases-{subject_number}.pkl"
+    cond_folder = output_folder / condition
+    cond_folder.mkdir(parents=True, exist_ok=True)
+    fname = cond_folder / f"phases-{subject_number}.pkl"
     
     with open(fname, 'wb') as handle:
         pickle.dump(subject_data, handle, protocol=pickle.HIGHEST_PROTOCOL)
     
     log(f"[4/4] Pipeline completado: {subject_number} ({condition})")
     log(f"        ↳ Archivo generado: {fname}\n")
-
-
-#%%
+    
+    return fname
 
 
 def _init_worker(worker_total):
+    """Initialize worker with worker count."""
     global WORKER_COUNT
     WORKER_COUNT = worker_total
 
 
-def _process_subject(file_name, condition, forward_n_jobs, filter_n_jobs):
+def _process_subject(args):
+    """Process a single subject (for multiprocessing)."""
+    file_name, condition, output_folder, forward_n_jobs, filter_n_jobs, max_epochs = args
     return do_the_math(
         file_name,
         condition=condition,
+        output_folder=Path(output_folder),
         forward_n_jobs=forward_n_jobs,
         filter_n_jobs=filter_n_jobs,
+        max_epochs=max_epochs,
     )
 
 
 def run_pipeline(
-    max_subjects_per_condition=1,
+    data_root,
+    output_folder,
+    max_subjects_per_condition=None,
     conditions=("DMT", "EC", "EO"),
-    jobs=1,
+    jobs=0,
     workers=None,
+    max_epochs=None,
 ):
     """
-    Ejecuta el pipeline completo limitando la cantidad de sujetos por condición.
-
+    Run the complete pipeline.
+    
     Parameters
     ----------
+    data_root : Path
+        Directory containing EEG_CLEAN data with DMT/, EC/, EO/ subdirectories
+    output_folder : Path
+        Directory to save results
     max_subjects_per_condition : int or None
-        Número máximo de sujetos a procesar por condición. Si es None o <= 0, se procesan todos.
-    conditions : iterable
-        Condiciones a procesar (por defecto DMT, EC, EO).
+        Maximum subjects per condition. None or <= 0 means all.
+    conditions : tuple
+        Conditions to process
     jobs : int
-        Presupuesto total de “jobs” para distribuir entre procesos y threads. Usa 0 o negativo para auto = todos los cores.
-    forward_n_jobs : int or None
-        Override opcional para `make_forward_solution`. Si es None se deriva de `jobs`.
-    filter_n_jobs : int or None
-        Override opcional para `filter_data`. Si es None se deriva de `jobs`.
+        Total job budget. 0 means auto (all cores)
     workers : int or None
-        Override opcional para procesos en paralelo (por sujeto). Si es None se deriva de `jobs`.
+        Number of parallel workers
+    max_epochs : int or None
+        Maximum epochs per subject. None or <= 0 means all.
     """
+    data_root = Path(data_root)
+    output_folder = Path(output_folder)
+    output_folder.mkdir(parents=True, exist_ok=True)
+    
+    # Parse parameters
     try:
-        max_subjects_per_condition = int(max_subjects_per_condition)
+        max_subjects_per_condition = int(max_subjects_per_condition) if max_subjects_per_condition else None
     except (TypeError, ValueError):
-        max_subjects_per_condition = 1
-
-    if max_subjects_per_condition <= 0:
+        max_subjects_per_condition = None
+    if max_subjects_per_condition is not None and max_subjects_per_condition <= 0:
         max_subjects_per_condition = None
 
     try:
         jobs = int(jobs)
     except (TypeError, ValueError):
-        jobs = 1
+        jobs = 0
     if jobs <= 0:
         jobs = cpu_count()
 
     try:
-        workers = None if workers is None else int(workers)
+        workers = int(workers) if workers else None
     except (TypeError, ValueError):
         workers = None
     if workers is not None and workers <= 0:
         workers = None
 
-    condition_map = {
-        "DMT": dmt_files_list,
-        "EC": eyes_closed_files_list,
-        "EO": eyes_open_files_list,
-    }
+    try:
+        max_epochs = int(max_epochs) if max_epochs else None
+    except (TypeError, ValueError):
+        max_epochs = None
+    if max_epochs is not None and max_epochs <= 0:
+        max_epochs = None
 
+    # Scan files
+    file_map = scan_files(data_root)
+    log(f"[SETUP] Archivos DMT (.set): {len(file_map['DMT'])} detectados")
+    log(f"[SETUP] Archivos EC (.set):  {len(file_map['EC'])} detectados")
+    log(f"[SETUP] Archivos EO (.set):  {len(file_map['EO'])} detectados")
+    
+    # Build task list
     tasks = []
-
     for condition in conditions:
-        files = condition_map.get(condition, [])
+        files = file_map.get(condition, [])
         if not files:
             log(f"[SKIP] Sin archivos disponibles para la condición {condition}")
             continue
@@ -400,6 +489,7 @@ def run_pipeline(
         log("[INFO] No hay sujetos para procesar con la configuración dada")
         return
 
+    # Configure workers
     if workers is None:
         workers = min(jobs, len(tasks)) if len(tasks) else 1
     else:
@@ -412,15 +502,23 @@ def run_pipeline(
     forward_n_jobs = max(1, jobs // workers)
     filter_n_jobs = max(1, jobs // workers)
 
-    log(f"[JOBS] total={jobs}, procesos={workers}, forward_n_jobs={forward_n_jobs}, filter_n_jobs={filter_n_jobs}")
+    epochs_info = f", max_epochs={max_epochs}" if max_epochs else ""
+    log(f"[JOBS] total={jobs}, procesos={workers}, forward_n_jobs={forward_n_jobs}, filter_n_jobs={filter_n_jobs}{epochs_info}")
+    log(f"[OUTPUT] {output_folder}")
 
+    # Initialize fsaverage before multiprocessing (download if needed)
+    _init_fsaverage()
+
+    # Run pipeline
     if workers == 1:
         for file_name, condition in tasks:
             do_the_math(
                 file_name,
                 condition=condition,
+                output_folder=output_folder,
                 forward_n_jobs=forward_n_jobs,
                 filter_n_jobs=filter_n_jobs,
+                max_epochs=max_epochs,
             )
     else:
         ctx = get_context("spawn")
@@ -429,220 +527,139 @@ def run_pipeline(
             initializer=_init_worker,
             initargs=(workers,),
         ) as pool:
-            pool.starmap(
+            pool.map(
                 _process_subject,
                 [
-                    (file_name, condition, forward_n_jobs, filter_n_jobs)
+                    (str(file_name), condition, str(output_folder), forward_n_jobs, filter_n_jobs, max_epochs)
                     for file_name, condition in tasks
                 ],
             )
+    
+    # Save metadata
+    save_metadata(output_folder, data_root)
 
 
-def save_file(data, fname, folder):
-    folder = ensure_dir(folder)
-    with open(Path(folder) / fname, 'wb') as handle:
-        pickle.dump(data, handle, protocol=pickle.HIGHEST_PROTOCOL)
-
-def load_file(fname, folder):
-    with open(Path(folder) / fname, 'rb') as handle:
-        return pickle.load(handle)
-
-
-#%%
-
-dmt_epochs_raw = mne.io.read_epochs_eeglab(dmt_files_list[0], montage_units='dm', verbose=False)
-epochs = dmt_epochs_raw.set_montage('standard_1020')
-ch_names = epochs.get_montage().ch_names
-montage_coords_2d = np.array(list(epochs.get_montage()._get_ch_pos().values()))[:,:2]
-
-# trans = mne.coreg.estimate_head_mri_t('fsaverage', subjects_dir)
-# epochs = epochs.get_montage().apply_trans(trans)
-
-mapping = {i:ch_names[i] for i in range(24)}
-eeg_coords_2d = {ch_names[i]:montage_coords_2d[i,:] for i in range(24)}
-
-#%%
-
-replace_dict = {"7Networks_":"",
-"RH_": "RH ", "LH_": "LH ", "-rh":"", "-lh":"",
-
-"DorsAttn_": "DAN ", #"Dorsal Attention ",
-"Default_": "DMN ", #"Default ",
-"Limbic_": "LN ", #"Limbic ",
-"SalVentAttn_": "SVAN ", #"Salience/Ventral Attention ",
-"SomMot_": "SMN ", #"Somatomotor ",
-"Vis_": "VN ", #"Visual ",
-"Cont_": "FPN ", #"Frontoparietal ",
-
-"Post_":  "Posterior ",
-"Temp_": "Temporal ",
-"Par_": "Parietal ",
-
-"Cing_": "Cingulate ",
-"Med_": "Medial ",
-
-"PFC_": "PFC ", #"Prefrontal Cortex ",
-"PFCv_": "Prefrontal Ventral ",
-"PFCl_": "Lateral PFC ", #"Lateral Prefrontal Cortex ",
-"PFCmp_": "Medial PFC ", #"Medial Posterior Prefrontal Cortex ",
-"PFCdPFCm_": "Prefrontal Dorsal Medial ",
-"OFC_": "Orbito-Frontal ", #Cortex
-
-"pCun_": "Precuneus ",
-"FrOperIns_": "Frontal Operculum Insula ",
-"ParOper_": "Parietal Operculum ",
-
-"pCunPCC_": "Precuneus/Posterior Cingulate ", #Cortex
-"PcunCing": "Precuneus Cingulate ",
-
-"TempOccPar_": "Tempro-Occipital-Parietal ",
-"TempPole_": "Temporal Pole ",
-"TempPar_": "Tempro-Parietal ",
-
-"FEF_": "Frontal Eye Fields ",
-"PrCv_": "Precentral Ventral ",
-
-"_":""}
-
-replace_dict_short = {"7Networks_":"",
-"RH_": "", "LH_": "", "-rh":"", "-lh":"",
-
-"DorsAttn_": "", #"Dorsal Attention ",
-"Default_": "", #"Default ",
-"Limbic_": "", #"Limbic ",
-"SalVentAttn_": "", #"Salience/Ventral Attention ",
-"SomMot_": "SMN", #"Somatomotor ",
-"Vis_": "VN", #"Visual ",
-"Cont_": "", #"Frontoparietal ",
-
-"_":""}
-
-dict_networks = {
-  "DAN": "Dorsal Attention Network (DAN)",
-  "DMN": "Default Mode Network (DMN)",
-  "LN": "Limbic Network (LN)",
-  "SVA": "Salience/Ventral Attention Network (SVAN)",
-  "SMN": "Somatomotor Network (SMN)",
-  "VN": "Visual Network (VN)",
-  "FPN": "Frontoparietal Network (FPN)"}
-
-def replacer(string, dictio):
-  for i in dictio.items():
-      string = string.replace(i[0], i[1])
-  return string
-
-#%%
-
-label_names = [replacer(label.name, replace_dict) for label in labels if not label.name.startswith('Background')]
-label_names_short = [replacer(label.name, replace_dict_short) for label in labels if not label.name.startswith('Background')]
-
-node_colors = [label.color for label in labels if not label.name.startswith('Background')]
-
-stc_coords_3d = np.asarray([label.pos.mean(axis=0) for label in labels if not label.name.startswith('Background')])
-stc_coords_2d = stc_coords_3d[:,:2]
-
-# label_network = [x[:6] for x in label_names]
-
-# labels = mne.read_labels_from_annot('fsaverage', parc='aparc', verbose=verbose)
-# label_names = [label.name for label in labels if not label.name.startswith('unknown')]
-# lh_labels = [name for name in label_names if name.endswith('lh')]
-# rh_labels = [name for name in label_names if name.endswith('rh')]
-# node_colors = [label.color for label in labels if not label.name.startswith('unknown')]
-# stc_coords_2d = np.asarray([label.pos.mean(axis=0) for label in labels])[:,:2]
-
-# sort_order = [(lh_labels+rh_labels).index(label) for label in label_names]
-# label_names_sorted = [label_names[i] for i in sort_order]
-# node_colors_sorted = [node_colors[i] for i in sort_order]
-
-#%%
-
-# # Chord plot order
-# # We reorder the labels based on their location in the left hemi
-
-# # Get the y-location of the label
-# label_ypos_lh = []
-# for name in lh_labels:
-#     idx = label_names.index(name)
-#     ypos = np.mean(labels[idx].pos[:, 1])
-#     label_ypos_lh.append(ypos)
-
-# # Reorder the labels based on their location
-# left_labels = [label for (yp, label) in sorted(zip(label_ypos_lh, lh_labels))]
-
-# # For the right hemi
-# right_labels = [label[:-2]+'rh' for label in left_labels if label[:-2]+'rh' in rh_labels]
-
-# # Save the plot order
-# node_order = left_labels[::-1] + right_labels
-
-#%%
-
-# Guardar metadata (ejecutar solo una vez)
-metadata_folder = RESULTS_DIR
-
-dump = []
-dump.append(node_colors)
-dump.append(label_names)
-dump.append(label_names_short)
-dump.append(stc_coords_3d)
-dump.append(ch_names)
-dump.append(mapping)
-dump.append(eeg_coords_2d)
-
-save_file(dump, "extra.pkl", metadata_folder)
-log(f"[SETUP] Metadata guardada en {metadata_folder / 'extra.pkl'}")
-
-#%%
-
-extras_path = data_root / 'extras.pickle'
-file = open(extras_path, 'wb')
-pickle.dump(node_colors, file)
-pickle.dump(label_names, file)
-pickle.dump(label_names_short, file)
-#pickle.dump(node_order, file)
-pickle.dump(stc_coords_3d, file)
-pickle.dump(ch_names, file)
-pickle.dump(mapping, file)
-pickle.dump(eeg_coords_2d, file)
-file.close()
+def save_metadata(output_folder, data_root):
+    """Save metadata files."""
+    _init_fsaverage()
+    labels = get_labels()
+    
+    log("[SETUP] Guardando metadata...")
+    
+    # Get channel info from first available file
+    file_map = scan_files(data_root)
+    sample_file = None
+    for cond in ["DMT", "EC", "EO"]:
+        if file_map[cond]:
+            sample_file = file_map[cond][0]
+            break
+    
+    if not sample_file:
+        log("[WARN] No se encontraron archivos para extraer metadata de canales")
+        return
+    
+    epochs_raw = mne.io.read_epochs_eeglab(str(sample_file), montage_units='dm', verbose=False)
+    # Drop non-EEG channels and set montage
+    non_eeg = [ch for ch in epochs_raw.ch_names if ch.upper() in ['STATUS', 'STI 014', 'STI014', 'TRIGGER']]
+    if non_eeg:
+        epochs_raw.drop_channels(non_eeg)
+    epochs_raw.pick('eeg')
+    epochs = epochs_raw.set_montage('standard_1020', on_missing='ignore')
+    ch_names = epochs.get_montage().ch_names
+    montage_coords_2d = np.array(list(epochs.get_montage()._get_ch_pos().values()))[:, :2]
+    
+    mapping = {i: ch_names[i] for i in range(min(24, len(ch_names)))}
+    eeg_coords_2d = {ch_names[i]: montage_coords_2d[i, :] for i in range(min(24, len(ch_names)))}
+    
+    # Label processing
+    replace_dict = {
+        "7Networks_": "", "RH_": "RH ", "LH_": "LH ", "-rh": "", "-lh": "",
+        "DorsAttn_": "DAN ", "Default_": "DMN ", "Limbic_": "LN ",
+        "SalVentAttn_": "SVAN ", "SomMot_": "SMN ", "Vis_": "VN ", "Cont_": "FPN ",
+        "Post_": "Posterior ", "Temp_": "Temporal ", "Par_": "Parietal ",
+        "Cing_": "Cingulate ", "Med_": "Medial ", "PFC_": "PFC ",
+        "PFCv_": "Prefrontal Ventral ", "PFCl_": "Lateral PFC ",
+        "PFCmp_": "Medial PFC ", "PFCdPFCm_": "Prefrontal Dorsal Medial ",
+        "OFC_": "Orbito-Frontal ", "pCun_": "Precuneus ",
+        "FrOperIns_": "Frontal Operculum Insula ", "ParOper_": "Parietal Operculum ",
+        "pCunPCC_": "Precuneus/Posterior Cingulate ", "PcunCing": "Precuneus Cingulate ",
+        "TempOccPar_": "Tempro-Occipital-Parietal ", "TempPole_": "Temporal Pole ",
+        "TempPar_": "Tempro-Parietal ", "FEF_": "Frontal Eye Fields ",
+        "PrCv_": "Precentral Ventral ", "_": ""
+    }
+    
+    def replacer(string, dictio):
+        for k, v in dictio.items():
+            string = string.replace(k, v)
+        return string
+    
+    label_names = [replacer(label.name, replace_dict) for label in labels if not label.name.startswith('Background')]
+    label_names_short = [replacer(label.name, {"7Networks_": "", "RH_": "", "LH_": "", "-rh": "", "-lh": "",
+                                                "DorsAttn_": "", "Default_": "", "Limbic_": "",
+                                                "SalVentAttn_": "", "SomMot_": "SMN", "Vis_": "VN",
+                                                "Cont_": "", "_": ""})
+                         for label in labels if not label.name.startswith('Background')]
+    
+    node_colors = [label.color for label in labels if not label.name.startswith('Background')]
+    stc_coords_3d = np.asarray([label.pos.mean(axis=0) for label in labels if not label.name.startswith('Background')])
+    
+    # Save extra.pkl
+    dump = [node_colors, label_names, label_names_short, stc_coords_3d, ch_names, mapping, eeg_coords_2d]
+    output_folder = Path(output_folder)
+    with open(output_folder / "extra.pkl", 'wb') as handle:
+        pickle.dump(dump, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    
+    log(f"[SETUP] Metadata guardada en {output_folder / 'extra.pkl'}")
 
 
-#%%
-# with open(folder+'subjects_phases_eeg.pickle', 'rb') as handle:
-#     subjects_phases_eeg = pickle.load(handle)
-
+# =============================================================================
+# CLI
+# =============================================================================
 
 if __name__ == "__main__":
+    from paths import EEG_CLEAN_DIR, RESULTS_DIR
+    
     parser = argparse.ArgumentParser(description="Pipeline de fuentes EEG → métricas de sincronía.")
     parser.add_argument(
         "--max-subjects",
         type=int,
         default=0,
-        help="Cantidad máxima de sujetos a procesar por condición (1 por defecto). Use 0 o negativo para procesar todos.",
+        help="Cantidad máxima de sujetos a procesar por condición. Use 0 para todos.",
     )
     parser.add_argument(
         "--conditions",
         nargs="+",
         choices=("DMT", "EC", "EO"),
         default=("DMT", "EC", "EO"),
-        help="Condiciones a procesar (por defecto DMT, EC y EO).",
+        help="Condiciones a procesar.",
     )
     parser.add_argument(
         "--jobs",
         type=int,
         default=0,
-        help="Presupuesto total de jobs (procesos/hilos). 1 por defecto, use 0 o negativo para todos los cores.",
+        help="Presupuesto total de jobs. Use 0 para auto.",
     )
     parser.add_argument(
         "--workers",
         type=int,
         default=None,
-        help="Procesos en paralelo (por sujeto). Si no se pasa, se deriva de --jobs.",
+        help="Procesos en paralelo. Si no se pasa, se deriva de --jobs.",
     )
+    parser.add_argument(
+        "--max-epochs",
+        type=int,
+        default=None,
+        help="Máximo de epochs por sujeto. Use 0 para todos.",
+    )
+    
     args = parser.parse_args()
+    
     run_pipeline(
+        data_root=EEG_CLEAN_DIR,
+        output_folder=RESULTS_DIR,
         max_subjects_per_condition=args.max_subjects,
         conditions=args.conditions,
         jobs=args.jobs,
         workers=args.workers,
+        max_epochs=args.max_epochs,
     )

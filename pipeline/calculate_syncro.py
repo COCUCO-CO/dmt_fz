@@ -128,11 +128,17 @@ subject_dict = {marker:deepcopy(band_dict) for marker in deepcopy(markers_list)}
 
 def do_the_math(subj):
     subject_label = (
-        subject_labels[subj] if subj < len(subject_labels) else f"S{subj + 1:02d}-{CURRENT_CONDITION}"
+        subject_labels[subj] if subj < len(subject_labels) else f"S{subj + 1:02d}"
     )
-    subject_tag = sanitize_label(subject_label) or f"S{subj + 1:02d}-{CURRENT_CONDITION}"
-    if CURRENT_CONDITION and not subject_tag.upper().endswith(f"-{CURRENT_CONDITION.upper()}"):
-        subject_tag = f"{subject_tag}-{CURRENT_CONDITION}"
+    # Extract clean subject ID (e.g., "S01" from "S01-DMT.set" or "S01_DMT")
+    # Match pattern like S01, S02, etc. at the beginning
+    import re
+    subject_match = re.match(r'^(S\d+)', subject_label, re.IGNORECASE)
+    if subject_match:
+        subject_id = subject_match.group(1).upper()  # e.g., "S01"
+    else:
+        # Fallback to sanitized label or default
+        subject_id = sanitize_label(subject_label) or f"S{subj + 1:02d}"
     reference_band = "Alpha"
     phases_eeg_subject = phases_eeg_all[subj]
     phases_stc_subject = phases_stc_all[subj] if subj < len(phases_stc_all) else {}
@@ -217,9 +223,9 @@ def do_the_math(subj):
                     subject_data["syncros_stc"][band][splits - 2].append(syncro_stc)
                     subject_data["kuramoto_stc"][band][splits - 2].append(r_stc)
 
-    subject_id = subject_tag
+    # Save with consistent naming: syncro-{subject_id}-{condition}.pkl
     output_folder = RESULTS_DIR / CURRENT_CONDITION
-    output_file = f"syncro-{subject_id}"
+    output_file = f"syncro-{subject_id}-{CURRENT_CONDITION}"
     save_file(subject_data, output_folder, output_file)
     log(f"Saved metrics for {subject_label} → {output_folder / (output_file + '.pkl')}")
 

@@ -1,5 +1,9 @@
-#%%
+#!/usr/bin/env python3
+"""
+Pearson correlation analysis between EEG metrics and questionnaires.
+"""
 
+import os
 import pickle
 import re
 from pathlib import Path
@@ -8,11 +12,23 @@ import matplotlib
 matplotlib.use('Agg')  # Use non-GUI backend to avoid tkinter warnings
 import matplotlib.pyplot as plt
 
-BASE_DIR = Path(__file__).resolve().parent.parent  # Go up from pipeline/ to project root
-RESULTS_DIR = BASE_DIR / "fwd-inv-stc"
+# BASE_DIR is the project root (dmt_fz/)
+# From pipeline/ we need to go up ONE level
+BASE_DIR = Path(__file__).resolve().parent.parent  # Go up to dmt_fz/
+
+# Check for custom output directory from environment
+_custom_output = os.environ.get('PIPELINE_OUTPUT_DIR')
+if _custom_output:
+    RESULTS_DIR = Path(_custom_output)
+    PEARSON_RESULTS_DIR = Path(_custom_output) / "pearson_results"
+    print(f"[PATHS] Using custom output dir: {RESULTS_DIR}")
+else:
+    RESULTS_DIR = BASE_DIR / "fwd-inv-stc"
+    PEARSON_RESULTS_DIR = BASE_DIR / "pearson_results"
+
 EEG_DIR = BASE_DIR / "EEG_CLEAN"
 SPECTRAL_DIR = BASE_DIR / "spectral_sources"
-PEARSON_RESULTS_DIR = BASE_DIR / "pearson_results"
+print(f"[PATHS] EEG_DIR: {EEG_DIR}")
 PEARSON_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 
@@ -159,12 +175,21 @@ print(f"[INFO] Total subjects available: {len(subjects)} (excluded: {rejected_su
 
 folder = EEG_DIR
 
-bad_epochs = read_mat(str(folder / "rejected_epochs.mat"))
-subject = bad_epochs["rejected_epochs"][0]
-epochs = bad_epochs["rejected_epochs"][1]
-rejected_epochs = {k[:6].replace("_","-"): v.tolist() for k, v in zip(subject, epochs)}
-
-print(f"[INFO] Loaded rejected epochs for {len(rejected_epochs)} subjects from {folder / 'rejected_epochs.mat'}")
+# Try to load rejected epochs file (optional - not critical for analysis)
+rejected_epochs_file = folder / "rejected_epochs.mat"
+if rejected_epochs_file.exists():
+    try:
+        bad_epochs = read_mat(str(rejected_epochs_file))
+        subject = bad_epochs["rejected_epochs"][0]
+        epochs = bad_epochs["rejected_epochs"][1]
+        rejected_epochs = {k[:6].replace("_","-"): v.tolist() for k, v in zip(subject, epochs)}
+        print(f"[INFO] Loaded rejected epochs for {len(rejected_epochs)} subjects from {rejected_epochs_file}")
+    except Exception as e:
+        print(f"[WARN] Could not load rejected_epochs.mat: {e}")
+        rejected_epochs = {}
+else:
+    print(f"[WARN] rejected_epochs.mat not found at {rejected_epochs_file} - proceeding without epoch rejection")
+    rejected_epochs = {}
 
 
 def summarize_metric_subjects(metric_dict, metric_name):
@@ -382,17 +407,20 @@ from matplotlib.colors import to_rgb, to_rgba #,rgb2hex
 from scipy.stats import pearsonr
 from statsmodels.stats.multitest import fdrcorrection
 
-from skimage import color
-
 import numpy as np
 #from sklearn.preprocessing import MinMaxScaler
 from itertools import product
+
+# Simple rgb2gray without skimage dependency
+def rgb2gray(rgb):
+    """Convert RGB to grayscale using standard luminance formula."""
+    return 0.2989 * rgb[0] + 0.5870 * rgb[1] + 0.1140 * rgb[2]
 
 # cmap = plt.get_cmap('plasma')
 def to_gray(x):
   rgba = cm.twilight_shifted(abs(x))
   rgb = to_rgb(rgba) # RGBA to RGB
-  gray = color.rgb2gray(np.asarray(rgb)) # RGB to Gray
+  gray = rgb2gray(rgb) # RGB to Gray (no skimage needed)
   return cm.gray(gray)
 
 def r_to_color(r):
