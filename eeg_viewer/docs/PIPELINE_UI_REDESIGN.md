@@ -271,3 +271,4 @@ Si algo falla, el archivo `pipeline_old.py` sigue disponible como backup.
 ### Compatibilidad:
 Los usuarios que ya tienen runs existentes podrán seguir usándolos sin problemas.
 
+

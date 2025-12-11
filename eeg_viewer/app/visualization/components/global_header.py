@@ -80,3 +80,4 @@ def _nav_button(text: str, url: str, active: bool) -> None:
         f'color:{color};'
     )
 
+

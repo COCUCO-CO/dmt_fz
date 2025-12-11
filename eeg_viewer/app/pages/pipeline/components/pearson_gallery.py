@@ -120,3 +120,4 @@ class PearsonGallery:
                     ui.image(str(img_path)).style('max-height: 70vh; max-width: 80vw;')
                 ui.button('Cerrar', on_click=dialog.close).props('flat').classes('mt-3')
 
+

@@ -94,3 +94,4 @@ class TestAnimationGeneratorSubfolders:
         
         assert hasattr(AnimationGenerator, '_load_subjects_from_folder')
 
+

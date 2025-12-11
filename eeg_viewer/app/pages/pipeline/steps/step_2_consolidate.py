@@ -22,3 +22,4 @@ class Step2Consolidate(BasePipelineStep):
         ctx = self.context
         return ['--conditions', *ctx.conditions]
 
+

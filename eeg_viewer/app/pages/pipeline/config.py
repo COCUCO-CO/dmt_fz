@@ -140,3 +140,4 @@ PROGRESS_BAR_PATTERNS = ['%|', 'it/s]', '0%|', '100%|', '█', '▌', '\r']
 # Maximum log line length
 MAX_LOG_LINE_LENGTH = 500
 
+

@@ -419,3 +419,4 @@ class TestErrorHandling:
         result = load_sample_preview('/nonexistent/path.pkl')
         assert 'error' in result
 
+

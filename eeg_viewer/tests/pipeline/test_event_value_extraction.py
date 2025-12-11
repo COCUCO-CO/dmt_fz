@@ -175,3 +175,4 @@ class TestAllVisualizersImportHelper:
         from app.pages.pipeline.visualizers import step_8_viz
         assert hasattr(step_8_viz, 'extract_event_value')
 
+

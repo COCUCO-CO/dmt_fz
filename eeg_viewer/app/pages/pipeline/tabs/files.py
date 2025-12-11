@@ -104,3 +104,4 @@ class FilesTab:
                         f'font-size: 0.7rem;'
                     )
 
+

@@ -214,3 +214,4 @@ class TestClusteringNavigationWorkflow:
         finally:
             PS.bands = original
 
+

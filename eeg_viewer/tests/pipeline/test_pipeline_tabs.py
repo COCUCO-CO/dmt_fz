@@ -471,3 +471,4 @@ class TestVisualizeTabClustering:
         assert len(png_files) == 1
         assert len(pkl_files) == 1
 
+

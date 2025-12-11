@@ -342,3 +342,4 @@ class TestImageDetectorOutput:
         # Should suggest ImageFolder loader for class-based dataset
         assert len(result.suggestions) > 0 or result.suggested_loader is not None
 
+

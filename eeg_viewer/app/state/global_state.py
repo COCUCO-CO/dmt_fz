@@ -157,6 +157,16 @@ class AnalysisState:
         self.speed = 1.0  # samples per second
         self.play_timer = None
         
+        # EEG Synchronization (for graph datasets with EEG metadata)
+        self.eeg_sync_enabled = True  # Toggle EEG sync
+        self.eeg_data = None  # Loaded EEG data (EEGData object)
+        self.current_eeg_file = None  # Path to currently loaded EEG
+        self.eeg_view_start = 0.0  # Current view position in EEG
+        self.epoch_duration = 2.0  # Duration of each epoch in seconds
+        self.eeg_channels = []  # Selected channels for visualization
+        self.eeg_plot = None  # UI reference for EEG plot
+        self.eeg_info_container = None  # UI reference for EEG info
+        
         # Activations (stored during forward pass)
         self.activations = {}  # layer_name -> tensor
         self.attention_weights = {}  # layer_name -> attention matrix
@@ -168,6 +178,7 @@ class AnalysisState:
         self.current_recon = None
         self.current_z = None
         self.current_label = None  # For image classification
+        self.current_kuramoto_comparison = None  # Kuramoto original vs proxy
         
         # Fixed axis ranges (computed from dataset)
         self.axis_ranges = {
@@ -182,8 +193,10 @@ class AnalysisState:
         
         # Kuramoto tracking (for graph models)
         self.kuramoto_history = []  # (idx, kuramoto_mean) for each processed sample
+        self.kuramoto_proxy_history = []  # (idx, kuramoto_proxy) from reconstruction
         self.kuramoto_avg = 0.5  # Average across test set
         self.kuramoto_std = 0.1  # Std (metastability proxy)
+        self.kuramoto_proxy_avg = 0.5  # Average proxy across test set
         
         # UI references
         self.log_container = None

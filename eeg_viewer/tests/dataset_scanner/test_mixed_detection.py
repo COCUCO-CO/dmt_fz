@@ -307,3 +307,4 @@ class TestIntegrationWithModelPage:
         # Should have suggestions
         assert len(result.suggestions) > 0
 
+

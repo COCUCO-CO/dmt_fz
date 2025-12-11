@@ -480,3 +480,4 @@ class TestMiniPipeline:
         assert not np.allclose(values[0], values[1]) or not np.allclose(values[1], values[2]), \
             f"Different bands gave same results: {results}"
 
+

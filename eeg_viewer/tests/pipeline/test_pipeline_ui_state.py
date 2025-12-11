@@ -470,3 +470,4 @@ class TestStateIsolationBetweenPages:
         # Restore
         PS.running = original_running
 
+

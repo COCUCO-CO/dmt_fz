@@ -300,3 +300,4 @@ class TabularDetector(BaseDetector):
             return "pandas.read_parquet"
         return "pandas.read_csv"
 
+

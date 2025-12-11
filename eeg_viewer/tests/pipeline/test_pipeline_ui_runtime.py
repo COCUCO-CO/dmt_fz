@@ -545,3 +545,4 @@ class TestUIUpdateDuringExecution:
         # This is the pattern used to allow UI updates
         assert sleep_time == 0.01
 
+

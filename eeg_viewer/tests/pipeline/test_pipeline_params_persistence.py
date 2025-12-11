@@ -352,3 +352,4 @@ class TestInputDirPersistence:
         finally:
             PS.input_dir = original
 
+

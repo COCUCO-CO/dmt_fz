@@ -142,3 +142,4 @@ class TestFileBrowserFormatting:
         result = format_file_size(5_000_000)
         assert 'MB' in result or 'M' in result
 
+

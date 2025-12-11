@@ -485,3 +485,4 @@ class TestStateIsolation:
         assert "State 1 message" in state1.log_history
         assert "State 1 message" not in state2.log_history
 
+

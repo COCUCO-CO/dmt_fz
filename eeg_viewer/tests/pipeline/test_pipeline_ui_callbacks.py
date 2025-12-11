@@ -607,3 +607,4 @@ class TestAnimationGeneratorCallbacks:
         assert '-c:v' in cmd
         assert 'libx264' in cmd
 
+

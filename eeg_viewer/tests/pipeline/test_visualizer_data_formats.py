@@ -236,3 +236,4 @@ class TestRealDataLoading:
             assert arr.ndim == 3  # [epochs, parcels, times]
             assert arr.shape[1] in [100, 102]  # Parcels
 
+

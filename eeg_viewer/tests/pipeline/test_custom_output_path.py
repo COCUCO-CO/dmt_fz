@@ -85,3 +85,4 @@ class TestPathDisplayFormatting:
         assert '📁' in display
         assert 'my_run' in display
 
+

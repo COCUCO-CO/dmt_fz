@@ -7,12 +7,17 @@ import plotly.graph_objects as go
 
 from config import (
     THEME_BG, THEME_CARD, THEME_BORDER, THEME_PRIMARY, THEME_SECONDARY,
-    THEME_WARN, THEME_ERROR, THEME_TEXT, THEME_TEXT_DIM
+    THEME_WARN, THEME_ERROR, THEME_TEXT, THEME_TEXT_DIM,
+    EEG_CLEAN_DIR
 )
 from app.state import AS
 from app.visualization.styles.css import STYLE
 from app.visualization.components.running_indicator import render_running_indicator
 from app.visualization.components.global_header import render_global_header
+from app.core.kuramoto_proxy import compute_kuramoto_proxy_from_edges, compute_kuramoto_comparison
+# EEG sync is now manual - user selects EEG file directly
+from eeg_loader import load_eeg_file, get_channel_data
+from app.core.signal import process_data as signal_process_data
 
 AUTOENCODER_DIR = Path(__file__).parent.parent.parent.parent / "machine_learning" / "autoencoder"
 AUTOENCODER_CACHE_DIR = Path(__file__).parent.parent.parent / "cache" / "autoencoder"
@@ -389,6 +394,21 @@ def process_graph_sample(sample, store_latent=True):
     AS.current_recon = output
     AS.current_z = output.get('mu', None) if isinstance(output, dict) else None
     
+    # Compute Kuramoto proxy from reconstructed edges
+    AS.current_kuramoto_comparison = None
+    if isinstance(output, dict) and 'edge_attr_recon' in output:
+        try:
+            comparison = compute_kuramoto_comparison(
+                original_graph_attr=batch.graph_attr[0] if batch.graph_attr.dim() == 2 else batch.graph_attr,
+                reconstructed_edge_attr=output['edge_attr_recon'],
+                edge_index=batch.edge_index,
+                num_nodes=batch.num_nodes if hasattr(batch, 'num_nodes') else batch.x.shape[0],
+                method='mean_plv'
+            )
+            AS.current_kuramoto_comparison = comparison
+        except Exception as e:
+            analysis_log(f"Kuramoto proxy error: {e}", 'warning')
+    
     # Extract REAL attention weights from encoder
     if hasattr(AS.model, 'encoder') and hasattr(AS.model.encoder, 'get_all_attention_weights'):
         AS.attention_weights = AS.model.encoder.get_all_attention_weights()
@@ -629,6 +649,7 @@ def compute_dataset_ranges():
     
     # Clear kuramoto history for fresh start
     AS.kuramoto_history = []
+    AS.kuramoto_proxy_history = []
     
     # Sample a subset of the dataset for analysis
     n_samples = min(100, len(AS.dataset))
@@ -909,6 +930,10 @@ def analysis_page():
                                 # Compute axis ranges if model is loaded
                                 if AS.model is not None:
                                     compute_dataset_ranges()
+                                
+                                # EEG sync is now manual - user loads EEG file via the EEG SYNC panel
+                                analysis_log("Use EEG SYNC panel to load EEG file for visualization", 'info')
+                                
                                 dataset_loaded = True
                         
                         if not dataset_loaded:
@@ -932,6 +957,16 @@ def analysis_page():
                         ['0.5x', '1x', '2x', '5x', '10x'],
                         value='1x'
                     ).props('dense dark').classes('w-20')
+                
+                with ui.row().classes('items-center gap-2 mt-1'):
+                    ui.label('Epoch:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                    epoch_dur_input = ui.number(value=AS.epoch_duration, min=0.5, max=10, step=0.5).props('dense dark').classes('w-16')
+                    ui.label('sec').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
+                    
+                    def on_epoch_dur_change(e):
+                        if e.value and e.value > 0:
+                            AS.epoch_duration = float(e.value)
+                    epoch_dur_input.on('update:model-value', on_epoch_dur_change)
                 
                 progress_slider = ui.slider(min=0, max=100, value=0).props('label-always').classes('w-full mt-2')
                 AS.progress_slider = progress_slider
@@ -1008,74 +1043,262 @@ def analysis_page():
         # RIGHT PANEL: Visualizations
         with ui.column().classes('flex-1 gap-3').style('min-height: 0; overflow-y: auto;'):
             
-            # ROW 1: KURAMOTO ORDER PARAMETER (progress bar style)
+            # EEG VISUALIZATION PANEL (synchronized with dataset playback)
             with ui.card().classes('dark-card p-3 w-full'):
-                ui.label('▌KURAMOTO ORDER PARAMETER').style(f'color:{THEME_WARN}; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-2')
+                with ui.row().classes('items-center gap-2 mb-2'):
+                    ui.label('▌EEG SYNC').style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.8rem;')
+                    eeg_sync_toggle = ui.switch('Sync', value=False).props('dense size=xs')
+                    eeg_sync_info = ui.label('Load EEG to sync').style(f'color:{THEME_TEXT_DIM}; font-family: JetBrains Mono; font-size: 0.7rem; margin-left: auto;')
+                    
+                    def on_sync_toggle(e):
+                        AS.eeg_sync_enabled = e.value
+                    eeg_sync_toggle.on('update:model-value', on_sync_toggle)
+                
+                # EEG File selector
+                with ui.row().classes('items-center gap-2 w-full'):
+                    eeg_path_input = ui.input(
+                        value=str(EEG_CLEAN_DIR / 'DMT' / 'S01-DMT_ICA_pruned.set'),
+                        placeholder='Path to EEG file'
+                    ).props('dense dark').classes('flex-1').style('font-size: 0.7rem;')
+                    
+                    def load_sync_eeg():
+                        """Load EEG file for sync visualization."""
+                        try:
+                            path = Path(eeg_path_input.value.strip())
+                            if not path.exists():
+                                ui.notify(f'File not found: {path}', type='negative')
+                                return
+                            
+                            AS.eeg_data = load_eeg_file(path)
+                            AS.current_eeg_file = str(path)
+                            AS.eeg_view_start = 0.0
+                            
+                            # Get EEG channel names (native strings)
+                            eeg_chs = [str(ch) for ch, t in AS.eeg_data.channel_types.items() if t == 'eeg']
+                            AS.eeg_channels = eeg_chs[:10]  # Limit to 10 channels
+                            
+                            # Enable sync
+                            AS.eeg_sync_enabled = True
+                            eeg_sync_toggle.value = True
+                            
+                            # Update info
+                            total_epochs = int(AS.eeg_data.duration_sec // AS.epoch_duration)
+                            eeg_sync_info.set_text(f'{path.stem} | {total_epochs} epochs @ {AS.epoch_duration}s')
+                            
+                            # Update plot
+                            AS.eeg_plot.figure = make_analysis_eeg_fig()
+                            AS.eeg_plot.update()
+                            
+                            ui.notify(f'EEG loaded: {path.name}', type='positive')
+                        except Exception as e:
+                            ui.notify(f'Error: {e}', type='negative')
+                            analysis_log(f"Error loading EEG: {e}", 'error')
+                    
+                    ui.button(icon='folder_open', on_click=load_sync_eeg).props('dense flat size=sm')
+                
+                # EEG Plot
+                def make_analysis_eeg_fig():
+                    """Create EEG figure for analysis sync visualization."""
+                    fig = go.Figure()
+                    
+                    if AS.eeg_data is None or not AS.eeg_channels:
+                        fig.add_annotation(
+                            text="Select EEG file and click folder icon to load",
+                            x=0.5, y=0.5, showarrow=False,
+                            font=dict(color=THEME_TEXT_DIM, size=11)
+                        )
+                        fig.update_layout(
+                            template='plotly_dark',
+                            paper_bgcolor='rgba(8,8,8,1)',
+                            plot_bgcolor='rgba(8,8,8,1)',
+                            height=150,
+                            margin=dict(l=10, r=10, t=10, b=10),
+                            xaxis=dict(showticklabels=False, showgrid=False),
+                            yaxis=dict(showticklabels=False, showgrid=False)
+                        )
+                        return fig
+                    
+                    try:
+                        # Get data for current epoch
+                        channels = AS.eeg_channels[:10]
+                        data, times, chs = get_channel_data(
+                            AS.eeg_data, channels,
+                            AS.eeg_view_start, AS.epoch_duration
+                        )
+                        # Process data (filter and convert to µV)
+                        data = signal_process_data(data, AS.eeg_data.sfreq) * 1e6
+                        n = len(chs)
+                        
+                        # Spacing for stacked display
+                        spacing_factor = 0.35 if n <= 8 else 0.25
+                        signal_color = 'rgba(0, 255, 136, 0.7)'
+                        
+                        y_ticks, y_labels = [], []
+                        for i in range(n):
+                            offset = (n - 1 - i)
+                            y = data[i].copy()
+                            y = np.nan_to_num(y, nan=0.0, posinf=0.0, neginf=0.0)
+                            std_val = np.std(y)
+                            if std_val < 1e-10:
+                                y_norm = np.zeros_like(y) + offset
+                            else:
+                                y_norm = (y - np.mean(y)) / std_val * spacing_factor + offset
+                            
+                            y_ticks.append(offset)
+                            # Ensure channel name is native string
+                            y_labels.append(str(chs[i]))
+                            
+                            fig.add_trace(go.Scatter(
+                                x=times, y=y_norm, name=str(chs[i]),
+                                line=dict(color=signal_color, width=1),
+                                hovertemplate=f'{str(chs[i])}: %{{customdata:.1f}} µV<extra></extra>',
+                                customdata=y
+                            ))
+                        
+                        fig.update_layout(
+                            template='plotly_dark',
+                            paper_bgcolor='rgba(8,8,8,1)',
+                            plot_bgcolor='rgba(8,8,8,1)',
+                            height=150,
+                            margin=dict(l=50, r=10, t=5, b=30),
+                            xaxis=dict(
+                                title=dict(text='TIME [s]', font=dict(size=9, color=THEME_PRIMARY)),
+                                gridcolor='rgba(0,255,136,0.08)',
+                                tickfont=dict(size=8, color=THEME_TEXT_DIM),
+                                fixedrange=True
+                            ),
+                            yaxis=dict(
+                                tickmode='array', tickvals=y_ticks, ticktext=y_labels,
+                                range=[-0.5, n - 0.5],
+                                gridcolor='rgba(0,255,136,0.03)',
+                                tickfont=dict(size=8, color=THEME_PRIMARY),
+                                fixedrange=True
+                            ),
+                            showlegend=False,
+                            font=dict(family='JetBrains Mono', size=9, color=THEME_TEXT)
+                        )
+                    except Exception as e:
+                        fig.add_annotation(
+                            text=f"Error: {e}", x=0.5, y=0.5, showarrow=False,
+                            font=dict(color=THEME_ERROR, size=10)
+                        )
+                        fig.update_layout(
+                            template='plotly_dark',
+                            paper_bgcolor='rgba(8,8,8,1)',
+                            plot_bgcolor='rgba(8,8,8,1)',
+                            height=150,
+                            margin=dict(l=10, r=10, t=10, b=10)
+                        )
+                    
+                    return fig
+                
+                AS.eeg_plot = ui.plotly(make_analysis_eeg_fig()).classes('w-full').style('height: 150px;')
+            
+            # ROW 1: KURAMOTO ORDER PARAMETER
+            with ui.card().classes('dark-card p-3 w-full'):
+                ui.label('▌KURAMOTO ORDER PARAMETER (r)').style(f'color:{THEME_TEXT_DIM}; font-family: JetBrains Mono; font-size: 0.75rem;').classes('mb-1')
                 
                 def make_kuramoto_fig():
-                    """Create Kuramoto order parameter visualization."""
+                    """Create Kuramoto order parameter visualization - Original vs Proxy."""
                     fig = go.Figure()
                     
                     n_total = AS.total_samples if AS.total_samples > 0 else 100
                     
-                    # Metastability band (std around mean)
-                    if AS.kuramoto_avg > 0:
+                    # Metastability band (±1 std around mean) - subtle gray
+                    if AS.kuramoto_avg > 0 and AS.kuramoto_std > 0:
                         fig.add_trace(go.Scatter(
                             x=list(range(n_total)) + list(range(n_total-1, -1, -1)),
                             y=[AS.kuramoto_avg + AS.kuramoto_std] * n_total + [AS.kuramoto_avg - AS.kuramoto_std] * n_total,
                             fill='toself',
-                            fillcolor='rgba(100, 150, 200, 0.2)',
+                            fillcolor='rgba(128, 128, 128, 0.15)',
                             line=dict(width=0),
-                            name='Metastability',
-                            showlegend=True
+                            name='±1σ',
+                            showlegend=True,
+                            hoverinfo='skip'
                         ))
                     
-                    # Average line (dashed)
+                    # Mean line (thin gray dashed)
                     fig.add_trace(go.Scatter(
                         x=[0, n_total-1],
                         y=[AS.kuramoto_avg, AS.kuramoto_avg],
                         mode='lines',
-                        line=dict(color='rgba(150, 200, 255, 0.7)', width=2, dash='dash'),
-                        name=f'Avg: {AS.kuramoto_avg:.3f}'
+                        line=dict(color='rgba(180, 180, 180, 0.5)', width=1, dash='dot'),
+                        name=f'μ={AS.kuramoto_avg:.2f}',
+                        hoverinfo='skip'
                     ))
                     
-                    # Scatter points for processed samples
+                    # Original Kuramoto (from dataset) - blue line
                     if AS.kuramoto_history:
                         indices, values = zip(*AS.kuramoto_history)
-                        # Color by label
-                        colors = [['#00ff88', '#f472b6', '#00d4ff'][AS.latent_labels[i] % 3] if i < len(AS.latent_labels) else THEME_PRIMARY for i in range(len(indices))]
                         fig.add_trace(go.Scatter(
                             x=indices,
                             y=values,
-                            mode='markers',
-                            marker=dict(size=5, color=colors, opacity=0.8),
-                            name='Samples'
+                            mode='lines+markers',
+                            line=dict(color='rgba(100, 180, 255, 0.9)', width=1.5),
+                            marker=dict(size=3, color='rgba(100, 180, 255, 0.9)'),
+                            name='Original',
+                            hovertemplate='idx:%{x}<br>r=%{y:.3f}<extra></extra>'
                         ))
-                        
-                        # Current point highlighted
+                    
+                    # Reconstructed Kuramoto proxy (from VAE) - pink/magenta line
+                    if AS.kuramoto_proxy_history:
+                        proxy_indices, proxy_values = zip(*AS.kuramoto_proxy_history)
+                        fig.add_trace(go.Scatter(
+                            x=proxy_indices,
+                            y=proxy_values,
+                            mode='lines+markers',
+                            line=dict(color='rgba(244, 114, 182, 0.9)', width=1.5),
+                            marker=dict(size=3, color='rgba(244, 114, 182, 0.9)'),
+                            name='Proxy (VAE)',
+                            hovertemplate='idx:%{x}<br>proxy=%{y:.3f}<extra></extra>'
+                        ))
+                    
+                    # Current position marker
+                    if AS.kuramoto_history:
+                        indices, values = zip(*AS.kuramoto_history)
                         if len(indices) > 0:
+                            current_idx = indices[-1]
                             fig.add_trace(go.Scatter(
-                                x=[indices[-1]],
-                                y=[values[-1]],
-                                mode='markers',
-                                marker=dict(size=12, color=THEME_WARN, symbol='star', line=dict(width=2, color='white')),
-                                name='Current'
+                                x=[current_idx, current_idx],
+                                y=[0, 1],
+                                mode='lines',
+                                line=dict(color='rgba(255, 255, 255, 0.3)', width=1, dash='dash'),
+                                showlegend=False,
+                                hoverinfo='skip'
                             ))
                     
                     fig.update_layout(
                         template='plotly_dark',
                         paper_bgcolor='rgba(8,8,8,1)',
-                        plot_bgcolor='rgba(8,8,8,1)',
-                        height=120,
-                        margin=dict(l=40, r=10, t=5, b=30),
-                        xaxis=dict(title='Sample Index', range=[0, n_total], gridcolor='rgba(255,204,0,0.1)'),
-                        yaxis=dict(title='r', range=[0, 1], gridcolor='rgba(255,204,0,0.1)'),
-                        legend=dict(orientation='h', y=1.15, font=dict(size=8)),
-                        font=dict(family='JetBrains Mono', size=9, color=THEME_TEXT)
+                        plot_bgcolor='rgba(12,12,12,1)',
+                        height=145,
+                        margin=dict(l=45, r=15, t=5, b=35),
+                        xaxis=dict(
+                            title=dict(text='Sample', font=dict(size=9)),
+                            range=[0, n_total], 
+                            gridcolor='rgba(80,80,80,0.3)',
+                            tickfont=dict(size=8)
+                        ),
+                        yaxis=dict(
+                            title=dict(text='r', font=dict(size=9)),
+                            range=[0, 1], 
+                            gridcolor='rgba(80,80,80,0.3)',
+                            tickfont=dict(size=8),
+                            dtick=0.2
+                        ),
+                        legend=dict(
+                            orientation='h', 
+                            y=1.02, 
+                            x=0,
+                            font=dict(size=8),
+                            bgcolor='rgba(0,0,0,0)'
+                        ),
+                        font=dict(family='JetBrains Mono', size=9, color=THEME_TEXT_DIM),
+                        hovermode='x unified'
                     )
                     return fig
                 
-                kuramoto_plot = ui.plotly(make_kuramoto_fig()).classes('w-full').style('height: 120px;')
+                kuramoto_plot = ui.plotly(make_kuramoto_fig()).classes('w-full').style('height: 145px;')
                 AS.activation_plots['kuramoto'] = kuramoto_plot
             
             # ROW 2: ENCODER + DECODER ACTIVATIONS
@@ -1247,25 +1470,21 @@ def analysis_page():
             
             # ROW 3: LATENT SPACE (full width, larger)
             with ui.card().classes('dark-card p-3 w-full'):
-                with ui.row().classes('items-center gap-4 mb-2'):
-                    ui.label('▌LATENT SPACE (PCA)').style(f'color:{THEME_SECONDARY}; font-family: JetBrains Mono; font-size: 0.8rem;')
-                    ui.label('').bind_text_from(AS, 'latent_codes', lambda x: f'{len(x)} samples').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                with ui.row().classes('items-center gap-4 mb-1'):
+                    ui.label('▌LATENT SPACE (PCA)').style(f'color:{THEME_TEXT_DIM}; font-family: JetBrains Mono; font-size: 0.75rem;')
+                    ui.label('').bind_text_from(AS, 'latent_codes', lambda x: f'n={len(x)}').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
                 
                 def make_latent_fig():
-                    """Create latent space PCA visualization."""
+                    """Create latent space PCA visualization - scientific style."""
                     fig = go.Figure()
                     
                     X_pca, labels = compute_latent_pca()
                     if X_pca is not None and len(X_pca) > 0:
-                        # Use more colors for more classes
+                        # Scientific color palette (colorblind-friendly)
                         n_classes = len(np.unique(labels))
-                        if n_classes <= 10:
-                            colors = ['#00ff88', '#f472b6', '#00d4ff', '#ffcc00', '#a78bfa', 
-                                     '#00ffcc', '#ff9f43', '#74b9ff', '#55efc4', '#fd79a8']
-                        else:
-                            # Use colorscale for many classes
-                            import plotly.express as px
-                            colors = px.colors.qualitative.Alphabet[:n_classes]
+                        # Muted scientific colors
+                        colors = ['#4477AA', '#EE6677', '#228833', '#CCBB44', '#66CCEE', 
+                                 '#AA3377', '#BBBBBB', '#44AA99', '#999933', '#882255']
                         
                         for label in np.unique(labels):
                             mask = labels == label
@@ -1273,48 +1492,60 @@ def analysis_page():
                             fig.add_trace(go.Scatter(
                                 x=X_pca[mask, 0], y=X_pca[mask, 1],
                                 mode='markers',
-                                marker=dict(size=6, color=colors[int(label) % len(colors)], opacity=0.7),
-                                name=label_name
+                                marker=dict(size=5, color=colors[int(label) % len(colors)], opacity=0.6),
+                                name=label_name,
+                                hovertemplate=f'{label_name}<br>PC1=%{{x:.2f}}<br>PC2=%{{y:.2f}}<extra></extra>'
                             ))
                         
-                        # Current point - bright yellow circle instead of star
+                        # Current point - simple ring marker
                         if len(X_pca) > 0:
                             fig.add_trace(go.Scatter(
                                 x=[X_pca[-1, 0]], y=[X_pca[-1, 1]],
                                 mode='markers',
-                                marker=dict(size=14, color='#ffff00', opacity=1, 
-                                           line=dict(width=2, color='#000000')),
-                                name='Current',
-                                showlegend=False
+                                marker=dict(size=10, color='rgba(255,255,255,0)', 
+                                           line=dict(width=2, color='white')),
+                                name='current',
+                                showlegend=False,
+                                hoverinfo='skip'
                             ))
                     else:
                         fig.add_annotation(text="Process samples to visualize latent space", 
                                          x=0.5, y=0.5, showarrow=False,
-                                         font=dict(color=THEME_TEXT_DIM, size=12))
+                                         font=dict(color=THEME_TEXT_DIM, size=10))
                     
                     lat_range = AS.axis_ranges['latent']
                     fig.update_layout(
                         template='plotly_dark',
                         paper_bgcolor='rgba(8,8,8,1)',
-                        plot_bgcolor='rgba(8,8,8,1)',
-                        height=300,
-                        margin=dict(l=40, r=20, t=10, b=40),
-                        xaxis=dict(title='PC1', gridcolor='rgba(0,255,136,0.1)', 
-                                  range=[lat_range['x_min'], lat_range['x_max']]),
-                        yaxis=dict(title='PC2', gridcolor='rgba(0,255,136,0.1)',
-                                  range=[lat_range['y_min'], lat_range['y_max']]),
-                        legend=dict(orientation='h', y=-0.15, x=0.5, xanchor='center', 
-                                   font=dict(size=9), bgcolor='rgba(0,0,0,0.5)'),
-                        font=dict(family='JetBrains Mono', size=10, color=THEME_TEXT)
+                        plot_bgcolor='rgba(12,12,12,1)',
+                        height=280,
+                        margin=dict(l=45, r=15, t=5, b=40),
+                        xaxis=dict(
+                            title=dict(text='PC1', font=dict(size=9)),
+                            gridcolor='rgba(80,80,80,0.3)', 
+                            range=[lat_range['x_min'], lat_range['x_max']],
+                            tickfont=dict(size=8)
+                        ),
+                        yaxis=dict(
+                            title=dict(text='PC2', font=dict(size=9)),
+                            gridcolor='rgba(80,80,80,0.3)',
+                            range=[lat_range['y_min'], lat_range['y_max']],
+                            tickfont=dict(size=8)
+                        ),
+                        legend=dict(
+                            orientation='h', y=-0.12, x=0.5, xanchor='center', 
+                            font=dict(size=8), bgcolor='rgba(0,0,0,0)'
+                        ),
+                        font=dict(family='JetBrains Mono', size=9, color=THEME_TEXT_DIM)
                     )
                     return fig
                 
-                latent_plot = ui.plotly(make_latent_fig()).classes('w-full').style('height: 300px;')
+                latent_plot = ui.plotly(make_latent_fig()).classes('w-full').style('height: 280px;')
                 AS.latent_plot = latent_plot
             
             # ROW 3: ATTENTION WEIGHTS (per layer)
             with ui.card().classes('dark-card p-3 w-full'):
-                ui.label('▌ATTENTION WEIGHTS (GAT layers)').style(f'color:{THEME_WARN}; font-family: JetBrains Mono; font-size: 0.75rem;').classes('mb-1')
+                ui.label('▌ATTENTION WEIGHTS (GAT)').style(f'color:{THEME_TEXT_DIM}; font-family: JetBrains Mono; font-size: 0.75rem;').classes('mb-1')
                 
                 def make_attention_fig():
                     """Create attention heatmap visualization using REAL GAT attention weights."""
@@ -1616,13 +1847,44 @@ def analysis_page():
                             if hasattr(sample, 'graph_attr') and sample.graph_attr is not None:
                                 k_mean = sample.graph_attr[0].item() if hasattr(sample.graph_attr[0], 'item') else sample.graph_attr[0]
                                 ui.label(f'Kuramoto: {k_mean:.3f}').style(f'color:{THEME_WARN}; font-size: 0.7rem;')
-                                # Track Kuramoto
+                                # Track Kuramoto original
                                 AS.kuramoto_history.append((AS.current_idx, k_mean))
+                            
+                            # Track Kuramoto proxy from reconstruction
+                            if AS.current_kuramoto_comparison is not None:
+                                k_proxy = AS.current_kuramoto_comparison['kuramoto_proxy']
+                                k_error = AS.current_kuramoto_comparison['absolute_error']
+                                AS.kuramoto_proxy_history.append((AS.current_idx, k_proxy))
+                                ui.label(f'K. Proxy: {k_proxy:.3f} (Δ={k_error:.3f})').style(f'color:#f472b6; font-size: 0.7rem;')
+                
+                # EEG Synchronization - simple: current_idx * epoch_duration = view_start
+                if AS.eeg_sync_enabled and AS.eeg_data is not None:
+                    try:
+                        # Calculate view position from sample index
+                        AS.eeg_view_start = AS.current_idx * AS.epoch_duration
+                        # Clamp to EEG duration
+                        max_start = max(0, AS.eeg_data.duration_sec - AS.epoch_duration)
+                        AS.eeg_view_start = min(AS.eeg_view_start, max_start)
+                        
+                        # Update info label
+                        total_epochs = int(AS.eeg_data.duration_sec // AS.epoch_duration)
+                        eeg_sync_info.set_text(f'Epoch {AS.current_idx}/{total_epochs} | {AS.eeg_view_start:.1f}s')
+                    except Exception as e:
+                        analysis_log(f"EEG sync error: {e}", 'warning')
                 
                 # Update sample label
                 sample_label.set_text(f'Sample: {AS.current_idx + 1} / {AS.total_samples}')
                 
                 # Update all plots
+                
+                # Update EEG sync plot if enabled
+                if AS.eeg_sync_enabled and AS.eeg_plot is not None and AS.eeg_data is not None:
+                    try:
+                        AS.eeg_plot.figure = make_analysis_eeg_fig()
+                        AS.eeg_plot.update()
+                    except Exception as e:
+                        analysis_log(f"EEG plot error: {e}", 'warning')
+                
                 try:
                     kuramoto_plot.figure = make_kuramoto_fig()
                     kuramoto_plot.update()

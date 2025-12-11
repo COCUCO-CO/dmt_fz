@@ -459,3 +459,4 @@ class TestAnimationGeneratorSupport:
         assert len(frames) == 5
         assert frames[0].name == "frame_0000.png"
 
+

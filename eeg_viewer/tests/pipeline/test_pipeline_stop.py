@@ -288,3 +288,4 @@ class TestStopButtonCallback:
         finally:
             PS.current_process = original
 
+

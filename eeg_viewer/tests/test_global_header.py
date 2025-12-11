@@ -102,3 +102,4 @@ class TestSystemMonitorGlobalVisibility:
         for page in expected_pages:
             assert page in PAGE_CONFIG, f"Page '{page}' missing from PAGE_CONFIG"
 
+

@@ -458,3 +458,4 @@ class TestComponentConfiguration:
         flat_button_props = 'flat dense'
         assert 'flat' in flat_button_props
 
+

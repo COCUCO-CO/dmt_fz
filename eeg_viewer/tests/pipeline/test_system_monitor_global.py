@@ -87,3 +87,4 @@ class TestSystemMonitorFormatting:
         assert stats['mem_used_gb'] >= 0
         assert stats['mem_used_gb'] <= stats['mem_total_gb']
 
+

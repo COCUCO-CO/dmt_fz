@@ -430,3 +430,4 @@ class TestFullMiniPipelineRealData:
         assert np.allclose(s1, s2), "Syncro not reproducible"
         assert np.allclose(r1, r2), "Kuramoto not reproducible"
 
+

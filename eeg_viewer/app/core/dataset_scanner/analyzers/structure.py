@@ -286,3 +286,4 @@ class StructureAnalyzer:
         
         return False
 
+

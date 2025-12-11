@@ -894,3 +894,4 @@ def real_eeg_path() -> Path:
         pytest.skip("Real EEG dataset not available")
     return path
 
+
