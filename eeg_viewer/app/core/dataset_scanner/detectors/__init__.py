@@ -6,6 +6,7 @@ from .graph import GraphDetector
 from .timeseries import TimeSeriesDetector
 from .tabular import TabularDetector
 from .text import TextDetector
+from .binary import BinaryDatasetDetector
 
 __all__ = [
     'BaseDetector',
@@ -15,5 +16,6 @@ __all__ = [
     'TimeSeriesDetector',
     'TabularDetector',
     'TextDetector',
+    'BinaryDatasetDetector',
 ]
 

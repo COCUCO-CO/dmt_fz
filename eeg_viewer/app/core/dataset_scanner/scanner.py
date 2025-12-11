@@ -12,7 +12,7 @@ from .models import (
 )
 from .detectors import (
     ImageDetector, GraphDetector, TimeSeriesDetector, 
-    TabularDetector, TextDetector
+    TabularDetector, TextDetector, BinaryDatasetDetector
 )
 from .analyzers import StructureAnalyzer
 
@@ -23,11 +23,23 @@ class DatasetScanner:
     
     Automatically detects dataset type, structure, and extracts metadata.
     
+    Supported formats:
+    - Images: PNG, JPG, TIFF, WEBP, BMP, GIF, DICOM, NIfTI
+    - Graphs: PyTorch Geometric, GraphML, gpickle, phases-*.pkl
+    - Time Series: NumPy, EEG (BDF, EDF, FIF, SET), Audio (WAV, MP3, FLAC)
+    - Tabular: CSV, Excel, Parquet, HDF5
+    - Text: TXT, JSON, JSONL
+    - Binary: IDX/ubyte (MNIST-style)
+    
     Usage:
         scanner = DatasetScanner()
         info = scanner.scan("/path/to/dataset")
         print(info.summary())
     """
+    
+    # Thresholds for MIXED detection
+    MIXED_SCORE_RATIO = 0.5  # If secondary type scores > 50% of primary, consider mixed
+    MIXED_MIN_FILES = 10     # Minimum files for secondary type to count as mixed
     
     def __init__(self):
         """Initialize scanner with all detectors."""
@@ -36,6 +48,7 @@ class DatasetScanner:
         self.timeseries_detector = TimeSeriesDetector()
         self.tabular_detector = TabularDetector()
         self.text_detector = TextDetector()
+        self.binary_detector = BinaryDatasetDetector()
         self.structure_analyzer = StructureAnalyzer()
         
         # Cache for repeated scans
@@ -83,6 +96,7 @@ class DatasetScanner:
             'timeseries': self.timeseries_detector.detect(path, deep_scan, sample_size),
             'tabular': self.tabular_detector.detect(path, deep_scan, sample_size),
             'text': self.text_detector.detect(path, deep_scan, sample_size),
+            'binary': self.binary_detector.detect(path, deep_scan, sample_size),
         }
         
         # Determine primary type
@@ -155,8 +169,13 @@ class DatasetScanner:
         """
         Determine primary dataset type based on detection results.
         
+        MIXED is returned when:
+        - Multiple types are detected
+        - Secondary type has significant file count (>= MIXED_MIN_FILES)
+        - Secondary type score is >= MIXED_SCORE_RATIO of primary
+        
         Returns:
-            (DatasetType, best_detection_result)
+            (DatasetType, best_detection_result, is_mixed, secondary_types)
         """
         type_map = {
             'image': DatasetType.IMAGE,
@@ -164,32 +183,83 @@ class DatasetScanner:
             'timeseries': DatasetType.TIMESERIES,
             'tabular': DatasetType.TABULAR,
             'text': DatasetType.TEXT,
+            'binary': DatasetType.IMAGE,  # Binary (IDX) datasets are image-like
         }
         
-        # Score each detection
+        # Score each detection with file count weight
         scores = {}
+        file_counts = {}
         for name, result in results.items():
             if result.is_detected:
                 # Score based on confidence and file count
                 score = result.confidence * (1 + min(result.file_count / 100, 1))
                 scores[name] = score
+                file_counts[name] = result.file_count
         
         if not scores:
             return DatasetType.UNKNOWN, None
         
-        # Check for mixed dataset
-        detected_count = sum(1 for r in results.values() if r.is_detected)
-        if detected_count > 1:
-            # Check if one type dominates
-            max_score = max(scores.values())
-            dominant_types = [k for k, v in scores.items() if v > max_score * 0.7]
-            
-            if len(dominant_types) > 1:
-                return DatasetType.MIXED, results[max(scores, key=scores.get)]
+        # Sort types by score
+        sorted_types = sorted(scores.keys(), key=lambda x: scores[x], reverse=True)
+        best_type = sorted_types[0]
+        best_score = scores[best_type]
+        best_result = results[best_type]
         
-        # Return type with highest score
-        best_type = max(scores, key=scores.get)
-        return type_map[best_type], results[best_type]
+        # Check for MIXED only if there are multiple detected types
+        if len(sorted_types) > 1:
+            secondary_significant = []
+            
+            for t in sorted_types[1:]:
+                score_ratio = scores[t] / best_score
+                file_count = file_counts[t]
+                
+                # A type is significant if:
+                # 1. Score ratio is high enough (>= MIXED_SCORE_RATIO)
+                # 2. File count is significant (>= MIXED_MIN_FILES)
+                # 3. It's not a subset (e.g., text files that could be README)
+                is_significant = (
+                    score_ratio >= self.MIXED_SCORE_RATIO and
+                    file_count >= self.MIXED_MIN_FILES and
+                    not self._is_type_subset(t, best_type, results)
+                )
+                
+                if is_significant:
+                    secondary_significant.append(t)
+            
+            if secondary_significant:
+                # This is a mixed dataset
+                return DatasetType.MIXED, best_result
+        
+        # Check if binary should be promoted to IMAGE type with 'binary' format info
+        if best_type == 'binary':
+            return DatasetType.IMAGE, best_result
+        
+        return type_map[best_type], best_result
+    
+    def _is_type_subset(self, secondary: str, primary: str, results: dict) -> bool:
+        """
+        Check if secondary type is likely just a subset/artifact of primary.
+        
+        For example:
+        - text files in an image dataset are likely README/metadata
+        - tabular files in a graph dataset are likely edge lists
+        """
+        # Common artifact patterns
+        artifacts = {
+            'image': {'text'},      # README, metadata
+            'graph': {'text', 'tabular'},  # Edge lists, node lists
+            'timeseries': {'tabular'},  # Annotations, events
+        }
+        
+        if primary in artifacts and secondary in artifacts[primary]:
+            # Check if secondary has very few files compared to primary
+            primary_count = results[primary].file_count
+            secondary_count = results[secondary].file_count
+            
+            if secondary_count < primary_count * 0.1:  # Less than 10% of primary
+                return True
+        
+        return False
     
     def _build_file_info(self, path: Path, results: dict, best_result) -> FileInfo:
         """Build FileInfo from detection results."""
@@ -298,12 +368,24 @@ class DatasetScanner:
         if not best_result:
             return info
         
-        if primary_type == DatasetType.IMAGE and best_result.image_info:
-            img_info = best_result.image_info
-            info['sizes'] = img_info.image_sizes
-            info['channels'] = img_info.channels
-            info['color_mode'] = img_info.color_mode
-            info['formats'] = img_info.formats
+        if primary_type == DatasetType.IMAGE:
+            # Check if it's from binary detector (IDX/ubyte format)
+            if 'binary' in results and results['binary'].is_detected:
+                binary_result = results['binary']
+                info['format'] = 'idx-ubyte'
+                info['is_mnist_format'] = True
+                if binary_result.image_info:
+                    img_info = binary_result.image_info
+                    info['sizes'] = img_info.image_sizes
+                    info['channels'] = img_info.channels or 1
+                    info['color_mode'] = img_info.color_mode or 'grayscale'
+                    info['formats'] = img_info.formats
+            elif best_result.image_info:
+                img_info = best_result.image_info
+                info['sizes'] = img_info.image_sizes
+                info['channels'] = img_info.channels
+                info['color_mode'] = img_info.color_mode
+                info['formats'] = img_info.formats
         
         elif primary_type == DatasetType.GRAPH:
             if best_result.is_phases_format and best_result.phases_info:
@@ -369,12 +451,40 @@ class DatasetScanner:
             if result.is_detected:
                 warnings.extend(result.warnings)
         
+        # Count detected types
+        detected_types = [name for name, r in results.items() if r.is_detected]
+        
+        # Warning for mixed dataset
+        if len(detected_types) > 1:
+            significant_types = []
+            for name, result in results.items():
+                if result.is_detected and result.file_count >= self.MIXED_MIN_FILES:
+                    significant_types.append(f"{name} ({result.file_count} files)")
+            
+            if len(significant_types) > 1:
+                warnings.append(f"Multiple data types detected: {', '.join(significant_types)}")
+        
         # Add structure-based warnings
         if structure.has_classes and structure.class_counts:
             counts = list(structure.class_counts.values())
             if counts and max(counts) > min(counts) * 2:
                 if "imbalance" not in ' '.join(warnings).lower():
                     warnings.append("Class imbalance detected in dataset")
+        
+        # Warning for small datasets
+        total_files = sum(r.file_count for r in results.values() if r.is_detected)
+        if total_files > 0 and total_files < 50:
+            warnings.append(f"Small dataset ({total_files} files) - may not be sufficient for training")
+        
+        # Warning for no splits
+        has_splits = any(r.has_splits for r in results.values() if r.is_detected)
+        if not has_splits and structure.split_type == SplitType.NONE and total_files > 100:
+            warnings.append("No train/val/test splits detected - consider splitting data")
+        
+        # Warning for corrupt files
+        total_corrupt = sum(r.corrupt_files_count for r in results.values() if r.is_detected)
+        if total_corrupt > 0 and "corrupt" not in ' '.join(warnings).lower():
+            warnings.append(f"{total_corrupt} corrupt or unreadable files found")
         
         return list(set(warnings))  # Remove duplicates
     

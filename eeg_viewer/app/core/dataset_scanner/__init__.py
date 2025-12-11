@@ -27,6 +27,7 @@ from .detectors import (
     TimeSeriesDetector,
     TabularDetector,
     TextDetector,
+    BinaryDatasetDetector,
 )
 
 from .analyzers import StructureAnalyzer
@@ -54,6 +55,7 @@ __all__ = [
     'TimeSeriesDetector',
     'TabularDetector',
     'TextDetector',
+    'BinaryDatasetDetector',
     
     # Analyzers
     'StructureAnalyzer',
