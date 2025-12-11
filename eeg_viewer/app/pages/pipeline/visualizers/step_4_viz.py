@@ -9,8 +9,8 @@ Visualizes PLV synchronization matrices:
 from typing import Dict, Any, List, Optional
 import numpy as np
 from nicegui import ui
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
+import io
+import base64
 
 from config import THEME_PRIMARY, THEME_SECONDARY, THEME_TEXT_DIM, THEME_WARN
 from .base import BaseVisualizer, extract_event_value
@@ -32,6 +32,9 @@ class Step4Visualizer(BaseVisualizer):
         self._selected_epoch = 0
         self._available_conditions = []
         self._loaded_data_by_condition = {}  # Cache data per condition
+        self._is_loading = False
+        self._cached_files = None  # Cache file list
+        self._cached_subjects = None  # Cache subjects
     
     def get_controls(self) -> Dict[str, Any]:
         return {
@@ -84,26 +87,23 @@ class Step4Visualizer(BaseVisualizer):
                 'update:model-value',
                 lambda e: self._on_epoch_change(e.args)
             )
-            
-            # Backend toggle
-            with ui.row().classes('gap-1 ml-2'):
-                ui.button('Static', on_click=lambda: self._set_backend('matplotlib')).props(
-                    'dense flat size=sm'
-                ).style(f'color: {"#00d4aa" if self._backend == "matplotlib" else THEME_TEXT_DIM};')
-                ui.button('Interactive', on_click=lambda: self._set_backend('plotly')).props(
-                    'dense flat size=sm'
-                ).style(f'color: {"#00d4aa" if self._backend == "plotly" else THEME_TEXT_DIM};')
     
     def _get_subjects_and_conditions(self) -> tuple:
-        """Get available subjects and their conditions."""
-        files = self.find_data_files()
+        """Get available subjects and their conditions - CACHED."""
+        # Return cached result if available
+        if self._cached_subjects is not None:
+            return self._cached_subjects
+        
+        # Only scan files once
+        if self._cached_files is None:
+            self._cached_files = self.find_data_files()
+        
         subjects = []
         conditions_by_subject = {}
         
-        for f in files:
+        for f in self._cached_files:
             name = f.stem
             if 'syncro-' in name:
-                # Extract subject ID (e.g., "S01-DMT" -> "S01")
                 subj_cond = name.replace('syncro-', '')
                 
                 if '-' in subj_cond:
@@ -112,7 +112,6 @@ class Step4Visualizer(BaseVisualizer):
                     cond = parts[1] if len(parts) > 1 else 'Unknown'
                 else:
                     subj = subj_cond
-                    # Try to infer condition from parent folder
                     if f.parent.name in ['DMT', 'EC', 'EO']:
                         cond = f.parent.name
                     else:
@@ -125,7 +124,9 @@ class Step4Visualizer(BaseVisualizer):
                 if cond not in conditions_by_subject[subj]:
                     conditions_by_subject[subj].append(cond)
         
-        return sorted(set(subjects)), conditions_by_subject
+        # Cache the result
+        self._cached_subjects = (sorted(set(subjects)), conditions_by_subject)
+        return self._cached_subjects
     
     def _toggle_condition(self, condition: str, is_checked: bool) -> None:
         """Toggle a condition on/off."""
@@ -134,48 +135,79 @@ class Step4Visualizer(BaseVisualizer):
         elif not is_checked and condition in self._selected_conditions:
             self._selected_conditions.remove(condition)
         self._selected_conditions.sort()
-        self.render(self._container)
+        if self._container:
+            self.render(self._container)
     
     def _on_subject_change(self, value):
+        """Handle subject change - render directly without timer."""
         new_subject = extract_event_value(value)
         if new_subject != self._selected_subject:
             self._selected_subject = new_subject
-            self._loaded_data_by_condition.clear()  # Clear cache on subject change
-            self._data = None  # Also clear base data
+            # DON'T clear _cached_files or _cached_subjects - they don't change
+            # Only clear data cache for this subject (others might be reused)
+            # self._loaded_data_by_condition.clear()  # Keep cache for other subjects
+            self._data = None
+            # Render directly
             if self._container:
                 self.render(self._container)
     
     def _on_epoch_change(self, value):
         val = extract_event_value(value)
         self._selected_epoch = int(val) if val else 0
-        self.render(self._container)
-    
-    def _set_backend(self, backend):
-        self._backend = backend
-        self.render(self._container)
+        if self._container:
+            self.render(self._container)
     
     def _load_condition_data(self, subject: str, condition: str) -> Optional[dict]:
-        """Load data for a specific subject-condition pair."""
+        """Load data for a specific subject-condition pair - FAST direct path."""
+        import pickle
+        from pathlib import Path
+        
         cache_key = f"{subject}-{condition}"
         if cache_key in self._loaded_data_by_condition:
             return self._loaded_data_by_condition[cache_key]
         
-        files = self.find_data_files()
-        for f in files:
-            # Check if file matches subject and condition
+        run_dir = self.run_dir
+        if not run_dir:
+            return None
+        
+        # Try direct paths first (FAST - no searching)
+        possible_paths = [
+            # Pattern: {run_dir}/{condition}/syncro-{subject}-{condition}.pkl
+            run_dir / condition / f"syncro-{subject}-{condition}.pkl",
+            # Pattern: {run_dir}/syncro-{subject}-{condition}.pkl  
+            run_dir / f"syncro-{subject}-{condition}.pkl",
+            # Pattern: {run_dir}/{condition}/syncro-{subject}.pkl
+            run_dir / condition / f"syncro-{subject}.pkl",
+        ]
+        
+        for path in possible_paths:
+            if path.exists():
+                try:
+                    with open(path, 'rb') as handle:
+                        data = pickle.load(handle)
+                    self._loaded_data_by_condition[cache_key] = data
+                    return data
+                except Exception:
+                    pass
+        
+        # Fallback: search in cached files (slower but thorough)
+        if self._cached_files is None:
+            self._cached_files = self.find_data_files()
+        
+        for f in self._cached_files:
             is_match = (
                 (subject in f.name and condition in f.name) or
                 (subject in f.name and f.parent.name == condition)
             )
             if is_match:
                 try:
-                    import pickle
                     with open(f, 'rb') as handle:
                         data = pickle.load(handle)
                     self._loaded_data_by_condition[cache_key] = data
                     return data
-                except:
+                except Exception:
                     pass
+        
         return None
     
     def _render_visualization(self) -> None:
@@ -207,11 +239,17 @@ class Step4Visualizer(BaseVisualizer):
         # Render matrices side by side
         n_conditions = len(condition_data)
         
-        with ui.row().classes('w-full gap-2 flex-wrap'):
+        with ui.row().classes('w-full gap-3 flex-wrap justify-center'):
             for cond, data in condition_data.items():
-                # Each condition in a column
-                col_width = f'{min(100 // n_conditions, 48)}%'
-                with ui.column().style(f'flex: 1; min-width: 280px; max-width: {col_width};'):
+                # Each condition in a column - responsive sizing
+                if n_conditions == 1:
+                    col_style = 'flex: 0 0 auto; width: 500px; max-width: 100%;'
+                elif n_conditions == 2:
+                    col_style = 'flex: 0 0 auto; width: 450px; max-width: 48%;'
+                else:
+                    col_style = 'flex: 0 0 auto; width: 380px; max-width: 32%;'
+                
+                with ui.column().style(col_style):
                     self._render_single_condition(cond, data)
     
     def _render_single_condition(self, condition: str, data: dict) -> None:
@@ -238,74 +276,75 @@ class Step4Visualizer(BaseVisualizer):
             f'color: {color}; font-weight: bold; font-size: 0.85rem; margin-bottom: 4px;'
         )
         
-        # Heatmap
-        if self._backend == 'plotly':
-            self._render_plotly_heatmap(matrix, condition, color)
-        else:
-            self._render_matplotlib_heatmap(matrix, condition, color)
+        # Always use high-quality matplotlib
+        self._render_hq_matplotlib_heatmap(matrix, condition, color)
         
         # Stats + Histogram row
         with ui.row().classes('w-full gap-2 mt-1'):
             self._render_compact_stats(matrix, color)
             self._render_compact_histogram(matrix, color)
     
-    def _render_plotly_heatmap(self, matrix: np.ndarray, condition: str, color: str) -> None:
-        """Render compact, high-quality Plotly heatmap."""
-        fig = go.Figure(data=go.Heatmap(
-            z=matrix,
-            colorscale='Viridis',
-            zmin=0, zmax=1,
-            showscale=True,
-            colorbar=dict(
-                len=0.8, 
-                thickness=12, 
-                tickfont=dict(size=9, color='#cccccc'),  # Lighter color for visibility
-                title=dict(text='PLV', font=dict(size=9, color='#cccccc')),
-                tickcolor='#cccccc',
-                outlinecolor='#333333',
-            ),
-            hovertemplate='<b>ROI %{x} ↔ ROI %{y}</b><br>PLV: %{z:.3f}<extra></extra>'
-        ))
+    def _render_hq_matplotlib_heatmap(self, matrix: np.ndarray, condition: str, color: str) -> None:
+        """Render HIGH QUALITY matplotlib heatmap with white text."""
+        import matplotlib
+        matplotlib.use('Agg')
+        import matplotlib.pyplot as plt
         
-        fig.update_layout(
-            template='plotly_dark',
-            height=220,  # Reduced height for better fit
-            margin=dict(l=35, r=45, t=30, b=30),
-            paper_bgcolor='rgba(0,0,0,0)',
-            plot_bgcolor='rgba(0,0,0,0)',
-            title=dict(
-                text=f'PLV Alpha - {condition}', 
-                font=dict(size=10, color=color, family='JetBrains Mono')
-            ),
-            xaxis=dict(
-                title=dict(text='ROI', font=dict(size=9, color='#888888')),
-                tickfont=dict(size=8, color='#888888'), 
-                showgrid=False,
-                dtick=25
-            ),
-            yaxis=dict(
-                title=dict(text='ROI', font=dict(size=9, color='#888888')),
-                tickfont=dict(size=8, color='#888888'), 
-                showgrid=False, 
-                scaleanchor='x',
-                dtick=25
-            ),
+        # High DPI for crisp rendering
+        dpi = 150
+        fig, ax = plt.subplots(figsize=(4.5, 4), dpi=dpi)
+        
+        # Dark background
+        fig.patch.set_facecolor('#0a0a0a')
+        ax.set_facecolor('#0a0a0a')
+        
+        # Plot matrix
+        im = ax.imshow(matrix, cmap='viridis', vmin=0, vmax=1, aspect='equal', 
+                       interpolation='nearest')  # 'nearest' for sharp pixels
+        
+        # Title in condition color
+        ax.set_title(f'PLV Alpha - {condition}', color=color, fontsize=12, 
+                     fontweight='bold', pad=10)
+        
+        # White axis labels
+        ax.set_xlabel('ROI', color='white', fontsize=11)
+        ax.set_ylabel('ROI', color='white', fontsize=11)
+        
+        # White tick labels
+        ax.tick_params(colors='white', labelsize=10)
+        
+        # Set ticks
+        tick_positions = [0, 20, 40, 60, 80, 100]
+        ax.set_xticks([t for t in tick_positions if t < matrix.shape[1]])
+        ax.set_yticks([t for t in tick_positions if t < matrix.shape[0]])
+        
+        # Colorbar with WHITE text
+        cbar = fig.colorbar(im, ax=ax, shrink=0.85, pad=0.02)
+        cbar.set_label('PLV', color='white', fontsize=11)
+        cbar.ax.yaxis.set_tick_params(color='white', labelcolor='white', labelsize=10)
+        cbar.outline.set_edgecolor('#444444')
+        
+        # Set specific ticks on colorbar
+        cbar.set_ticks([0, 0.2, 0.4, 0.6, 0.8, 1.0])
+        
+        # Make spine colors dark
+        for spine in ax.spines.values():
+            spine.set_color('#333333')
+        
+        plt.tight_layout()
+        
+        # Save to buffer with high quality
+        buf = io.BytesIO()
+        fig.savefig(buf, format='png', facecolor=fig.get_facecolor(), 
+                    edgecolor='none', bbox_inches='tight', dpi=dpi)
+        buf.seek(0)
+        img_data = base64.b64encode(buf.read()).decode('utf-8')
+        plt.close(fig)
+        
+        # Display
+        ui.image(f'data:image/png;base64,{img_data}').style(
+            'max-width: 100%; height: auto; border-radius: 4px;'
         )
-        
-        ui.plotly(fig).classes('w-full').style('max-height: 240px;')
-    
-    def _render_matplotlib_heatmap(self, matrix: np.ndarray, condition: str, color: str) -> None:
-        """Render compact Matplotlib heatmap."""
-        fig, ax = self.create_matplotlib_figure(figsize=(3, 2.8))
-        
-        im = ax.imshow(matrix, cmap='viridis', vmin=0, vmax=1, aspect='equal')
-        ax.set_title(f'PLV Alpha - {condition}', color=color, fontsize=9)
-        ax.tick_params(labelsize=6)
-        
-        cbar = fig.colorbar(im, ax=ax, shrink=0.7, pad=0.02)
-        cbar.ax.tick_params(labelsize=6)
-        
-        self.show_matplotlib(fig)
     
     def _render_compact_stats(self, matrix: np.ndarray, color: str) -> None:
         """Render compact stats card."""
@@ -328,17 +367,39 @@ class Step4Visualizer(BaseVisualizer):
                     ui.label(value).style(f'color: {color}; font-size: 0.65rem;')
     
     def _render_compact_histogram(self, matrix: np.ndarray, color: str) -> None:
-        """Render compact histogram."""
+        """Render compact histogram with high quality."""
+        import matplotlib
+        matplotlib.use('Agg')
+        import matplotlib.pyplot as plt
+        
         upper = matrix[np.triu_indices_from(matrix, k=1)]
         
-        fig, ax = self.create_matplotlib_figure(figsize=(2, 1.5))
-        ax.hist(upper, bins=20, color=color, alpha=0.7, edgecolor='none')
-        ax.set_xlabel('PLV', color='#666', fontsize=6)
-        ax.set_ylabel('', fontsize=6)
-        ax.tick_params(labelsize=5)
+        dpi = 100
+        fig, ax = plt.subplots(figsize=(2.5, 1.8), dpi=dpi)
+        fig.patch.set_facecolor('#0a0a0a')
+        ax.set_facecolor('#0a0a0a')
+        
+        ax.hist(upper, bins=20, color=color, alpha=0.8, edgecolor='none')
+        ax.set_xlabel('PLV', color='white', fontsize=8)
+        ax.set_ylabel('Count', color='white', fontsize=8)
+        ax.tick_params(colors='white', labelsize=7)
         ax.set_xlim(0, 1)
         
-        self.show_matplotlib(fig)
+        for spine in ax.spines.values():
+            spine.set_color('#333333')
+        
+        plt.tight_layout()
+        
+        buf = io.BytesIO()
+        fig.savefig(buf, format='png', facecolor=fig.get_facecolor(), 
+                    edgecolor='none', bbox_inches='tight', dpi=dpi)
+        buf.seek(0)
+        img_data = base64.b64encode(buf.read()).decode('utf-8')
+        plt.close(fig)
+        
+        ui.image(f'data:image/png;base64,{img_data}').style(
+            'max-width: 100%; height: auto;'
+        )
     
     def _get_matrix_from_band_data(self, band_data) -> Optional[np.ndarray]:
         """Extract a matrix from band data in any format."""

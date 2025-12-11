@@ -69,6 +69,7 @@ class VisualizationPanel:
         self._step_buttons = {}
         self._current_visualizer = None
         self._panel_id = f"viz-panel-{id(self)}"  # Unique ID for JS
+        self._card_ref = None  # Reference to the resizable card
     
     @property
     def active_step(self) -> int:
@@ -83,6 +84,9 @@ class VisualizationPanel:
             step: Step number (1-8)
         """
         if 1 <= step <= 8:
+            # Save current panel height before switching
+            self._save_panel_height()
+            
             self._active_step = step
             PS.viz_active_step = step  # Persist for page navigation
             self._update_button_styles()
@@ -110,25 +114,41 @@ class VisualizationPanel:
         Args:
             height: Initial CSS height for the panel (resizable)
         """
+        # Use saved height if available, otherwise use default
+        saved_height = getattr(PS, 'viz_panel_height', None)
+        actual_height = saved_height if saved_height else height
+        
+        # Unique ID for this panel
+        self._panel_element_id = f"viz-panel-{id(self)}"
+        
         # Add CSS for resizable panels
-        ui.add_head_html('''
+        ui.add_head_html(f'''
             <style>
-            .resizable-panel {
+            .resizable-panel {{
                 resize: vertical;
                 overflow: auto;
                 min-height: 150px;
                 max-height: 80vh;
-            }
-            .resizable-panel::-webkit-resizer {
+            }}
+            .resizable-panel::-webkit-resizer {{
                 background: linear-gradient(135deg, transparent 50%, #00d4aa 50%);
                 border-radius: 2px;
-            }
+            }}
             </style>
+            <script>
+            // Save panel height on resize
+            window.vizPanelHeight = '{actual_height}';
+            </script>
         ''')
         
-        with ui.card().classes('w-full p-2 resizable-panel').style(
-            f'background: {THEME_BG}; border: 1px solid {THEME_BORDER}; height: {height};'
-        ):
+        # Create card with unique ID for height tracking
+        self._card_ref = ui.card().classes('w-full p-2 resizable-panel')
+        self._card_ref._props['id'] = self._panel_element_id
+        self._card_ref.style(
+            f'background: {THEME_BG}; border: 1px solid {THEME_BORDER}; height: {actual_height};'
+        )
+        
+        with self._card_ref:
             # Header with step selector
             self._render_header()
             
@@ -138,6 +158,9 @@ class VisualizationPanel:
             
             # Initial render
             self._render_visualizer()
+        
+        # Set up height observer using ResizeObserver
+        self._setup_height_observer()
     
     def _render_header(self) -> None:
         """Render header with step selector."""
@@ -183,6 +206,51 @@ class VisualizationPanel:
                     f'background: transparent; color: {THEME_TEXT_DIM}; '
                     f'border: 1px solid {THEME_BORDER};'
                 )
+    
+    def _setup_height_observer(self) -> None:
+        """Set up ResizeObserver to track panel height changes."""
+        if not self._card_ref or not hasattr(self, '_panel_element_id'):
+            return
+        
+        # Use JavaScript to observe resize and save height to window variable
+        ui.run_javascript(f'''
+            setTimeout(() => {{
+                const panel = document.getElementById('{self._panel_element_id}');
+                if (panel) {{
+                    // Store initial height
+                    window.vizPanelHeight = panel.offsetHeight + 'px';
+                    
+                    const observer = new ResizeObserver(entries => {{
+                        for (let entry of entries) {{
+                            const height = Math.round(entry.contentRect.height);
+                            window.vizPanelHeight = height + 'px';
+                        }}
+                    }});
+                    observer.observe(panel);
+                }}
+            }}, 100);
+        ''')
+    
+    def _save_panel_height(self) -> None:
+        """Save current panel height to persistent state - reads from JS and stores in PS."""
+        if not self._card_ref or not hasattr(self, '_panel_element_id'):
+            return
+        
+        # Read the height from JavaScript and save to Python state
+        async def do_save():
+            try:
+                height = await ui.run_javascript('window.vizPanelHeight || "300px"')
+                if height:
+                    PS.viz_panel_height = str(height)
+            except:
+                pass
+        
+        # Schedule the async save
+        import asyncio
+        try:
+            asyncio.create_task(do_save())
+        except:
+            pass
     
     def _render_visualizer(self) -> None:
         """Render the visualizer for current step with loading indicator."""

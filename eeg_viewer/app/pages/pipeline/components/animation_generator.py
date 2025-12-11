@@ -41,11 +41,13 @@ class AnimationGenerator:
         self._subject = None
         self._band = 'Alpha'
         self._subfolder = None  # For nested folder structure
+        self._custom_path = None  # Custom path override
         
         # UI refs
         self._log_container = None
         self._subject_select = None
         self._subfolder_select = None
+        self._path_input = None
     
     def render(self) -> None:
         """Render the animation generator UI."""
@@ -56,6 +58,15 @@ class AnimationGenerator:
                 ui.label('Genera frames y videos de Kuramoto').style(
                     f'color: {THEME_TEXT_DIM}; font-size: 0.75rem;'
                 )
+                
+                # Path input row
+                with ui.row().classes('w-full gap-2 items-center'):
+                    ui.label('Directorio:').style(f'color: {THEME_TEXT_DIM}; font-size: 0.75rem;')
+                    self._path_input = ui.input(
+                        value='/media/storage_hdd/dmt_fz/fwd-inv-stc',
+                        placeholder='Path al directorio de datos'
+                    ).props('dense dark').classes('flex-1')
+                    ui.button('Cargar', on_click=self._load_subjects, icon='folder_open').props('dense')
                 
                 # Settings row 1 - Folder and subject selection
                 with ui.row().classes('gap-3 items-center flex-wrap'):
@@ -117,10 +128,6 @@ class AnimationGenerator:
                         'update:model-value',
                         lambda e: setattr(self, '_fps', int(e.args or 5))
                     )
-                    
-                    ui.button('Load Subjects', on_click=self._load_subjects).props(
-                        'dense flat size=sm'
-                    )
                 
                 # Log area
                 self._log_container = ui.column().classes('w-full').style(
@@ -159,33 +166,43 @@ class AnimationGenerator:
             )
     
     def _load_subjects(self) -> None:
-        """Load available subfolders and subjects."""
-        run_dir = self._get_run_dir()
+        """Load available subfolders and subjects - simple directory listing."""
+        # First try custom path from input, then fallback to get_run_dir
+        if self._path_input and self._path_input.value and self._path_input.value.strip():
+            run_dir = Path(self._path_input.value.strip())
+        else:
+            run_dir = self._get_run_dir()
+            if run_dir:
+                run_dir = Path(run_dir)
+        
         if not run_dir:
-            ui.notify('Seleccioná un run primero', type='warning')
+            ui.notify('Especificá un directorio', type='warning')
+            self._log('ERROR: No hay directorio especificado', THEME_ERROR)
             return
         
-        # First check for subfolders (DMT, EC, EO, etc.)
+        self._log(f'Directorio: {run_dir}', THEME_PRIMARY)
+        
+        if not run_dir.exists():
+            self._log(f'ERROR: No existe {run_dir}', THEME_ERROR)
+            return
+        
+        # Simply list all subdirectories
         subfolders = []
-        for d in run_dir.iterdir():
-            if d.is_dir() and not d.name.startswith('.'):
-                # Check if this folder has phases files
-                phases_files = list(d.glob('phases-*.pkl'))
-                if phases_files:
-                    subfolders.append(d.name)
+        for item in sorted(run_dir.iterdir()):
+            if item.is_dir() and not item.name.startswith('.'):
+                subfolders.append(item.name)
+                self._log(f'  📁 {item.name}', THEME_TEXT_DIM)
         
         if subfolders:
-            # Has subfolders - populate subfolder selector
-            subfolders = sorted(subfolders)
             if self._subfolder_select:
                 self._subfolder_select.options = subfolders
                 self._subfolder_select.value = subfolders[0]
                 self._subfolder = subfolders[0]
-            # Load subjects from first subfolder
             self._load_subjects_from_folder(run_dir / subfolders[0])
-            ui.notify(f'Found {len(subfolders)} carpetas', type='info')
+            self._log(f'✓ {len(subfolders)} carpetas encontradas', THEME_PRIMARY)
         else:
-            # No subfolders - look for phases files directly
+            # No subfolders, use root
+            self._log('No hay subcarpetas, buscando en raíz...', THEME_TEXT_DIM)
             if self._subfolder_select:
                 self._subfolder_select.options = ['(raíz)']
                 self._subfolder_select.value = '(raíz)'
@@ -193,24 +210,50 @@ class AnimationGenerator:
             self._load_subjects_from_folder(run_dir)
     
     def _load_subjects_from_folder(self, folder: Path) -> None:
-        """Load subjects from a specific folder."""
-        subjects = []
-        for f in folder.glob('phases-*.pkl'):
-            name = f.stem.replace('phases-', '')
-            subjects.append(name)
+        """Load subjects from a specific folder - simple pkl file listing."""
+        folder = Path(folder)
+        self._log(f'Buscando en: {folder.name}/', THEME_TEXT_DIM)
         
-        subjects = sorted(set(subjects))
+        # List all .pkl files and extract subject identifiers
+        subjects = set()
+        pkl_files = list(folder.glob('*.pkl'))
         
-        if subjects and self._subject_select:
-            self._subject_select.options = subjects
-            self._subject_select.value = subjects[0]
-            self._subject = subjects[0]
-            ui.notify(f'Found {len(subjects)} subjects', type='info')
+        self._log(f'  Archivos .pkl: {len(pkl_files)}', THEME_TEXT_DIM)
+        
+        for f in pkl_files:
+            name = f.stem
+            # Extract subject ID from filename patterns like:
+            # phases-S01-DMT, syncro-S01-DMT, order-S01-DMT, order_all-S01-DMT
+            for prefix in ['phases-', 'syncro-', 'order_all-', 'order-']:
+                if name.startswith(prefix):
+                    name = name[len(prefix):]
+                    break
+            
+            # Exclude non-subject files
+            if name and not name.startswith('subject_phases') and name not in [
+                'con_mat', 'eigen_all', 'eigen_correct', 'kuramoto_all', 
+                'extra', 'extras', 'clusters_splits0'
+            ]:
+                subjects.add(name)
+        
+        subjects = sorted(subjects)
+        
+        if subjects:
+            for s in subjects[:10]:
+                self._log(f'    👤 {s}', THEME_TEXT_DIM)
+            if len(subjects) > 10:
+                self._log(f'    ... y {len(subjects) - 10} más', THEME_TEXT_DIM)
+            
+            if self._subject_select:
+                self._subject_select.options = subjects
+                self._subject_select.value = subjects[0]
+                self._subject = subjects[0]
+            self._log(f'✓ {len(subjects)} sujetos encontrados', THEME_PRIMARY)
         else:
+            self._log(f'No se encontraron sujetos en {folder.name}', THEME_WARN)
             if self._subject_select:
                 self._subject_select.options = []
                 self._subject_select.value = None
-            ui.notify('No subjects found in this folder', type='warning')
     
     def _on_subfolder_change(self, value) -> None:
         """Handle subfolder selection change."""

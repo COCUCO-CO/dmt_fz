@@ -38,12 +38,21 @@ class BaseVisualizer(ABC):
     - What controls are needed
     """
     
+    # Mapping from internal step number to display number (button number)
+    # Steps 2 and 6 are skipped in the UI
+    STEP_TO_DISPLAY = {1: 1, 3: 2, 4: 3, 5: 4, 7: 5, 8: 6}
+    
     # Class attributes - override in subclasses
     step_number: int = 0
     step_name: str = ""
     step_description: str = ""
     file_patterns: List[str] = []  # Glob patterns for data files
     supported_backends: List[str] = ['matplotlib', 'plotly']
+    
+    @property
+    def display_number(self) -> int:
+        """Get the display number (what user sees in buttons)."""
+        return self.STEP_TO_DISPLAY.get(self.step_number, self.step_number)
     
     def __init__(self, get_run_dir: Callable[[], Optional[Path]]):
         """
@@ -141,9 +150,9 @@ class BaseVisualizer(ABC):
     
     def _render_content(self) -> None:
         """Render the actual content (override in subclass)."""
-        # Header
+        # Header - use display_number which matches the button the user clicked
         with ui.row().classes('items-center gap-2 mb-2'):
-            ui.label(f'Step {self.step_number}').style(
+            ui.label(f'Step {self.display_number}').style(
                 f'color: {THEME_PRIMARY}; font-family: JetBrains Mono; '
                 f'font-size: 0.8rem; font-weight: bold;'
             )

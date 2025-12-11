@@ -116,6 +116,9 @@ def detect_dataset_type(path: Path) -> dict:
                 info['num_nodes_eeg'] = ts.get('n_channels_eeg', 0)
                 info['num_nodes_stc'] = ts.get('n_parcels', 0)
                 info['num_epochs_sample'] = ts.get('n_epochs_per_file', 0)
+                info['num_timepoints'] = ts.get('n_timepoints', 0)
+                info['eeg_feature_types'] = ts.get('eeg_feature_types', [])
+                info['stc_feature_types'] = ts.get('stc_feature_types', [])
                 info['data_sources'].append('phases (syncro + phases + amplitudes + kuramoto)')
             elif ts.get('format') == 'pyg':
                 info['data_sources'].append('PyTorch Geometric graphs')
@@ -212,8 +215,9 @@ def create_default_config(dataset_path: str, dataset_info: dict) -> dict:
             'tensorboard': str(AUTOENCODER_CACHE_DIR / 'runs'),
         },
         'data': {
-            'conditions': dataset_info.get('conditions', ['DMT', 'EC', 'EO']),
-            'bands': dataset_info.get('bands', ['Delta', 'Theta', 'Alpha', 'Beta', 'Gamma']),
+            # Use detected conditions, or fallback to default if empty
+            'conditions': dataset_info.get('conditions') or dataset_info.get('classes') or ['DMT', 'EC', 'EO'],
+            'bands': dataset_info.get('bands') or ['Delta', 'Theta', 'Alpha', 'Beta', 'Gamma'],
             'use_stc': dataset_info.get('has_stc', False),
             'graph': {
                 'fully_connected': True,
@@ -262,6 +266,7 @@ def create_default_config(dataset_path: str, dataset_info: dict) -> dict:
                 'dim': 64,
             },
             'decoder': {
+                'gat_layers': 0,  # 0 = MLP decoder, >0 = GAT decoder
                 'hidden_dims': [256, 128],
                 'reconstruct_edges': True,
                 'activation': 'leaky_relu',
@@ -497,8 +502,112 @@ def model_page():
                         model_log(f"Dataset scanned: {info['type'].upper()} ({info['file_count']} files)", 'success')
                         if info.get('data_sources'):
                             model_log(f"  Format: {info['data_sources'][0]}", 'info')
+                        
+                        # Update data preview
+                        update_data_preview(info)
+                        
+                        # Update source info label with real data
+                        eeg_info = f"EEG: {info.get('num_nodes_eeg', 0)} ch" if info.get('has_eeg') else ""
+                        stc_info = f"STC: {info.get('num_nodes_stc', 0)} parcels" if info.get('has_stc') else ""
+                        if eeg_info and stc_info:
+                            source_info_label.text = f"{eeg_info} | {stc_info}"
+                        elif eeg_info:
+                            source_info_label.text = eeg_info
+                        elif stc_info:
+                            source_info_label.text = stc_info
+                        else:
+                            source_info_label.text = "No EEG/STC data found"
                 
                 ui.button('Scan Dataset', on_click=scan_dataset, icon='search').props('dense').classes('mt-2').style(f'background:#f472b6; color:black;')
+                
+                # Data Preview Panel (appears after scan)
+                data_preview_container = ui.column().classes('w-full mt-2')
+                
+                def update_data_preview(info):
+                    """Update data preview panel with scanned dataset info."""
+                    data_preview_container.clear()
+                    
+                    if not info or info.get('type') == 'unknown':
+                        return
+                    
+                    with data_preview_container:
+                        ui.separator().classes('my-2')
+                        ui.label('📊 Data Preview').style(f'color:{THEME_SECONDARY}; font-size: 0.7rem; font-weight: bold;')
+                        
+                        # Show sample info based on type
+                        if info.get('type') == 'graph':
+                            # Graph/phases data preview
+                            with ui.column().classes('gap-1 mt-1'):
+                                # Show both EEG and STC if available
+                                has_eeg = info.get('has_eeg', False)
+                                has_stc = info.get('has_stc', False)
+                                nodes_eeg = info.get('num_nodes_eeg', 0)
+                                nodes_stc = info.get('num_nodes_stc', 0)
+                                
+                                if has_eeg:
+                                    ui.label(f'📡 EEG: {nodes_eeg} channels').style(f'color:{THEME_PRIMARY}; font-size: 0.65rem;')
+                                if has_stc:
+                                    ui.label(f'🧠 STC: {nodes_stc} parcels').style(f'color:{THEME_SECONDARY}; font-size: 0.65rem;')
+                                
+                                # Bands info (extracted from actual data)
+                                bands = info.get('bands', [])
+                                if bands:
+                                    ui.label(f'🎵 Bands: {", ".join(bands)} ({len(bands)} total)').style(f'color:{THEME_TEXT_DIM}; font-size: 0.6rem;')
+                                
+                                # Timepoints per epoch (raw data shape)
+                                timepoints = info.get('num_timepoints', 0)
+                                if timepoints:
+                                    ui.label(f'⏱️ Timepoints/epoch: {timepoints}').style(f'color:{THEME_TEXT_DIM}; font-size: 0.6rem;')
+                                
+                                # Feature types available (extracted from file)
+                                eeg_ft = info.get('eeg_feature_types', [])
+                                stc_ft = info.get('stc_feature_types', [])
+                                if eeg_ft:
+                                    ui.label(f'📦 EEG data: {", ".join(eeg_ft)} ({len(eeg_ft)} types)').style(f'color:{THEME_TEXT_DIM}; font-size: 0.6rem;')
+                                if stc_ft:
+                                    ui.label(f'📦 STC data: {", ".join(stc_ft)} ({len(stc_ft)} types)').style(f'color:{THEME_TEXT_DIM}; font-size: 0.6rem;')
+                                
+                                # Epochs
+                                epochs = info.get('num_epochs_sample', 0)
+                                if epochs:
+                                    ui.label(f'📊 Epochs/subject: {epochs}').style(f'color:{THEME_TEXT_DIM}; font-size: 0.6rem;')
+                                
+                                # Edge estimate
+                                nodes = nodes_eeg if has_eeg else nodes_stc
+                                if nodes > 0:
+                                    ui.label(f'🔗 Edges: ~{nodes*(nodes-1)//2} (fully conn.)').style(f'color:{THEME_TEXT_DIM}; font-size: 0.6rem;')
+                                
+                                # Total graphs estimate
+                                file_count = info.get('file_count', 0)
+                                if epochs and bands and file_count:
+                                    total = file_count * epochs * len(bands)
+                                    ui.label(f'📦 Total graphs: ~{total:,}').style(f'color:{THEME_WARN}; font-size: 0.6rem;')
+                        
+                        elif info.get('type') == 'image':
+                            ts = info.get('type_specific', {})
+                            sizes = ts.get('sizes', [])
+                            channels = ts.get('channels', 3)
+                            color_mode = ts.get('color_mode', 'RGB')
+                            
+                            with ui.column().classes('gap-1 mt-1'):
+                                if sizes:
+                                    ui.label(f'📐 Size: {sizes[0][0]}×{sizes[0][1]}').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
+                                ui.label(f'🎨 {color_mode} ({channels} ch)').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
+                                
+                                classes = info.get('classes', [])
+                                if classes:
+                                    ui.label(f'🏷️ Classes: {len(classes)}').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
+                        
+                        elif info.get('type') == 'timeseries':
+                            ts = info.get('type_specific', {})
+                            channels = ts.get('num_channels', 0)
+                            sr = ts.get('sampling_rate')
+                            
+                            with ui.column().classes('gap-1 mt-1'):
+                                if channels:
+                                    ui.label(f'📡 Channels: {channels}').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
+                                if sr:
+                                    ui.label(f'⏱️ Sample rate: {sr} Hz').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
                 
                 # Data source selector (EEG vs STC)
                 ui.separator().classes('my-2')
@@ -509,7 +618,7 @@ def model_page():
                         value='EEG (channels)'
                     ).props('dense dark').classes('flex-1')
                 
-                ui.label('EEG: 24 electrodes | STC: ~200 brain parcels').style(f'color:{THEME_TEXT_DIM}; font-size: 0.6rem;')
+                source_info_label = ui.label('Scan dataset to see channel info').style(f'color:{THEME_TEXT_DIM}; font-size: 0.6rem;')
                 
                 # Band selection
                 ui.separator().classes('my-2')
@@ -567,6 +676,20 @@ def model_page():
                         dropout = ui.number(value=0.2, min=0.0, max=0.5, step=0.05).props('dense').classes('w-16')
                         ui.label('Attn drop:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
                         attn_dropout = ui.number(value=0.1, min=0.0, max=0.3, step=0.05).props('dense').classes('w-16')
+                    
+                    ui.separator().classes('my-1')
+                    
+                    # Decoder params
+                    ui.label('Decoder').style(f'color:{THEME_SECONDARY}; font-size: 0.65rem;')
+                    
+                    with ui.row().classes('items-center gap-2'):
+                        ui.label('Dec GAT:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem; min-width: 70px;')
+                        decoder_gat_layers = ui.number(value=0, min=0, max=4).props('dense').classes('w-16')
+                        ui.label('(0=MLP)').style(f'color:{THEME_TEXT_DIM}; font-size: 0.55rem;')
+                    
+                    with ui.row().classes('items-center gap-2'):
+                        ui.label('Dec dims:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem; min-width: 70px;')
+                        decoder_hidden_dims = ui.input(value='256,128').props('dense').classes('w-24')
                     
                     ui.separator().classes('my-1')
                     
@@ -658,6 +781,15 @@ def model_page():
                         MS.config['model']['encoder']['num_attention_heads'] = int(attention_heads.value)
                         MS.config['model']['encoder']['dropout'] = float(dropout.value)
                         MS.config['model']['encoder']['attention_dropout'] = float(attn_dropout.value)
+                        
+                        # Decoder config
+                        MS.config['model']['decoder']['gat_layers'] = int(decoder_gat_layers.value)
+                        try:
+                            dims_str = decoder_hidden_dims.value.strip()
+                            if dims_str:
+                                MS.config['model']['decoder']['hidden_dims'] = [int(x.strip()) for x in dims_str.split(',') if x.strip()]
+                        except ValueError:
+                            MS.config['model']['decoder']['hidden_dims'] = [256, 128]  # Default
                         
                         # Training params
                         MS.config['training']['num_epochs'] = int(num_epochs.value)
@@ -860,11 +992,119 @@ def model_page():
             
             with ui.card().classes('dark-card p-2 w-full flex-1').style('display: flex; flex-direction: column; min-height: 0;'):
                 with ui.tabs().classes('w-full').style(f'background: {THEME_BG};') as model_tabs:
+                    tab_arch = ui.tab('ARCH', icon='account_tree').style(f'color:{THEME_WARN};')
                     tab_metrics = ui.tab('METRICS', icon='show_chart').style(f'color:#f472b6;')
                     tab_recon = ui.tab('RECON', icon='compare').style(f'color:{THEME_SECONDARY};')
                     tab_console = ui.tab('CONSOLE', icon='terminal').style(f'color:{THEME_PRIMARY};')
                 
-                with ui.tab_panels(model_tabs, value=tab_console).classes('w-full').style('flex: 1; min-height: 0; overflow: hidden;'):
+                with ui.tab_panels(model_tabs, value=tab_arch).classes('w-full').style('flex: 1; min-height: 0; overflow: hidden;'):
+                    
+                    # ARCHITECTURE TAB
+                    with ui.tab_panel(tab_arch).classes('p-2').style('height: 100%; display: flex; flex-direction: column;'):
+                        ui.label('▌MODEL ARCHITECTURE').style(f'color:{THEME_WARN}; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-2')
+                        
+                        arch_container = ui.column().classes('w-full flex-1')
+                        
+                        def update_architecture_viz():
+                            """Update architecture visualization based on current config."""
+                            arch_container.clear()
+                            
+                            with arch_container:
+                                # Get current config values
+                                enc_layers = int(gat_layers.value) if gat_layers.value else 3
+                                enc_hidden = int(hidden_dim.value) if hidden_dim.value else 64
+                                enc_heads = int(attention_heads.value) if attention_heads.value else 4
+                                lat_dim = int(latent_dim.value) if latent_dim.value else 64
+                                dec_gat = int(decoder_gat_layers.value) if decoder_gat_layers.value else 0
+                                
+                                try:
+                                    dec_dims = [int(x.strip()) for x in decoder_hidden_dims.value.split(',') if x.strip()]
+                                except:
+                                    dec_dims = [256, 128]
+                                
+                                # Get real values from dataset info (no hardcoded fallbacks)
+                                selected_bands = [b for b, cb in band_checks.items() if cb.value]
+                                n_bands = len(selected_bands) if selected_bands else 0
+                                
+                                # Get node count based on selected source (EEG vs STC)
+                                if MS.dataset_info:
+                                    use_stc = 'STC' in data_source_select.value if data_source_select else False
+                                    if use_stc:
+                                        input_nodes = MS.dataset_info.get('num_nodes_stc', 0)
+                                    else:
+                                        input_nodes = MS.dataset_info.get('num_nodes_eeg', 0)
+                                else:
+                                    input_nodes = 0
+                                
+                                # Features depend on node_features config (calculated at training time)
+                                # Show as "configured" since actual count depends on settings
+                                input_features = "cfg"
+                                
+                                # Create visual representation using cards
+                                with ui.row().classes('w-full gap-2 items-center justify-center flex-wrap'):
+                                    # Input
+                                    with ui.card().classes('p-2').style(f'background: {THEME_CARD}; border: 1px solid {THEME_BORDER}; min-width: 80px;'):
+                                        ui.label('INPUT').style(f'color:{THEME_PRIMARY}; font-size: 0.6rem; font-weight: bold;')
+                                        nodes_text = f'{input_nodes} nodes' if input_nodes > 0 else 'Scan first'
+                                        ui.label(nodes_text).style(f'color:{THEME_TEXT_DIM}; font-size: 0.55rem;')
+                                        bands_text = f'{n_bands} bands' if n_bands > 0 else 'Select bands'
+                                        ui.label(bands_text).style(f'color:{THEME_TEXT_DIM}; font-size: 0.55rem;')
+                                    
+                                    ui.label('→').style(f'color:{THEME_TEXT_DIM}; font-size: 1.2rem;')
+                                    
+                                    # Encoder
+                                    with ui.card().classes('p-2').style(f'background: {THEME_CARD}; border: 1px solid {THEME_SECONDARY}; min-width: 90px;'):
+                                        ui.label('ENCODER').style(f'color:{THEME_SECONDARY}; font-size: 0.6rem; font-weight: bold;')
+                                        ui.label(f'GAT × {enc_layers}').style(f'color:{THEME_TEXT_DIM}; font-size: 0.55rem;')
+                                        ui.label(f'{enc_hidden}d × {enc_heads}h').style(f'color:{THEME_TEXT_DIM}; font-size: 0.55rem;')
+                                    
+                                    ui.label('→').style(f'color:{THEME_TEXT_DIM}; font-size: 1.2rem;')
+                                    
+                                    # Latent
+                                    with ui.card().classes('p-2').style(f'background: {THEME_CARD}; border: 1px solid #f472b6; min-width: 70px;'):
+                                        ui.label('LATENT').style(f'color:#f472b6; font-size: 0.6rem; font-weight: bold;')
+                                        ui.label(f'{lat_dim} dim').style(f'color:{THEME_TEXT_DIM}; font-size: 0.55rem;')
+                                        ui.label('μ + σ').style(f'color:{THEME_TEXT_DIM}; font-size: 0.55rem;')
+                                    
+                                    ui.label('→').style(f'color:{THEME_TEXT_DIM}; font-size: 1.2rem;')
+                                    
+                                    # Decoder
+                                    with ui.card().classes('p-2').style(f'background: {THEME_CARD}; border: 1px solid {THEME_WARN}; min-width: 90px;'):
+                                        ui.label('DECODER').style(f'color:{THEME_WARN}; font-size: 0.6rem; font-weight: bold;')
+                                        if dec_gat > 0:
+                                            ui.label(f'GAT × {dec_gat}').style(f'color:{THEME_TEXT_DIM}; font-size: 0.55rem;')
+                                        else:
+                                            ui.label('MLP').style(f'color:{THEME_TEXT_DIM}; font-size: 0.55rem;')
+                                        ui.label(f'{" → ".join(map(str, dec_dims))}').style(f'color:{THEME_TEXT_DIM}; font-size: 0.55rem;')
+                                    
+                                    ui.label('→').style(f'color:{THEME_TEXT_DIM}; font-size: 1.2rem;')
+                                    
+                                    # Output
+                                    with ui.card().classes('p-2').style(f'background: {THEME_CARD}; border: 1px solid {THEME_BORDER}; min-width: 80px;'):
+                                        ui.label('OUTPUT').style(f'color:{THEME_PRIMARY}; font-size: 0.6rem; font-weight: bold;')
+                                        ui.label(nodes_text).style(f'color:{THEME_TEXT_DIM}; font-size: 0.55rem;')
+                                        ui.label('node features').style(f'color:{THEME_TEXT_DIM}; font-size: 0.55rem;')
+                                
+                                # Summary stats (only show real data)
+                                ui.separator().classes('my-3')
+                                with ui.row().classes('w-full gap-4 justify-center'):
+                                    with ui.column().classes('items-center'):
+                                        ui.label(f'{input_nodes if input_nodes > 0 else "?"}').style(f'color:{THEME_SECONDARY}; font-size: 1rem; font-weight: bold;')
+                                        ui.label('Input Nodes').style(f'color:{THEME_TEXT_DIM}; font-size: 0.6rem;')
+                                    
+                                    with ui.column().classes('items-center'):
+                                        ui.label(f'{lat_dim}').style(f'color:#f472b6; font-size: 1rem; font-weight: bold;')
+                                        ui.label('Latent Dim').style(f'color:{THEME_TEXT_DIM}; font-size: 0.6rem;')
+                                    
+                                    with ui.column().classes('items-center'):
+                                        ui.label(f'{n_bands if n_bands > 0 else "?"}').style(f'color:{THEME_WARN}; font-size: 1rem; font-weight: bold;')
+                                        ui.label('Bands Selected').style(f'color:{THEME_TEXT_DIM}; font-size: 0.6rem;')
+                                
+                                # Refresh button
+                                ui.button('Refresh', on_click=update_architecture_viz, icon='refresh').props('flat dense size=sm').classes('mt-2')
+                        
+                        # Initial render
+                        update_architecture_viz()
                     
                     # METRICS TAB
                     with ui.tab_panel(tab_metrics).classes('p-2').style('height: 100%; display: flex; flex-direction: column;'):
@@ -936,9 +1176,14 @@ def model_page():
                                 font=dict(family='JetBrains Mono', size=10, color=THEME_TEXT)
                             )
                             
-                            # Update axes
+                            # Update axes with log scale for better visualization
                             fig.update_xaxes(gridcolor='rgba(0,255,136,0.1)', showgrid=True)
-                            fig.update_yaxes(gridcolor='rgba(0,255,136,0.1)', showgrid=True)
+                            fig.update_yaxes(
+                                gridcolor='rgba(0,255,136,0.1)', 
+                                showgrid=True,
+                                type='log',  # Log scale for loss values
+                                dtick=1,  # Show 10^0, 10^1, etc.
+                            )
                             
                             return fig
                         

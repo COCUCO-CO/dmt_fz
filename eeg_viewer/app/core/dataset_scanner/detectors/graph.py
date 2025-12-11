@@ -23,7 +23,11 @@ class PhasesInfo:
     n_channels_eeg: int = 0
     n_parcels: int = 0
     n_epochs_per_file: int = 0
+    n_timepoints: int = 0  # Timepoints per epoch
     available_keys: List[str] = field(default_factory=list)
+    # Feature types available (phases, amplitudes, syncros, kuramoto, filtered)
+    eeg_feature_types: List[str] = field(default_factory=list)
+    stc_feature_types: List[str] = field(default_factory=list)
     
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -33,7 +37,10 @@ class PhasesInfo:
             'n_channels_eeg': self.n_channels_eeg,
             'n_parcels': self.n_parcels,
             'n_epochs_per_file': self.n_epochs_per_file,
+            'n_timepoints': self.n_timepoints,
             'available_keys': self.available_keys,
+            'eeg_feature_types': self.eeg_feature_types,
+            'stc_feature_types': self.stc_feature_types,
         }
 
 
@@ -112,9 +119,12 @@ class GraphDetector(BaseDetector):
         result.subjects_found = subjects
         result.subject_counts = subject_counts
         
-        # Analyze sample files
+        # Analyze sample files - prefer phases-*.pkl over order-*.pkl or syncro-*.pkl
         if analyze_samples and files:
-            result.phases_info = self._analyze_phases_file(files[0])
+            # Find a phases-*.pkl file specifically (not order or syncro)
+            phases_only = [f for f in files if f.name.startswith('phases-')]
+            sample_file = phases_only[0] if phases_only else files[0]
+            result.phases_info = self._analyze_phases_file(sample_file)
             
             if result.phases_info:
                 # Calculate total potential graphs
@@ -147,18 +157,28 @@ class GraphDetector(BaseDetector):
             info = PhasesInfo()
             info.available_keys = list(data.keys())
             
+            # Extract feature types for EEG and STC
+            feature_type_prefixes = ['phases', 'amplitudes', 'syncros', 'kuramoto', 'filtered']
+            for prefix in feature_type_prefixes:
+                if f'{prefix}_eeg' in data:
+                    info.eeg_feature_types.append(prefix)
+                if f'{prefix}_stc' in data:
+                    info.stc_feature_types.append(prefix)
+            
             # Check for EEG data
             if 'phases_eeg' in data:
                 info.has_eeg = True
                 phases_eeg = data['phases_eeg']
                 if isinstance(phases_eeg, dict):
                     info.bands = list(phases_eeg.keys())
-                    # Get channel count from first band, first epoch
+                    # Get channel count and timepoints from first band, first epoch
                     first_band = info.bands[0] if info.bands else None
                     if first_band and phases_eeg[first_band]:
                         first_epoch = phases_eeg[first_band][0]
                         if hasattr(first_epoch, 'shape'):
                             info.n_channels_eeg = first_epoch.shape[0]
+                            if len(first_epoch.shape) > 1:
+                                info.n_timepoints = first_epoch.shape[1]
                         info.n_epochs_per_file = len(phases_eeg[first_band])
             
             # Check for STC data
