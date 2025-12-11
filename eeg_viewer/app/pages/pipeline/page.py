@@ -12,7 +12,7 @@ from app.visualization.styles.css import STYLE
 
 from .config import LEFT_PANEL_WIDTH
 from .runner import run_pipeline_step
-from .components import render_header, IOConfigPanel, GlobalParamsPanel
+from .components import render_header, IOConfigPanel, GlobalParamsPanel, render_phases_with_steps
 from .steps import STEPS, StepContext
 from .tabs import ConsoleTab, FilesTab, SystemTab, VisualizeTab
 
@@ -32,7 +32,7 @@ def pipeline_page():
 
 def _render_pipeline_page() -> None:
     """
-    Render the complete pipeline page.
+    Render the complete pipeline page with improved UX.
     
     Layout:
     ┌─────────────────────────────────────────────────────────────┐
@@ -43,11 +43,18 @@ def _render_pipeline_page() -> None:
     │                │                                            │
     │ - IO Config    │ ┌──────────────────────────────────────┐  │
     │ - Global Params│ │ TABS: Console | Files | System | Viz │  │
-    │ - Steps 1-8    │ ├──────────────────────────────────────┤  │
-    │   (scrollable) │ │ Tab Content (scrollable)             │  │
-    │                │ │                                      │  │
-    │                │ │                                      │  │
-    │                │ └──────────────────────────────────────┘  │
+    │                │ ├──────────────────────────────────────┤  │
+    │ PHASES:        │ │ Tab Content (scrollable)             │  │
+    │ ┌────────────┐ │ │                                      │  │
+    │ │ FASE 1     │ │ │                                      │  │
+    │ │ Steps 1-2  │ │ └──────────────────────────────────────┘  │
+    │ ├────────────┤ │                                            │
+    │ │ FASE 2     │ │                                            │
+    │ │ Steps 3-6  │ │                                            │
+    │ ├────────────┤ │                                            │
+    │ │ FASE 3     │ │                                            │
+    │ │ Steps 7-8  │ │                                            │
+    │ └────────────┘ │                                            │
     └────────────────┴────────────────────────────────────────────┘
     """
     # Header
@@ -96,7 +103,7 @@ def _render_left_panel(
     get_context,
     on_run
 ) -> None:
-    """Render the left panel with controls and steps."""
+    """Render the left panel with controls and steps grouped by phases."""
     with ui.scroll_area().style(f'width: {LEFT_PANEL_WIDTH}; height: 100%;'):
         with ui.column().classes('gap-4 pr-2'):
             # IO Configuration
@@ -105,10 +112,12 @@ def _render_left_panel(
             # Global Parameters
             global_params.render()
             
-            # Pipeline Steps
-            for step_cls in STEPS:
-                step = step_cls(get_context)
-                step.render(on_run)
+            # Pipeline Steps grouped by phases
+            # Instantiate all steps
+            all_steps = [step_cls(get_context) for step_cls in STEPS]
+            
+            # Render using phase containers
+            render_phases_with_steps(all_steps, on_run)
 
 
 def _render_right_panel(get_run_dir) -> None:

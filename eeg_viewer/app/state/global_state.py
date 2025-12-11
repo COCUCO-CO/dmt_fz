@@ -100,6 +100,7 @@ class PipelineState:
         self.max_comps = 10
         self.clustering_search_mode = "Quick"  # 'Quick' or 'Full'
         self.input_dir = None  # Persists input directory path
+        self.dataset_metadata = None  # Metadata extracted from input files (sfreq, n_channels, etc.)
 
 
 class ModelState:

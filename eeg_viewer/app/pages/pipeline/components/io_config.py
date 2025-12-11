@@ -112,7 +112,7 @@ class IOConfigPanel:
         )
     
     def _scan_input_dir(self) -> None:
-        """Scan input directory and show results."""
+        """Scan input directory, show results, and extract metadata."""
         p = Path(self._input_dir_field.value)
         result = scan_input_directory(p)
         
@@ -131,6 +131,20 @@ class IOConfigPanel:
             pipeline_log(f"[INPUT] Scanned {p}: Flat - DMT={counts.get('DMT', 0)}, EC={counts.get('EC', 0)}, EO={counts.get('EO', 0)} .set files")
         else:
             ui.notify('Directory not found', type='warning')
+            return
+        
+        # Log metadata if extracted
+        metadata = result.get('metadata')
+        if metadata:
+            pipeline_log(f"[INPUT] Dataset metadata:")
+            pipeline_log(f"        Frecuencia: {metadata.get('sfreq', '?')} Hz")
+            pipeline_log(f"        Canales: {metadata.get('n_channels', '?')}")
+            pipeline_log(f"        Duración época: {metadata.get('epoch_duration', '?')} seg")
+            pipeline_log(f"        Muestras/época: {metadata.get('n_times', '?')}")
+            ui.notify(
+                f"Dataset: {metadata.get('sfreq', '?')}Hz, {metadata.get('n_channels', '?')}ch, {metadata.get('epoch_duration', '?')}s/época",
+                type='positive'
+            )
     
     async def _new_run(self) -> None:
         """Create a new run directory."""
