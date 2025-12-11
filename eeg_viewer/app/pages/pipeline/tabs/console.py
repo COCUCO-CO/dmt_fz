@@ -1,7 +1,8 @@
 """
-Console tab for pipeline output logging.
+Console component for pipeline output logging.
 
 Displays real-time log output with status indicator and controls.
+Can be used standalone or within a tab panel.
 """
 from datetime import datetime
 from typing import Callable
@@ -16,26 +17,41 @@ from ..runner import stop_current_process
 
 class ConsoleTab:
     """
-    Console tab component.
+    Console component.
     
     Responsibilities:
     - Display log output from pipeline execution
     - Show status indicator with elapsed time
     - Provide STOP and CLEAR controls
     - Restore logs from history on tab switch
+    
+    Can be rendered standalone or inside a tab panel.
     """
     
     def __init__(self):
-        """Initialize console tab."""
+        """Initialize console component."""
         self._status_label = None
     
-    def render(self) -> None:
-        """Render the console tab content."""
-        with ui.tab_panel('console').classes('p-2').style(
-            'height: 100%; display: flex; flex-direction: column; overflow: hidden;'
-        ):
-            self._render_header()
-            self._render_log_area()
+    def render(self, as_tab: bool = False) -> None:
+        """
+        Render the console content.
+        
+        Args:
+            as_tab: If True, wraps in ui.tab_panel. If False, renders standalone.
+        """
+        if as_tab:
+            with ui.tab_panel('console').classes('p-2').style(
+                'height: 100%; display: flex; flex-direction: column; overflow: hidden;'
+            ):
+                self._render_header()
+                self._render_log_area()
+        else:
+            # Standalone mode - render directly
+            with ui.column().classes('w-full h-full p-2').style(
+                'display: flex; flex-direction: column; overflow: hidden;'
+            ):
+                self._render_header()
+                self._render_log_area()
     
     def _render_header(self) -> None:
         """Render header with status and controls."""

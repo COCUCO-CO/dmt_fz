@@ -7,14 +7,14 @@ This follows the Composition pattern - the page is built from smaller, focused c
 from pathlib import Path
 from nicegui import ui
 
-from config import THEME_BG, THEME_PRIMARY, THEME_SECONDARY, THEME_WARN
+from config import THEME_BG, THEME_PRIMARY, THEME_SECONDARY, THEME_WARN, THEME_BORDER
 from app.visualization.styles.css import STYLE
 
 from .config import LEFT_PANEL_WIDTH
 from .runner import run_pipeline_step
-from .components import render_header, IOConfigPanel, GlobalParamsPanel, render_phases_with_steps
+from .components import render_header, IOConfigPanel, GlobalParamsPanel, render_phases_with_steps, FileBrowserPanel
 from .steps import STEPS, StepContext
-from .tabs import ConsoleTab, FilesTab, SystemTab, VisualizeTab
+from .tabs import ConsoleTab
 
 
 def pipeline_page_route():
@@ -36,20 +36,20 @@ def _render_pipeline_page() -> None:
     
     Layout:
     ┌─────────────────────────────────────────────────────────────┐
-    │ HEADER - Title, Running Indicator, Navigation               │
+    │ HEADER - Title, Running Indicator, CPU/RAM/GPU, Navigation  │
     ├────────────────┬────────────────────────────────────────────┤
     │ LEFT PANEL     │ RIGHT PANEL                                │
     │ (450px fixed)  │ (flexible)                                 │
     │                │                                            │
     │ - IO Config    │ ┌──────────────────────────────────────┐  │
-    │ - Global Params│ │ TABS: Console | Files | System | Viz │  │
+    │ - Global Params│ │ FILE BROWSER (auto-refresh)          │  │
     │                │ ├──────────────────────────────────────┤  │
-    │ PHASES:        │ │ Tab Content (scrollable)             │  │
+    │ PHASES:        │ │ CONSOLE (output log)                 │  │
     │ ┌────────────┐ │ │                                      │  │
     │ │ FASE 1     │ │ │                                      │  │
-    │ │ Steps 1-2  │ │ └──────────────────────────────────────┘  │
-    │ ├────────────┤ │                                            │
-    │ │ FASE 2     │ │                                            │
+    │ │ Steps 1-2  │ │ │                                      │  │
+    │ ├────────────┤ │ │                                      │  │
+    │ │ FASE 2     │ │ └──────────────────────────────────────┘  │
     │ │ Steps 3-6  │ │                                            │
     │ ├────────────┤ │                                            │
     │ │ FASE 3     │ │                                            │
@@ -57,7 +57,7 @@ def _render_pipeline_page() -> None:
     │ └────────────┘ │                                            │
     └────────────────┴────────────────────────────────────────────┘
     """
-    # Header
+    # Header (includes system monitor now)
     render_header()
     
     # Main layout
@@ -93,7 +93,7 @@ def _render_pipeline_page() -> None:
         # Left panel - Pipeline controls
         _render_left_panel(io_config, global_params, get_step_context, on_step_run)
         
-        # Right panel - Tabs
+        # Right panel - File Browser + Console (no tabs)
         _render_right_panel(lambda: io_config.run_dir)
 
 
@@ -121,45 +121,25 @@ def _render_left_panel(
 
 
 def _render_right_panel(get_run_dir) -> None:
-    """Render the right panel with tabs."""
-    with ui.column().classes('flex-1').style(
+    """
+    Render the right panel with File Browser and Console.
+    
+    No tabs - both are always visible:
+    - File Browser on top (with auto-refresh)
+    - Console below (shows execution output)
+    """
+    with ui.column().classes('flex-1 gap-2').style(
         'height: 100%; min-height: 0; display: flex; flex-direction: column; overflow: hidden;'
     ):
+        # File Browser (top, fixed height)
+        file_browser = FileBrowserPanel(get_run_dir)
+        file_browser.render(height="180px")
+        
+        # Console (bottom, flexible height)
         with ui.card().classes('dark-card p-2 w-full flex-1').style(
-            'display: flex; flex-direction: column; min-height: 0;'
+            f'display: flex; flex-direction: column; min-height: 0; '
+            f'border: 1px solid {THEME_BORDER};'
         ):
-            # Tab headers
-            with ui.tabs().classes('w-full').style(f'background: {THEME_BG};') as tabs:
-                tab_console = ui.tab('console', label='CONSOLE', icon='terminal').style(
-                    f'color:{THEME_PRIMARY};'
-                )
-                tab_files = ui.tab('files', label='FILES', icon='folder').style(
-                    f'color:{THEME_SECONDARY};'
-                )
-                tab_system = ui.tab('system', label='SYSTEM', icon='memory').style(
-                    f'color:{THEME_WARN};'
-                )
-                tab_viz = ui.tab('visualize', label='VISUALIZE', icon='analytics').style(
-                    f'color:#a78bfa;'
-                )
-            
-            # Tab panels
-            with ui.tab_panels(tabs, value=tab_console).classes('w-full').style(
-                'flex: 1; min-height: 0; overflow: hidden;'
-            ):
-                # Console Tab
-                console_tab = ConsoleTab()
-                console_tab.render()
-                
-                # Files Tab
-                files_tab = FilesTab(get_run_dir)
-                files_tab.render()
-                
-                # System Tab
-                system_tab = SystemTab()
-                system_tab.render()
-                
-                # Visualize Tab
-                viz_tab = VisualizeTab(get_run_dir)
-                viz_tab.render()
+            console_tab = ConsoleTab()
+            console_tab.render()
 

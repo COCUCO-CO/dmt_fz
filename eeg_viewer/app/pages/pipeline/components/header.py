@@ -1,12 +1,13 @@
 """
 Pipeline page header component.
 
-Contains title, version, running indicator, and navigation buttons.
+Contains title, version, running indicator, system monitor, and navigation buttons.
 """
 from nicegui import ui
 
 from config import THEME_BG, THEME_BORDER, THEME_PRIMARY, THEME_TEXT_DIM
 from app.visualization.components.running_indicator import render_running_indicator
+from app.visualization.components.system_monitor import render_system_monitor_compact
 
 
 def render_header() -> None:
@@ -16,6 +17,7 @@ def render_header() -> None:
     Contains:
     - App title and version
     - Global running indicator
+    - System monitor (CPU/RAM/GPU)
     - Navigation buttons to other pages
     """
     with ui.header().classes('items-center px-4 py-1').style(
@@ -34,6 +36,10 @@ def render_header() -> None:
         
         # Global running indicator
         render_running_indicator()
+        
+        # System monitor (CPU/RAM/GPU) - global visibility
+        with ui.element('div').classes('ml-4'):
+            render_system_monitor_compact()
         
         # Navigation buttons
         with ui.row().classes('ml-auto gap-2'):
