@@ -663,7 +663,7 @@ class VisualizeTab:
                                 if p.suffix == '.png':
                                     ui.image(str(p)).classes('w-full').style('max-height: 70vh;')
                                 else:
-                                    ui.html(f'<object data="{p}" type="image/svg+xml" style="width:100%; max-height: 70vh;"></object>')
+                                    ui.html(f'<object data="{p}" type="image/svg+xml" style="width:100%; max-height: 70vh;"></object>', sanitize=False)
                                 ui.button('Close', on_click=self._pearson_dialog.close).props('flat').classes('mt-3')
                         self._pearson_dialog.open()
                     

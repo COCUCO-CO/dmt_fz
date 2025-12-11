@@ -18,24 +18,28 @@ from config import (
 from app.state import MS
 from app.visualization.styles.css import STYLE
 from app.visualization.components.running_indicator import render_running_indicator
+from app.core.dataset_scanner import DatasetScanner
+from app.core.dataset_scanner.models import DatasetType
 
 AUTOENCODER_DIR = Path(__file__).parent.parent.parent.parent / "machine_learning" / "autoencoder"
 AUTOENCODER_CACHE_DIR = Path(__file__).parent.parent.parent / "cache" / "autoencoder"
 
+# Initialize global scanner instance
+_dataset_scanner = DatasetScanner()
+
+
 def detect_dataset_type(path: Path) -> dict:
     """
-    Detect dataset type and structure from a given path.
+    Detect dataset type and structure using the intelligent DatasetScanner.
     
-    Returns dict with:
-        - type: 'graph', 'image', 'unknown'
-        - structure: 'single_file', 'split_files', 'hierarchical'
-        - conditions: list of detected conditions (e.g., ['DMT', 'EC', 'EO'])
-        - file_count: number of data files
-        - sample_file: path to a sample file
-        - data_sources: what data is available (phases, syncro, etc.)
-        - has_stc: whether STC (source localized) data is available
-        - has_eeg: whether EEG data is available
-        - num_nodes: number of nodes (channels/parcels)
+    Uses the new DatasetScanner module which supports:
+    - Images (PNG, JPG, TIFF, WEBP, DICOM)
+    - Graphs (PyG .pt, .gpickle, .graphml, phases-*.pkl)
+    - Time Series (EEG: .bdf, .edf, .fif, .set; Audio: .wav; Arrays: .npy, .npz)
+    - Tabular (.csv, .xlsx, .parquet, .h5)
+    - Text (.txt, .json, .jsonl)
+    
+    Returns dict with detailed dataset information for compatibility with existing code.
     """
     info = {
         'type': 'unknown',
@@ -50,118 +54,113 @@ def detect_dataset_type(path: Path) -> dict:
         'num_nodes_eeg': 0,
         'num_nodes_stc': 0,
         'num_epochs_sample': 0,
-        'error': None
+        'error': None,
+        # New fields from DatasetScanner
+        'scanner_info': None,
+        'type_specific': {},
+        'classes': [],
+        'subjects': [],
+        'warnings': [],
+        'suggestions': [],
     }
     
     if not path.exists():
         info['error'] = f"Path does not exist: {path}"
         return info
     
-    # Check for phases-*.pkl files (graph data from pipeline)
-    phases_files = list(path.rglob("phases-*.pkl"))
-    syncro_files = list(path.rglob("syncro-*.pkl"))
-    order_files = list(path.rglob("order-*.pkl"))
-    
-    if phases_files:
-        info['type'] = 'graph'
-        info['file_count'] = len(phases_files)
-        info['sample_file'] = str(phases_files[0])
-        info['data_sources'].append('phases (syncro + phases + amplitudes + kuramoto)')
+    # Use the new intelligent scanner
+    try:
+        scanner_info = _dataset_scanner.scan(path, deep_scan=True, sample_size=10)
+        info['scanner_info'] = scanner_info
         
-        # Detect conditions from folder structure
-        conditions = set()
-        for f in phases_files:
-            parent = f.parent.name
-            if parent in ['DMT', 'EC', 'EO']:
-                conditions.add(parent)
-        info['conditions'] = sorted(list(conditions)) if conditions else ['Unknown']
+        # Convert DatasetType to string
+        type_map = {
+            DatasetType.IMAGE: 'image',
+            DatasetType.GRAPH: 'graph',
+            DatasetType.TIMESERIES: 'timeseries',
+            DatasetType.TABULAR: 'tabular',
+            DatasetType.TEXT: 'text',
+            DatasetType.MIXED: 'mixed',
+            DatasetType.UNKNOWN: 'unknown',
+        }
+        info['type'] = type_map.get(scanner_info.primary_type, 'unknown')
         
-        # Check structure
-        subdirs = [d for d in path.iterdir() if d.is_dir()]
-        info['structure'] = 'hierarchical' if subdirs else 'flat'
+        # File information
+        info['file_count'] = scanner_info.files.total_count
+        if scanner_info.files.sample_files:
+            info['sample_file'] = str(scanner_info.files.sample_files[0])
         
-        # Analyze sample file for detailed info
-        try:
-            import pickle
-            with open(info['sample_file'], 'rb') as f:
-                data = pickle.load(f)
-            
-            # Check what data is available
-            if 'phases_stc' in data:
-                info['has_stc'] = True
-                info['bands'] = list(data['phases_stc'].keys())
-                # Get number of parcels from first band, first epoch
-                first_band = info['bands'][0]
-                if data['phases_stc'][first_band]:
-                    info['num_nodes_stc'] = data['phases_stc'][first_band][0].shape[0]
-                    info['num_epochs_sample'] = len(data['phases_stc'][first_band])
-            
-            if 'phases_eeg' in data:
+        # Structure information
+        info['structure'] = scanner_info.structure.split_type.value
+        
+        # Classes/conditions
+        if scanner_info.structure.has_classes:
+            info['conditions'] = scanner_info.structure.classes
+            info['classes'] = scanner_info.structure.classes
+        
+        # Subjects
+        if scanner_info.structure.has_subjects:
+            info['subjects'] = scanner_info.structure.subjects
+        
+        # Type-specific information
+        info['type_specific'] = scanner_info.type_specific
+        
+        # Graph-specific (phases format)
+        if scanner_info.primary_type == DatasetType.GRAPH:
+            ts = scanner_info.type_specific
+            if ts.get('format') == 'phases':
+                info['bands'] = ts.get('bands', [])
+                info['has_eeg'] = ts.get('has_eeg', False)
+                info['has_stc'] = ts.get('has_stc', False)
+                info['num_nodes_eeg'] = ts.get('n_channels_eeg', 0)
+                info['num_nodes_stc'] = ts.get('n_parcels', 0)
+                info['num_epochs_sample'] = ts.get('n_epochs_per_file', 0)
+                info['data_sources'].append('phases (syncro + phases + amplitudes + kuramoto)')
+            elif ts.get('format') == 'pyg':
+                info['data_sources'].append('PyTorch Geometric graphs')
+        
+        # TimeSeries-specific
+        elif scanner_info.primary_type == DatasetType.TIMESERIES:
+            ts = scanner_info.type_specific
+            if ts.get('is_eeg_format'):
+                info['data_sources'].append('EEG raw data')
                 info['has_eeg'] = True
-                if not info['bands']:
-                    info['bands'] = list(data['phases_eeg'].keys())
-                first_band = info['bands'][0]
-                if data['phases_eeg'][first_band]:
-                    info['num_nodes_eeg'] = data['phases_eeg'][first_band][0].shape[0]
-                    if info['num_epochs_sample'] == 0:
-                        info['num_epochs_sample'] = len(data['phases_eeg'][first_band])
+                info['num_nodes_eeg'] = ts.get('num_channels', 0)
+            elif ts.get('is_audio_format'):
+                info['data_sources'].append('Audio data')
+            else:
+                info['data_sources'].append('NumPy arrays')
+        
+        # Image-specific
+        elif scanner_info.primary_type == DatasetType.IMAGE:
+            ts = scanner_info.type_specific
+            if ts.get('sizes'):
+                info['data_sources'].append(f"Images {ts.get('sizes', [])[0] if ts.get('sizes') else ''}")
+        
+        # Tabular-specific
+        elif scanner_info.primary_type == DatasetType.TABULAR:
+            ts = scanner_info.type_specific
+            info['data_sources'].append(f"Tabular ({ts.get('num_rows', 0)} rows × {ts.get('num_columns', 0)} cols)")
+        
+        # Text-specific
+        elif scanner_info.primary_type == DatasetType.TEXT:
+            ts = scanner_info.type_specific
+            info['data_sources'].append(f"Text ({ts.get('document_count', 0)} documents)")
+        
+        # Warnings and suggestions
+        info['warnings'] = scanner_info.warnings
+        info['suggestions'] = scanner_info.suggestions
+        
+        # Check for errors/warnings that should be shown
+        if scanner_info.warnings:
+            info['error'] = '; '.join(scanner_info.warnings[:2])  # Show first 2 warnings
+        
+        if not scanner_info.is_valid:
+            info['error'] = "No recognized data files found"
             
-            # Check what else is in the file
-            available_keys = list(data.keys())
-            if 'syncros_stc' in data or 'syncros_eeg' in data:
-                if 'syncro' not in str(info['data_sources']):
-                    pass  # Already included in phases
-            if 'kuramoto_stc' in data or 'kuramoto_eeg' in data:
-                pass  # Already included in phases
-                
-        except Exception as e:
-            info['error'] = f"Could not analyze sample file: {e}"
-        
-        return info
+    except Exception as e:
+        info['error'] = f"Scanner error: {e}"
     
-    # Fallback: check for standalone syncro files
-    if syncro_files:
-        info['type'] = 'graph'
-        info['file_count'] = len(syncro_files)
-        info['sample_file'] = str(syncro_files[0])
-        info['data_sources'].append('syncro (only synchronization matrices)')
-        
-        conditions = set()
-        for f in syncro_files:
-            parent = f.parent.name
-            if parent in ['DMT', 'EC', 'EO']:
-                conditions.add(parent)
-        info['conditions'] = sorted(list(conditions)) if conditions else ['Unknown']
-        
-        return info
-    
-    # Check for order files
-    if order_files:
-        info['type'] = 'order'
-        info['file_count'] = len(order_files)
-        info['sample_file'] = str(order_files[0])
-        info['data_sources'].append('order (Kuramoto order parameter)')
-        info['error'] = "Order files contain pre-computed Kuramoto values, not suitable for VAE training. Use phases-*.pkl files instead."
-        return info
-    
-    # Check for image files
-    image_files = list(path.rglob("*.png")) + list(path.rglob("*.jpg")) + list(path.rglob("*.jpeg"))
-    if image_files:
-        info['type'] = 'image'
-        info['file_count'] = len(image_files)
-        info['structure'] = 'flat' if not any(d.is_dir() for d in path.iterdir()) else 'hierarchical'
-        info['sample_file'] = str(image_files[0])
-        return info
-    
-    # Check for numpy arrays
-    npy_files = list(path.rglob("*.npy")) + list(path.rglob("*.npz"))
-    if npy_files:
-        info['type'] = 'array'
-        info['file_count'] = len(npy_files)
-        info['sample_file'] = str(npy_files[0])
-        return info
-    
-    info['error'] = "No recognized data files found (phases-*.pkl, images, or numpy arrays)"
     return info
 
 
@@ -380,13 +379,13 @@ def model_page():
                 dataset_info_container = ui.column().classes('w-full mt-2 gap-1')
                 
                 def scan_dataset():
-                    """Scan and detect dataset."""
+                    """Scan and detect dataset using the intelligent DatasetScanner."""
                     path = Path(dataset_path_input.value.strip())
                     MS.dataset_path = str(path)
                     
                     dataset_info_container.clear()
                     with dataset_info_container:
-                        ui.label('Scanning...').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                        ui.label('🔍 Scanning...').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
                     
                     info = detect_dataset_type(path)
                     MS.dataset_info = info
@@ -394,47 +393,122 @@ def model_page():
                     
                     dataset_info_container.clear()
                     with dataset_info_container:
-                        if info.get('error'):
+                        # Show errors first but don't stop if we have valid data
+                        has_valid_data = info['file_count'] > 0 and info['type'] != 'unknown'
+                        
+                        if not has_valid_data and info.get('error'):
                             ui.label(f"❌ {info['error']}").style(f'color:{THEME_ERROR}; font-size: 0.7rem;')
-                        else:
-                            ui.label(f"✓ Type: {info['type'].upper()}").style(f'color:{THEME_PRIMARY}; font-size: 0.75rem;')
-                            ui.label(f"  Files: {info['file_count']}").style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
-                            
-                            if info['conditions']:
-                                ui.label(f"  Conditions: {', '.join(info['conditions'])}").style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
-                            if info['bands']:
-                                ui.label(f"  Bands: {', '.join(info['bands'])}").style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
-                            
-                            # Show data sources
-                            if info['data_sources']:
-                                ui.label(f"  Data: {info['data_sources'][0]}").style(f'color:{THEME_SECONDARY}; font-size: 0.7rem;')
-                            
-                            # Show EEG/STC availability
-                            if info['has_eeg'] or info['has_stc']:
-                                sources = []
-                                if info['has_eeg']:
-                                    sources.append(f"EEG ({info['num_nodes_eeg']} ch)")
-                                if info['has_stc']:
-                                    sources.append(f"STC ({info['num_nodes_stc']} parcels)")
-                                ui.label(f"  Sources: {' | '.join(sources)}").style(f'color:{THEME_PRIMARY}; font-size: 0.7rem;')
-                            
-                            if info['num_epochs_sample'] > 0:
-                                ui.label(f"  Epochs/subject: ~{info['num_epochs_sample']}").style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
-                            
-                            # Update source selector options
-                            if info['has_eeg'] and info['has_stc']:
-                                data_source_select.options = ['EEG (channels)', 'STC (parcels)']
-                                data_source_select.value = 'STC (parcels)' if info['has_stc'] else 'EEG (channels)'
-                            elif info['has_eeg']:
-                                data_source_select.options = ['EEG (channels)']
-                                data_source_select.value = 'EEG (channels)'
-                            elif info['has_stc']:
-                                data_source_select.options = ['STC (parcels)']
-                                data_source_select.value = 'STC (parcels)'
-                            
-                            # Create default config
-                            MS.config = create_default_config(str(path), info)
-                            model_log(f"Dataset detected: {info['type']} ({info['file_count']} files)", 'success')
+                            return
+                        
+                        # Main type indicator with icon
+                        type_icons = {
+                            'image': '🖼️',
+                            'graph': '🔗',
+                            'timeseries': '📈',
+                            'tabular': '📊',
+                            'text': '📝',
+                            'mixed': '📦',
+                        }
+                        icon = type_icons.get(info['type'], '❓')
+                        ui.label(f"{icon} Type: {info['type'].upper()}").style(f'color:{THEME_PRIMARY}; font-size: 0.75rem; font-weight: bold;')
+                        
+                        # File count and size
+                        scanner_info = info.get('scanner_info')
+                        size_str = ''
+                        if scanner_info:
+                            size_str = f" ({scanner_info.files.total_size_human})"
+                        ui.label(f"  📁 Files: {info['file_count']}{size_str}").style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                        
+                        # Structure
+                        if info['structure'] != 'unknown':
+                            struct_label = info['structure'].replace('_', ' ').title()
+                            ui.label(f"  📂 Structure: {struct_label}").style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                        
+                        # Classes/Conditions
+                        if info.get('conditions') or info.get('classes'):
+                            classes = info.get('conditions') or info.get('classes', [])
+                            if classes:
+                                class_str = ', '.join(classes[:5])
+                                if len(classes) > 5:
+                                    class_str += f" (+{len(classes)-5})"
+                                ui.label(f"  🏷️ Classes: {class_str}").style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                        
+                        # Subjects
+                        if info.get('subjects'):
+                            ui.label(f"  👥 Subjects: {len(info['subjects'])}").style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                        
+                        # Bands (for graph/phases data)
+                        if info.get('bands'):
+                            ui.label(f"  🎵 Bands: {', '.join(info['bands'])}").style(f'color:{THEME_SECONDARY}; font-size: 0.7rem;')
+                        
+                        # Data sources
+                        if info.get('data_sources'):
+                            ui.label(f"  💾 Data: {info['data_sources'][0]}").style(f'color:{THEME_SECONDARY}; font-size: 0.7rem;')
+                        
+                        # EEG/STC availability (graph data)
+                        if info.get('has_eeg') or info.get('has_stc'):
+                            sources = []
+                            if info['has_eeg']:
+                                sources.append(f"EEG ({info['num_nodes_eeg']} ch)")
+                            if info['has_stc']:
+                                sources.append(f"STC ({info['num_nodes_stc']} parcels)")
+                            ui.label(f"  🧠 Sources: {' | '.join(sources)}").style(f'color:{THEME_PRIMARY}; font-size: 0.7rem;')
+                        
+                        # Epochs
+                        if info.get('num_epochs_sample', 0) > 0:
+                            ui.label(f"  📊 Epochs/subject: ~{info['num_epochs_sample']}").style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                        
+                        # Type-specific info
+                        ts = info.get('type_specific', {})
+                        if info['type'] == 'image' and ts.get('sizes'):
+                            sizes = ts.get('sizes', [])
+                            if sizes:
+                                ui.label(f"  📐 Size: {sizes[0]}").style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                        elif info['type'] == 'tabular':
+                            rows = ts.get('num_rows', ts.get('total_rows', 0))
+                            cols = ts.get('num_columns', 0)
+                            if rows or cols:
+                                ui.label(f"  📋 Shape: {rows} × {cols}").style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                        elif info['type'] == 'text':
+                            docs = ts.get('document_count', 0)
+                            if docs:
+                                ui.label(f"  📄 Documents: {docs}").style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                        elif info['type'] == 'timeseries':
+                            channels = ts.get('num_channels', 0)
+                            sr = ts.get('sampling_rate')
+                            if channels:
+                                sr_str = f" @ {sr}Hz" if sr else ""
+                                ui.label(f"  📡 Channels: {channels}{sr_str}").style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                        
+                        # Warnings (if any but still valid)
+                        if info.get('warnings') and has_valid_data:
+                            ui.label(f"  ⚠️ {info['warnings'][0]}").style(f'color:{THEME_WARN}; font-size: 0.65rem;')
+                        
+                        # Suggestions
+                        if info.get('suggestions') and has_valid_data:
+                            ui.label(f"  💡 {info['suggestions'][0]}").style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem; font-style: italic;')
+                        
+                        # Compatible frameworks
+                        if scanner_info and scanner_info.compatible_frameworks:
+                            frameworks = ', '.join(scanner_info.compatible_frameworks[:4])
+                            ui.label(f"  🔧 Compatible: {frameworks}").style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
+                        
+                        # Update source selector options
+                        if info['has_eeg'] and info['has_stc']:
+                            data_source_select.options = ['EEG (channels)', 'STC (parcels)']
+                            data_source_select.value = 'STC (parcels)' if info['has_stc'] else 'EEG (channels)'
+                        elif info['has_eeg']:
+                            data_source_select.options = ['EEG (channels)']
+                            data_source_select.value = 'EEG (channels)'
+                        elif info['has_stc']:
+                            data_source_select.options = ['STC (parcels)']
+                            data_source_select.value = 'STC (parcels)'
+                        
+                        # Create default config
+                        MS.config = create_default_config(str(path), info)
+                        model_log(f"Dataset scanned: {info['type'].upper()} ({info['file_count']} files)", 'success')
+                        if info.get('data_sources'):
+                            model_log(f"  Format: {info['data_sources'][0]}", 'info')
                 
                 ui.button('Scan Dataset', on_click=scan_dataset, icon='search').props('dense').classes('mt-2').style(f'background:#f472b6; color:black;')
                 

@@ -9,12 +9,20 @@ from nicegui import ui
 
 from config import THEME_BG, THEME_PRIMARY, THEME_SECONDARY, THEME_WARN, THEME_BORDER
 from app.visualization.styles.css import STYLE
+from app.state import PS
 
 from .config import LEFT_PANEL_WIDTH
 from .runner import run_pipeline_step
-from .components import render_header, IOConfigPanel, GlobalParamsPanel, render_phases_with_steps, FileBrowserPanel
+from .components import (
+    render_header, IOConfigPanel, GlobalParamsPanel, render_phases_with_steps, 
+    FileBrowserPanel, VisualizationPanel, AnimationGenerator
+)
 from .steps import STEPS, StepContext
 from .tabs import ConsoleTab
+
+
+# Global reference for visualization panel (for auto-switch)
+_viz_panel = None
 
 
 def pipeline_page_route():
@@ -44,19 +52,21 @@ def _render_pipeline_page() -> None:
     │ - IO Config    │ ┌──────────────────────────────────────┐  │
     │ - Global Params│ │ FILE BROWSER (auto-refresh)          │  │
     │                │ ├──────────────────────────────────────┤  │
-    │ PHASES:        │ │ CONSOLE (output log)                 │  │
-    │ ┌────────────┐ │ │                                      │  │
-    │ │ FASE 1     │ │ │                                      │  │
-    │ │ Steps 1-2  │ │ │                                      │  │
+    │ PHASES:        │ │ VISUALIZATION [1][2][3]...[8]        │  │
+    │ ┌────────────┐ │ │ (contextual per step)                │  │
+    │ │ FASE 1     │ │ ├──────────────────────────────────────┤  │
+    │ │ Steps 1-2  │ │ │ CONSOLE (output log)                 │  │
     │ ├────────────┤ │ │                                      │  │
     │ │ FASE 2     │ │ └──────────────────────────────────────┘  │
     │ │ Steps 3-6  │ │                                            │
-    │ ├────────────┤ │                                            │
+    │ ├────────────┤ │ [🎬 ANIMATIONS (expandable)]               │
     │ │ FASE 3     │ │                                            │
     │ │ Steps 7-8  │ │                                            │
     │ └────────────┘ │                                            │
     └────────────────┴────────────────────────────────────────────┘
     """
+    global _viz_panel
+    
     # Header (includes system monitor now)
     render_header()
     
@@ -80,8 +90,17 @@ def _render_pipeline_page() -> None:
                 jobs=global_params.jobs,
             )
         
-        # Run handler for steps
+        # Run handler for steps - also triggers viz auto-switch
         async def on_step_run(script_name: str, args: list, step_name: str):
+            # Auto-switch visualization to running step
+            step_to_viz = {
+                'fwd.py': 1, 'save_load_pickle.py': 2, 'multi2pool2.py': 3,
+                'calculate_syncro.py': 4, 'generate_order.py': 5,
+                'build_order_data.py': 6, 'pearson.py': 7, 'clustering.py': 8
+            }
+            if _viz_panel and script_name in step_to_viz:
+                _viz_panel.set_active_step(step_to_viz[script_name])
+            
             await run_pipeline_step(
                 script_name,
                 args,
@@ -93,8 +112,8 @@ def _render_pipeline_page() -> None:
         # Left panel - Pipeline controls
         _render_left_panel(io_config, global_params, get_step_context, on_step_run)
         
-        # Right panel - File Browser + Console (no tabs)
-        _render_right_panel(lambda: io_config.run_dir)
+        # Right panel - File Browser + Visualization + Console + Animations
+        _viz_panel = _render_right_panel(lambda: io_config.run_dir)
 
 
 def _render_left_panel(
@@ -120,26 +139,37 @@ def _render_left_panel(
             render_phases_with_steps(all_steps, on_run)
 
 
-def _render_right_panel(get_run_dir) -> None:
+def _render_right_panel(get_run_dir) -> VisualizationPanel:
     """
-    Render the right panel with File Browser and Console.
+    Render the right panel with File Browser, Visualization, Console, and Animations.
     
-    No tabs - both are always visible:
-    - File Browser on top (with auto-refresh)
-    - Console below (shows execution output)
+    Returns:
+        VisualizationPanel instance for external control (auto-switch)
     """
+    viz_panel = None
+    
     with ui.column().classes('flex-1 gap-2').style(
         'height: 100%; min-height: 0; display: flex; flex-direction: column; overflow: hidden;'
     ):
-        # File Browser (top, fixed height)
+        # File Browser (top, compact)
         file_browser = FileBrowserPanel(get_run_dir)
-        file_browser.render(height="180px")
+        file_browser.render(height="140px")
         
-        # Console (bottom, flexible height)
+        # Visualization Panel (middle, contextual)
+        viz_panel = VisualizationPanel(get_run_dir)
+        viz_panel.render(height="280px")
+        
+        # Console (flexible height)
         with ui.card().classes('dark-card p-2 w-full flex-1').style(
-            f'display: flex; flex-direction: column; min-height: 0; '
+            f'display: flex; flex-direction: column; min-height: 100px; '
             f'border: 1px solid {THEME_BORDER};'
         ):
             console_tab = ConsoleTab()
             console_tab.render()
+        
+        # Animation Generator (expandable at bottom)
+        anim_gen = AnimationGenerator(get_run_dir)
+        anim_gen.render()
+    
+    return viz_panel
 

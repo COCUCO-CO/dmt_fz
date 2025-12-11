@@ -34,6 +34,7 @@ class IOConfigPanel:
         self._input_dir_field = None
         self._run_label = None
         self._run_select = None
+        self._custom_output_field = None
     
     @property
     def input_dir(self) -> Path:
@@ -107,7 +108,17 @@ class IOConfigPanel:
                 ).props('dense').classes('w-36')
                 self._run_select.on('update:model-value', lambda e: self._use_existing())
         
-        ui.label(f'Output: {PIPELINE_OUTPUTS}/run_* (no pisa fwd-inv-stc/)').style(
+        # Custom path input
+        with ui.row().classes('items-center gap-2 w-full mt-1'):
+            ui.label('').style('min-width: 60px;')  # Spacer for alignment
+            self._custom_output_field = ui.input(
+                placeholder='Path personalizado (ej: /path/to/output)'
+            ).props('dense').classes('flex-1').style('font-size: 0.75rem;')
+            ui.button(icon='check', on_click=self._use_custom_path).props(
+                'flat dense size=sm'
+            ).tooltip('Usar este path')
+        
+        ui.label(f'Output: {PIPELINE_OUTPUTS}/run_* o path personalizado').style(
             f'color:{THEME_TEXT_DIM}; font-size: 0.65rem; margin-left: 68px;'
         )
     
@@ -171,11 +182,59 @@ class IOConfigPanel:
             
             pipeline_log(f"[RUN] Using existing: {self._current_run_dir[0]}")
     
+    def _use_custom_path(self) -> None:
+        """Use a custom output path."""
+        if not self._custom_output_field or not self._custom_output_field.value:
+            ui.notify('Ingresá un path primero', type='warning')
+            return
+        
+        custom_path = Path(self._custom_output_field.value.strip())
+        
+        # Validate path
+        if not custom_path.is_absolute():
+            ui.notify('El path debe ser absoluto (ej: /media/...)', type='warning')
+            return
+        
+        # Create directory if it doesn't exist
+        if not custom_path.exists():
+            try:
+                custom_path.mkdir(parents=True, exist_ok=True)
+                pipeline_log(f"[RUN] Created custom directory: {custom_path}")
+            except Exception as e:
+                ui.notify(f'Error creando directorio: {e}', type='negative')
+                return
+        
+        # Check if it's a directory
+        if not custom_path.is_dir():
+            ui.notify('El path debe ser un directorio', type='warning')
+            return
+        
+        # Set as current run
+        self._current_run_dir[0] = custom_path
+        PS.selected_run = custom_path
+        self._refresh_run_label()
+        
+        if PS.refresh_files:
+            PS.refresh_files()
+        
+        ui.notify(f'Usando: {custom_path}', type='positive')
+        pipeline_log(f"[RUN] Using custom path: {custom_path}")
+    
     def _refresh_run_label(self) -> None:
         """Update the run label with current selection."""
         if self._current_run_dir[0]:
-            self._run_label.text = str(self._current_run_dir[0].name)
+            # Show full path for custom paths, just name for standard runs
+            run_path = self._current_run_dir[0]
+            if PIPELINE_OUTPUTS in run_path.parents or run_path.parent == PIPELINE_OUTPUTS:
+                display_text = run_path.name
+            else:
+                # Custom path - show abbreviated
+                display_text = f"📁 {run_path.name}"
+                if len(str(run_path)) > 40:
+                    display_text = f"📁 .../{run_path.parent.name}/{run_path.name}"
+            self._run_label.text = display_text
             self._run_label.style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.8rem;')
+            self._run_label.tooltip(str(run_path))
         else:
             self._run_label.text = '(crear NEW RUN)'
             self._run_label.style(f'color:{THEME_TEXT_DIM}; font-family: JetBrains Mono; font-size: 0.8rem;')
