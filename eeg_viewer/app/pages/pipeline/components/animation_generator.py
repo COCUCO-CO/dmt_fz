@@ -40,10 +40,12 @@ class AnimationGenerator:
         self._fps = 5
         self._subject = None
         self._band = 'Alpha'
+        self._subfolder = None  # For nested folder structure
         
         # UI refs
         self._log_container = None
         self._subject_select = None
+        self._subfolder_select = None
     
     def render(self) -> None:
         """Render the animation generator UI."""
@@ -55,8 +57,16 @@ class AnimationGenerator:
                     f'color: {THEME_TEXT_DIM}; font-size: 0.75rem;'
                 )
                 
-                # Settings row 1
+                # Settings row 1 - Folder and subject selection
                 with ui.row().classes('gap-3 items-center flex-wrap'):
+                    # Subfolder selector (for nested structures like DMT/, EC/, EO/)
+                    self._subfolder_select = ui.select(
+                        [], label='Carpeta'
+                    ).props('dense dark').classes('w-24').on(
+                        'update:model-value',
+                        lambda e: self._on_subfolder_change(e.args)
+                    )
+                    
                     self._subject_select = ui.select(
                         [], label='Subject'
                     ).props('dense dark').classes('w-28')
@@ -149,15 +159,43 @@ class AnimationGenerator:
             )
     
     def _load_subjects(self) -> None:
-        """Load available subjects."""
+        """Load available subfolders and subjects."""
         run_dir = self._get_run_dir()
         if not run_dir:
             ui.notify('Seleccioná un run primero', type='warning')
             return
         
-        # Find phases files to get subject list
+        # First check for subfolders (DMT, EC, EO, etc.)
+        subfolders = []
+        for d in run_dir.iterdir():
+            if d.is_dir() and not d.name.startswith('.'):
+                # Check if this folder has phases files
+                phases_files = list(d.glob('phases-*.pkl'))
+                if phases_files:
+                    subfolders.append(d.name)
+        
+        if subfolders:
+            # Has subfolders - populate subfolder selector
+            subfolders = sorted(subfolders)
+            if self._subfolder_select:
+                self._subfolder_select.options = subfolders
+                self._subfolder_select.value = subfolders[0]
+                self._subfolder = subfolders[0]
+            # Load subjects from first subfolder
+            self._load_subjects_from_folder(run_dir / subfolders[0])
+            ui.notify(f'Found {len(subfolders)} carpetas', type='info')
+        else:
+            # No subfolders - look for phases files directly
+            if self._subfolder_select:
+                self._subfolder_select.options = ['(raíz)']
+                self._subfolder_select.value = '(raíz)'
+                self._subfolder = None
+            self._load_subjects_from_folder(run_dir)
+    
+    def _load_subjects_from_folder(self, folder: Path) -> None:
+        """Load subjects from a specific folder."""
         subjects = []
-        for f in run_dir.rglob('phases-*.pkl'):
+        for f in folder.glob('phases-*.pkl'):
             name = f.stem.replace('phases-', '')
             subjects.append(name)
         
@@ -169,7 +207,20 @@ class AnimationGenerator:
             self._subject = subjects[0]
             ui.notify(f'Found {len(subjects)} subjects', type='info')
         else:
-            ui.notify('No subjects found', type='warning')
+            if self._subject_select:
+                self._subject_select.options = []
+                self._subject_select.value = None
+            ui.notify('No subjects found in this folder', type='warning')
+    
+    def _on_subfolder_change(self, value) -> None:
+        """Handle subfolder selection change."""
+        from ..visualizers.base import extract_event_value
+        self._subfolder = extract_event_value(value)
+        
+        if self._subfolder and self._subfolder != '(raíz)':
+            run_dir = self._get_run_dir()
+            if run_dir:
+                self._load_subjects_from_folder(run_dir / self._subfolder)
     
     async def _generate_frames(self) -> None:
         """Generate visualization frames."""

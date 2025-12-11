@@ -137,9 +137,13 @@ class Step4Visualizer(BaseVisualizer):
         self.render(self._container)
     
     def _on_subject_change(self, value):
-        self._selected_subject = extract_event_value(value)
-        self._loaded_data_by_condition.clear()  # Clear cache
-        self.render(self._container)
+        new_subject = extract_event_value(value)
+        if new_subject != self._selected_subject:
+            self._selected_subject = new_subject
+            self._loaded_data_by_condition.clear()  # Clear cache on subject change
+            self._data = None  # Also clear base data
+            if self._container:
+                self.render(self._container)
     
     def _on_epoch_change(self, value):
         val = extract_event_value(value)
@@ -246,28 +250,49 @@ class Step4Visualizer(BaseVisualizer):
             self._render_compact_histogram(matrix, color)
     
     def _render_plotly_heatmap(self, matrix: np.ndarray, condition: str, color: str) -> None:
-        """Render compact Plotly heatmap."""
+        """Render compact, high-quality Plotly heatmap."""
         fig = go.Figure(data=go.Heatmap(
             z=matrix,
             colorscale='Viridis',
             zmin=0, zmax=1,
             showscale=True,
-            colorbar=dict(len=0.5, thickness=10, tickfont=dict(size=8)),
-            hovertemplate='ROI %{x} - ROI %{y}<br>PLV: %{z:.3f}<extra></extra>'
+            colorbar=dict(
+                len=0.8, 
+                thickness=12, 
+                tickfont=dict(size=9, color='#cccccc'),  # Lighter color for visibility
+                title=dict(text='PLV', font=dict(size=9, color='#cccccc')),
+                tickcolor='#cccccc',
+                outlinecolor='#333333',
+            ),
+            hovertemplate='<b>ROI %{x} ↔ ROI %{y}</b><br>PLV: %{z:.3f}<extra></extra>'
         ))
         
         fig.update_layout(
             template='plotly_dark',
-            height=220,
-            margin=dict(l=30, r=40, t=25, b=25),
+            height=220,  # Reduced height for better fit
+            margin=dict(l=35, r=45, t=30, b=30),
             paper_bgcolor='rgba(0,0,0,0)',
             plot_bgcolor='rgba(0,0,0,0)',
-            title=dict(text=f'PLV Alpha - {condition}', font=dict(size=10, color=color)),
-            xaxis=dict(title='', tickfont=dict(size=7), showgrid=False),
-            yaxis=dict(title='', tickfont=dict(size=7), showgrid=False, scaleanchor='x'),
+            title=dict(
+                text=f'PLV Alpha - {condition}', 
+                font=dict(size=10, color=color, family='JetBrains Mono')
+            ),
+            xaxis=dict(
+                title=dict(text='ROI', font=dict(size=9, color='#888888')),
+                tickfont=dict(size=8, color='#888888'), 
+                showgrid=False,
+                dtick=25
+            ),
+            yaxis=dict(
+                title=dict(text='ROI', font=dict(size=9, color='#888888')),
+                tickfont=dict(size=8, color='#888888'), 
+                showgrid=False, 
+                scaleanchor='x',
+                dtick=25
+            ),
         )
         
-        ui.plotly(fig).classes('w-full')
+        ui.plotly(fig).classes('w-full').style('max-height: 240px;')
     
     def _render_matplotlib_heatmap(self, matrix: np.ndarray, condition: str, color: str) -> None:
         """Render compact Matplotlib heatmap."""

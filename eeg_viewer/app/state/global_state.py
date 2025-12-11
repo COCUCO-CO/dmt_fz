@@ -101,6 +101,10 @@ class PipelineState:
         self.clustering_search_mode = "Quick"  # 'Quick' or 'Full'
         self.input_dir = None  # Persists input directory path
         self.dataset_metadata = None  # Metadata extracted from input files (sfreq, n_channels, etc.)
+        
+        # Visualization panel state
+        self.viz_panel_height = "300px"  # Persists panel height across step changes
+        self.viz_active_step = 1  # Persists active step
 
 
 class ModelState:

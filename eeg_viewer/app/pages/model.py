@@ -18,6 +18,7 @@ from config import (
 from app.state import MS
 from app.visualization.styles.css import STYLE
 from app.visualization.components.running_indicator import render_running_indicator
+from app.visualization.components.global_header import render_global_header
 from app.core.dataset_scanner import DatasetScanner
 from app.core.dataset_scanner.models import DatasetType
 
@@ -345,21 +346,8 @@ def model_page():
     """Model training page."""
     ui.add_head_html(f'<style>{STYLE}</style>')
     
-    # Header with navigation
-    with ui.header().classes('items-center px-4 py-1').style(f'background: {THEME_BG}; border-bottom: 1px solid {THEME_BORDER};'):
-        ui.label('▶').style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.75rem; letter-spacing: 2px;')
-        ui.label('EEG_VIEWER').classes('text-base font-medium ml-2').style(f'color: {THEME_PRIMARY}; font-family: JetBrains Mono; letter-spacing: 1px;')
-        ui.label('// MODEL').classes('text-xs ml-2').style(f'color: #f472b6; font-family: JetBrains Mono;')
-        
-        # Global running indicator (shows pipeline or model training status)
-        render_running_indicator()
-        
-        with ui.row().classes('ml-auto gap-2'):
-            ui.button('VIEWER', on_click=lambda: ui.navigate.to('/')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
-            ui.button('CLEANER', on_click=lambda: ui.navigate.to('/cleaner')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
-            ui.button('PIPELINE', on_click=lambda: ui.navigate.to('/pipeline')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
-            ui.button('MODEL', on_click=lambda: ui.navigate.to('/model')).props('flat dense').style(f'color:#f472b6;')
-            ui.button('ANALYSIS', on_click=lambda: ui.navigate.to('/analysis')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
+    # Global header with system monitor (CPU/RAM/GPU)
+    render_global_header('model')
     
     with ui.row().classes('w-full p-4 gap-4').style('height: calc(100vh - 50px); align-items: stretch;'):
         
@@ -534,9 +522,13 @@ def model_page():
                 ui.label('Tip: Start with 1-2 bands for faster training').style(f'color:{THEME_TEXT_DIM}; font-size: 0.6rem;')
                 
                 # Subsample option
-                with ui.row().classes('items-center gap-2 mt-2'):
+                with ui.row().classes('items-center gap-2 mt-2 w-full'):
                     ui.label('Subsample:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.75rem; min-width: 70px;')
-                    subsample_slider = ui.slider(min=0.1, max=1.0, step=0.1, value=0.3).props('label label-always :label-value="value.toFixed(1)"').classes('flex-1')
+                    subsample_slider = ui.slider(min=0.1, max=1.0, step=0.1, value=0.3).classes('flex-1')
+                    subsample_label = ui.label('0.3').style(f'color:{THEME_PRIMARY}; font-size: 0.75rem; min-width: 30px; text-align: right;')
+                
+                # Use value from event args directly for immediate sync
+                subsample_slider.on_value_change(lambda e: subsample_label.set_text(f'{e.value:.1f}'))
                 
                 ui.label('Use 0.1-0.3 for quick tests, 1.0 for full training').style(f'color:{THEME_TEXT_DIM}; font-size: 0.6rem;')
             

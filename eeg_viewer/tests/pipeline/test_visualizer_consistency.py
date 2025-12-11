@@ -79,8 +79,8 @@ class TestStep4MultiCondition:
         
         source = inspect.getsource(Step4Visualizer)
         
-        # Should have reasonable height
-        assert 'height=220' in source or 'height=250' in source or 'height=300' in source
+        # Should have compact height (220 is current value)
+        assert 'height=220' in source
 
 
 class TestLoadingSpinner:
@@ -126,10 +126,10 @@ class TestStep5KuramotoVisualization:
         """Step 5 should show debug info when no data found."""
         from app.pages.pipeline.visualizers.step_5_viz import Step5Visualizer
         
-        source = inspect.getsource(Step5Visualizer._render_visualization)
+        source = inspect.getsource(Step5Visualizer)
         
-        # Should show file patterns and found files for debugging
-        assert 'patrones' in source.lower() or 'patterns' in source.lower() or 'file_patterns' in source
+        # Should have debug info method
+        assert '_render_no_data_with_debug' in source
     
     def test_step_5_has_kuramoto_display(self):
         """Step 5 should display Kuramoto R(t) timeline."""
@@ -137,7 +137,52 @@ class TestStep5KuramotoVisualization:
         
         source = inspect.getsource(Step5Visualizer)
         
-        # Should have order parameter visualization
-        assert 'R(t)' in source or 'order' in source.lower()
-        assert 'timeline' in source.lower() or 'plot' in source.lower()
+        # Should have R(t) timeline
+        assert 'R(t)' in source
+        assert '_render_r_timeline' in source
+    
+    def test_step_5_has_oscillator_plot(self):
+        """Step 5 should display Kuramoto oscillators."""
+        from app.pages.pipeline.visualizers.step_5_viz import Step5Visualizer
+        
+        source = inspect.getsource(Step5Visualizer)
+        
+        # Should have oscillator visualization
+        assert '_render_oscillator_plot' in source
+        assert 'Scatterpolar' in source
+    
+    def test_step_5_has_network_comparison(self):
+        """Step 5 should compare R across brain networks."""
+        from app.pages.pipeline.visualizers import step_5_viz
+        
+        source = inspect.getsource(step_5_viz)
+        
+        # Should have network comparison
+        assert '_render_network_comparison' in source
+        assert 'FPN' in source  # Frontoparietal Network
+        assert 'DMN' in source  # Default Mode Network
+    
+    def test_step_5_has_band_comparison(self):
+        """Step 5 should compare R across frequency bands."""
+        from app.pages.pipeline.visualizers.step_5_viz import Step5Visualizer
+        
+        source = inspect.getsource(Step5Visualizer)
+        
+        # Should have band comparison
+        assert '_render_band_comparison' in source
+        assert 'Delta' in source
+        assert 'Alpha' in source
+
+
+class TestVisualizationPanelStepSelector:
+    """Test that visualization panel maps display numbers to actual steps."""
+    
+    def test_step_selector_maps_display_to_actual(self):
+        """Step selector should map consecutive display numbers to actual steps."""
+        from app.pages.pipeline.components.visualization_panel import VisualizationPanel
+        
+        source = inspect.getsource(VisualizationPanel._render_header)
+        
+        # Should have mapping from display (1-6) to actual steps (skipping 2 and 6)
+        assert 'DISPLAY_TO_STEP' in source or 'data processing only' in source
 

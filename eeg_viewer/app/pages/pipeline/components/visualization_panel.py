@@ -63,10 +63,12 @@ class VisualizationPanel:
             get_run_dir: Function that returns current run directory
         """
         self._get_run_dir = get_run_dir
-        self._active_step = 1
+        # Restore active step from persistent state
+        self._active_step = PS.viz_active_step if PS.viz_active_step else 1
         self._container = None
         self._step_buttons = {}
         self._current_visualizer = None
+        self._panel_id = f"viz-panel-{id(self)}"  # Unique ID for JS
     
     @property
     def active_step(self) -> int:
@@ -82,6 +84,7 @@ class VisualizationPanel:
         """
         if 1 <= step <= 8:
             self._active_step = step
+            PS.viz_active_step = step  # Persist for page navigation
             self._update_button_styles()
             self._render_visualizer()
     
@@ -145,14 +148,16 @@ class VisualizationPanel:
                 f'font-size: 0.8rem; font-weight: bold;'
             )
             
-            # Step selector buttons
+            # Step selector buttons - show consecutive 1-6, map to actual steps [1,3,4,5,7,8]
+            # Steps 2 and 6 are data processing only (no visualization)
+            DISPLAY_TO_STEP = {1: 1, 2: 3, 3: 4, 4: 5, 5: 7, 6: 8}
             with ui.row().classes('gap-1 ml-2'):
-                for step in range(1, 9):
+                for display_num, actual_step in DISPLAY_TO_STEP.items():
                     btn = ui.button(
-                        str(step),
-                        on_click=lambda s=step: self.set_active_step(s)
+                        str(display_num),
+                        on_click=lambda s=actual_step: self.set_active_step(s)
                     ).props('dense flat size=sm').classes('min-w-[28px]')
-                    self._step_buttons[step] = btn
+                    self._step_buttons[actual_step] = btn
             
             # Auto indicator
             ui.label('auto').style(

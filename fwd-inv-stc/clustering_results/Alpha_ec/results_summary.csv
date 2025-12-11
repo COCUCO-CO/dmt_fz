@@ -1,9 +1,0 @@
-rank,config_name,best_score,n_clusters,n_components,scaler,dim_reduction,cluster_method,distance_metric,error
-1,robust_pca_gmm_euclidean_all,0.6651223,2,2,robust,pca,gmm,euclidean,
-2,standard_pca_gmm_euclidean_all,0.6633527,2,2,standard,pca,gmm,euclidean,
-3,standard_pca_gmm_euclidean_top50,0.6284585,2,3,standard,pca,gmm,euclidean,
-4,standard_pca_kmeans_cosine_all,0.5524492,2,2,standard,pca,kmeans,cosine,
-5,robust_pca_kmeans_euclidean_all,0.5380218,2,2,robust,pca,kmeans,euclidean,
-6,standard_pca_kmeans_euclidean_all,0.53349644,2,2,standard,pca,kmeans,euclidean,
-7,standard_pca_kmeans_euclidean_top50,0.50458825,2,2,standard,pca,kmeans,euclidean,
-8,standard_pca_gmm_cosine_all,0.10112107,2,10,standard,pca,gmm,cosine,

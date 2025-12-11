@@ -12,6 +12,7 @@ from config import (
 from app.state import AS
 from app.visualization.styles.css import STYLE
 from app.visualization.components.running_indicator import render_running_indicator
+from app.visualization.components.global_header import render_global_header
 
 AUTOENCODER_DIR = Path(__file__).parent.parent.parent.parent / "machine_learning" / "autoencoder"
 AUTOENCODER_CACHE_DIR = Path(__file__).parent.parent.parent / "cache" / "autoencoder"
@@ -729,21 +730,8 @@ def analysis_page():
     """Model Analysis Page - Visualize trained model internals."""
     ui.add_head_html(f'<style>{STYLE}</style>')
     
-    # Header
-    with ui.header().classes('items-center px-4 py-1').style(f'background: {THEME_BG}; border-bottom: 1px solid {THEME_BORDER};'):
-        ui.label('▶').style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.75rem;')
-        ui.label('EEG_VIEWER').classes('text-base font-medium ml-2').style(f'color: {THEME_PRIMARY}; font-family: JetBrains Mono;')
-        ui.label('// ANALYSIS').classes('text-sm ml-3').style(f'color:{THEME_WARN}; font-family: JetBrains Mono;')
-        
-        # Global running indicator
-        render_running_indicator()
-        
-        with ui.row().classes('ml-auto gap-2'):
-            ui.button('VIEWER', on_click=lambda: ui.navigate.to('/')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
-            ui.button('CLEANER', on_click=lambda: ui.navigate.to('/cleaner')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
-            ui.button('PIPELINE', on_click=lambda: ui.navigate.to('/pipeline')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
-            ui.button('MODEL', on_click=lambda: ui.navigate.to('/model')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
-            ui.button('ANALYSIS', on_click=lambda: ui.navigate.to('/analysis')).props('flat dense').style(f'color:{THEME_WARN};')
+    # Global header with system monitor (CPU/RAM/GPU)
+    render_global_header('analysis')
     
     with ui.row().classes('w-full p-4 gap-4').style('height: calc(100vh - 50px); overflow: hidden;'):
         

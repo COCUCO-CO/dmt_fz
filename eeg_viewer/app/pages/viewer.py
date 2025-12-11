@@ -15,6 +15,7 @@ from eeg_loader import load_eeg_file, get_channel_data, scan_eeg_directory
 from app.state import S
 from app.visualization.styles.css import STYLE
 from app.visualization.components.running_indicator import render_running_indicator
+from app.visualization.components.global_header import render_global_header
 from app.core.signal import (
     apply_notch, apply_bandpass, 
     compute_fft, compute_hilbert,
@@ -1028,20 +1029,8 @@ DEFAULT_INPUT_DIR = Path(__file__).parent.parent.parent.parent / "EEG_CLEAN"
 def main_with_nav():
     ui.add_head_html(f'<style>{STYLE}</style>')
     
-    with ui.header().classes('items-center px-4 py-1').style(f'background: {THEME_BG}; border-bottom: 1px solid {THEME_BORDER};'):
-        ui.label('▶').style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.75rem; letter-spacing: 2px;')
-        ui.label('EEG_VIEWER').classes('text-base font-medium ml-2').style(f'color: {THEME_PRIMARY}; font-family: JetBrains Mono; letter-spacing: 1px;')
-        ui.label('v1.0').classes('text-xs ml-2').style(f'color: {THEME_TEXT_DIM}; font-family: JetBrains Mono;')
-        
-        # Global running indicator
-        render_running_indicator()
-        
-        with ui.row().classes('ml-auto gap-2'):
-            ui.button('VIEWER', on_click=lambda: ui.navigate.to('/')).props('flat dense').style(f'color:{THEME_PRIMARY};')
-            ui.button('CLEANER', on_click=lambda: ui.navigate.to('/cleaner')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
-            ui.button('PIPELINE', on_click=lambda: ui.navigate.to('/pipeline')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
-            ui.button('MODEL', on_click=lambda: ui.navigate.to('/model')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
-            ui.button('ANALYSIS', on_click=lambda: ui.navigate.to('/analysis')).props('flat dense').style(f'color:{THEME_TEXT_DIM};')
+    # Global header with system monitor (CPU/RAM/GPU)
+    render_global_header('viewer')
     
     # Rest of the main page content (call original main function logic)
     main_content()

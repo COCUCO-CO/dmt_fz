@@ -1,2 +1,0 @@
-band,best_config,best_score,n_clusters,n_components
-Alpha,robust_pca_gmm_euclidean_all,0.6651223,2,2
