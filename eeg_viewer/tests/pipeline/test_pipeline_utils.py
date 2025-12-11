@@ -27,11 +27,11 @@ class TestGetRunDirs:
     
     def test_returns_empty_when_no_directory(self, tmp_path, monkeypatch):
         """Should return empty list when PIPELINE_OUTPUTS doesn't exist."""
-        from app.pages.pipeline import get_run_dirs, PIPELINE_OUTPUTS
+        from app.pages.pipeline import get_run_dirs
         
         # Point to non-existent directory
         non_existent = tmp_path / "does_not_exist"
-        monkeypatch.setattr('app.pages.pipeline.PIPELINE_OUTPUTS', non_existent)
+        monkeypatch.setattr('app.pages.pipeline.config.PIPELINE_OUTPUTS', non_existent)
         
         result = get_run_dirs()
         assert result == []
@@ -43,7 +43,7 @@ class TestGetRunDirs:
         # Create empty output directory
         output_dir = tmp_path / "output"
         output_dir.mkdir()
-        monkeypatch.setattr('app.pages.pipeline.PIPELINE_OUTPUTS', output_dir)
+        monkeypatch.setattr('app.pages.pipeline.config.PIPELINE_OUTPUTS', output_dir)
         
         result = get_run_dirs()
         assert result == []
@@ -62,7 +62,7 @@ class TestGetRunDirs:
         (output_dir / "other_folder").mkdir()
         (output_dir / "some_file.txt").touch()
         
-        monkeypatch.setattr('app.pages.pipeline.PIPELINE_OUTPUTS', output_dir)
+        monkeypatch.setattr('app.pages.pipeline.config.PIPELINE_OUTPUTS', output_dir)
         
         result = get_run_dirs()
         assert len(result) == 2
@@ -80,7 +80,7 @@ class TestGetRunDirs:
         (output_dir / "run_20241201_100000").mkdir()
         (output_dir / "run_20241203_150000").mkdir()
         
-        monkeypatch.setattr('app.pages.pipeline.PIPELINE_OUTPUTS', output_dir)
+        monkeypatch.setattr('app.pages.pipeline.config.PIPELINE_OUTPUTS', output_dir)
         
         result = get_run_dirs()
         assert result == [
@@ -100,7 +100,7 @@ class TestGetRunDirs:
         (output_dir / "run_20241201_100000").mkdir()
         (output_dir / "run_20241202_log.txt").touch()
         
-        monkeypatch.setattr('app.pages.pipeline.PIPELINE_OUTPUTS', output_dir)
+        monkeypatch.setattr('app.pages.pipeline.config.PIPELINE_OUTPUTS', output_dir)
         
         result = get_run_dirs()
         assert result == ["run_20241201_100000"]
@@ -117,7 +117,7 @@ class TestCreateNewRun:
         """Should create directory with run_YYYYMMDD_HHMMSS format."""
         from app.pages.pipeline import create_new_run
         
-        monkeypatch.setattr('app.pages.pipeline.PIPELINE_OUTPUTS', tmp_path)
+        monkeypatch.setattr('app.pages.pipeline.config.PIPELINE_OUTPUTS', tmp_path)
         
         before = datetime.now()
         result = create_new_run()
@@ -142,7 +142,7 @@ class TestCreateNewRun:
         """Should create DMT/, EC/, EO/ subdirectories."""
         from app.pages.pipeline import create_new_run
         
-        monkeypatch.setattr('app.pages.pipeline.PIPELINE_OUTPUTS', tmp_path)
+        monkeypatch.setattr('app.pages.pipeline.config.PIPELINE_OUTPUTS', tmp_path)
         
         result = create_new_run()
         
@@ -157,7 +157,7 @@ class TestCreateNewRun:
         
         # Point to nested non-existent path
         nested_output = tmp_path / "deeply" / "nested" / "output"
-        monkeypatch.setattr('app.pages.pipeline.PIPELINE_OUTPUTS', nested_output)
+        monkeypatch.setattr('app.pages.pipeline.config.PIPELINE_OUTPUTS', nested_output)
         
         result = create_new_run()
         
@@ -168,7 +168,7 @@ class TestCreateNewRun:
         """Creating multiple runs should generate unique names."""
         from app.pages.pipeline import create_new_run
         
-        monkeypatch.setattr('app.pages.pipeline.PIPELINE_OUTPUTS', tmp_path)
+        monkeypatch.setattr('app.pages.pipeline.config.PIPELINE_OUTPUTS', tmp_path)
         
         runs = []
         for _ in range(3):

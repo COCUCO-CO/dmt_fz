@@ -87,8 +87,9 @@ class PipelineState:
         self.running_task_name = ""  # Name of currently running task (for global indicator)
         self.selected_run = None  # Persists selected run directory across tab switches
         
-        # Pipeline parameters
+        # Pipeline parameters (persist across page navigations)
         self.max_subjects = 0  # 0 = all
+        self.max_epochs = 0  # 0 = all
         self.conditions = ["DMT", "EC", "EO"]
         self.jobs = 0  # 0 = auto
         self.workers = 7
@@ -97,6 +98,7 @@ class PipelineState:
         self.max_k = 15
         self.min_comps = 2
         self.max_comps = 10
+        self.input_dir = None  # Persists input directory path
 
 
 class ModelState:

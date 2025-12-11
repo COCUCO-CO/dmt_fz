@@ -37,9 +37,9 @@ class IOConfigPanel:
     
     @property
     def input_dir(self) -> Path:
-        """Get current input directory."""
-        if self._input_dir_field and self._input_dir_field.value:
-            return Path(self._input_dir_field.value)
+        """Get current input directory from PS."""
+        if PS.input_dir:
+            return Path(PS.input_dir)
         return DEFAULT_INPUT_DIR
     
     @property
@@ -57,13 +57,21 @@ class IOConfigPanel:
             self._render_output_section()
     
     def _render_input_section(self) -> None:
-        """Render input directory section."""
+        """Render input directory section with value from PS."""
         with ui.row().classes('items-center gap-2 mt-2 w-full'):
             ui.label('INPUT:').style(
                 f'color:{THEME_SECONDARY}; font-family: JetBrains Mono; '
                 f'font-size: 0.75rem; min-width: 60px;'
             )
-            self._input_dir_field = ui.input(value=str(DEFAULT_INPUT_DIR)).props('dense').classes('flex-1')
+            # Initialize from PS state if available, otherwise use default
+            initial_value = str(PS.input_dir) if PS.input_dir else str(DEFAULT_INPUT_DIR)
+            self._input_dir_field = ui.input(value=initial_value).props('dense').classes('flex-1')
+            
+            # Update PS when input changes - use args for the new value
+            def update_input_dir(e):
+                PS.input_dir = e.args if e.args else None
+            self._input_dir_field.on('update:model-value', update_input_dir)
+            
             ui.button(icon='search', on_click=self._scan_input_dir).props('flat dense size=sm')
         
         ui.label('Directorio con DMT/, EC/, EO/ o archivos .set con condición en nombre').style(
