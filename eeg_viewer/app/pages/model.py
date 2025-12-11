@@ -559,13 +559,16 @@ def model_page():
                                 if timepoints:
                                     ui.label(f'⏱️ Timepoints/epoch: {timepoints}').style(f'color:{THEME_TEXT_DIM}; font-size: 0.6rem;')
                                 
-                                # Feature types available (extracted from file)
+                                # Node features count (feature_types × bands)
                                 eeg_ft = info.get('eeg_feature_types', [])
                                 stc_ft = info.get('stc_feature_types', [])
-                                if eeg_ft:
-                                    ui.label(f'📦 EEG data: {", ".join(eeg_ft)} ({len(eeg_ft)} types)').style(f'color:{THEME_TEXT_DIM}; font-size: 0.6rem;')
-                                if stc_ft:
-                                    ui.label(f'📦 STC data: {", ".join(stc_ft)} ({len(stc_ft)} types)').style(f'color:{THEME_TEXT_DIM}; font-size: 0.6rem;')
+                                n_bands = len(info.get('bands', []))
+                                if eeg_ft and n_bands:
+                                    eeg_node_features = len(eeg_ft) * n_bands
+                                    ui.label(f'🔢 EEG node features: {eeg_node_features} ({len(eeg_ft)} types × {n_bands} bands)').style(f'color:{THEME_PRIMARY}; font-size: 0.65rem; font-weight: bold;')
+                                if stc_ft and n_bands:
+                                    stc_node_features = len(stc_ft) * n_bands
+                                    ui.label(f'🔢 STC node features: {stc_node_features} ({len(stc_ft)} types × {n_bands} bands)').style(f'color:{THEME_PRIMARY}; font-size: 0.65rem; font-weight: bold;')
                                 
                                 # Epochs
                                 epochs = info.get('num_epochs_sample', 0)

@@ -39,7 +39,9 @@ class Step1Visualizer(BaseVisualizer):
         self._selected_epoch = 0
         self._selected_roi = 0
         self._selected_conditions = ['DMT']  # Support multiple conditions
+        self._selected_subject = None  # Selected subject
         self._loaded_data = {}  # Cache data by subject
+        self._subject_select = None  # UI reference
     
     def get_controls(self) -> Dict[str, Any]:
         # Minimal controls for Hilbert view
@@ -122,7 +124,7 @@ class Step1Visualizer(BaseVisualizer):
         return sorted(conditions) if conditions else ['DMT']
     
     def _get_subjects_for_condition(self, condition: str) -> List[str]:
-        """Get subjects for a specific condition."""
+        """Get subjects for a specific condition (just IDs like S01, S02)."""
         files = self.find_data_files()
         subjects = []
         
@@ -134,15 +136,47 @@ class Step1Visualizer(BaseVisualizer):
             )
             
             if in_condition:
-                # Extract subject ID
+                # Extract subject ID (e.g., phases-S01-DMT -> S01)
                 name = f.stem.replace('phases-', '')
-                subjects.append(name)
+                if '-' in name:
+                    subj_id = name.split('-')[0]
+                    subjects.append(subj_id)
+                else:
+                    subjects.append(name)
         
         return sorted(set(subjects))
+    
+    def _get_all_subjects(self) -> List[str]:
+        """Get all available subjects across all conditions (just IDs like S01, S02)."""
+        files = self.find_data_files()
+        subjects = set()
+        
+        for f in files:
+            # Extract subject ID from filename (e.g., phases-S01-DMT -> S01)
+            name = f.stem.replace('phases-', '')
+            # Extract just the subject ID (S01, S02, etc.) without condition
+            if '-' in name:
+                subj_id = name.split('-')[0]  # S01-DMT -> S01
+                subjects.add(subj_id)
+            else:
+                subjects.add(name)
+        
+        return sorted(subjects)
+    
+    def _on_subject_change(self, value) -> None:
+        """Handle subject selection change."""
+        self._selected_subject = extract_event_value(value)
+        self._loaded_data.clear()  # Clear cache to reload with new subject
+        self.render(self._container)
     
     def _render_hilbert_view(self) -> None:
         """Render Hilbert 2D and 3D visualizations with condition selection."""
         available_conditions = self._get_available_conditions()
+        
+        # Get all available subjects
+        all_subjects = self._get_all_subjects()
+        if not self._selected_subject and all_subjects:
+            self._selected_subject = all_subjects[0]
         
         # Header controls
         with ui.row().classes('items-center gap-3 mb-3 flex-wrap w-full'):
@@ -160,6 +194,15 @@ class Step1Visualizer(BaseVisualizer):
                 )
             
             ui.element('div').classes('flex-grow')
+            
+            # Subject selector
+            self._subject_select = ui.select(
+                all_subjects,
+                value=self._selected_subject, label='Sujeto'
+            ).props('dense dark').classes('w-32').on(
+                'update:model-value',
+                lambda e: self._on_subject_change(e.args)
+            )
             
             # Band selector
             ui.select(
@@ -206,8 +249,11 @@ class Step1Visualizer(BaseVisualizer):
             if not subjects:
                 continue
             
-            # Load first subject's data for this condition
-            subject_data = self._load_condition_data(cond, subjects[0])
+            # Use selected subject if available in this condition, else first
+            current_subject = self._selected_subject if self._selected_subject in subjects else subjects[0]
+            
+            # Load subject's data for this condition
+            subject_data = self._load_condition_data(cond, current_subject)
             if not subject_data:
                 continue
             
@@ -218,7 +264,7 @@ class Step1Visualizer(BaseVisualizer):
                     f'width: 12px; height: 12px; border-radius: 50%; '
                     f'background: {cond_colors.get(cond, "#888")};'
                 )
-                ui.label(f'{cond} - {subjects[0]}').style(
+                ui.label(f'{cond} - {current_subject}').style(
                     f'color: {cond_colors.get(cond, "#888")}; font-weight: bold; font-size: 0.85rem;'
                 )
                 ui.label(f'({len(subjects)} sujetos disponibles)').style(
@@ -245,7 +291,7 @@ class Step1Visualizer(BaseVisualizer):
                         f'color: #c084fc; font-family: JetBrains Mono; font-size: 0.75rem; margin-bottom: 4px;'
                     )
                     with ui.element('div').classes('flex-1').style('min-height: 350px;'):
-                        self._render_hilbert_3d_proper(subject_data, cond, subjects[0])
+                        self._render_hilbert_3d_proper(subject_data, cond, current_subject)
     
     def _toggle_condition(self, condition: str, is_checked: bool) -> None:
         """Toggle a condition selection."""
@@ -256,7 +302,7 @@ class Step1Visualizer(BaseVisualizer):
         self.render(self._container)
     
     def _load_condition_data(self, condition: str, subject: str) -> Optional[dict]:
-        """Load data for a specific condition/subject."""
+        """Load data for a specific condition/subject (subject is just ID like S01)."""
         cache_key = f"{condition}_{subject}"
         if cache_key in self._loaded_data:
             return self._loaded_data[cache_key]
@@ -267,7 +313,10 @@ class Step1Visualizer(BaseVisualizer):
                 condition.lower() in f.name.lower() or
                 f.parent.name.upper() == condition
             )
-            if in_condition and subject in f.name:
+            # Match subject ID (e.g., S01 matches phases-S01-DMT)
+            has_subject = f'-{subject}-' in f.name or f'-{subject}.' in f.name or f.name.startswith(f'phases-{subject}')
+            
+            if in_condition and has_subject:
                 try:
                     import pickle
                     with open(f, 'rb') as handle:

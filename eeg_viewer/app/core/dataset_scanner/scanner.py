@@ -397,7 +397,10 @@ class DatasetScanner:
                 info['n_channels_eeg'] = phases.n_channels_eeg
                 info['n_parcels'] = phases.n_parcels
                 info['n_epochs_per_file'] = phases.n_epochs_per_file
+                info['n_timepoints'] = phases.n_timepoints
                 info['available_keys'] = phases.available_keys
+                info['eeg_feature_types'] = phases.eeg_feature_types
+                info['stc_feature_types'] = phases.stc_feature_types
             elif best_result.graph_info:
                 graph = best_result.graph_info
                 info['format'] = 'pyg'
