@@ -180,7 +180,25 @@ class VisualizationPanel:
                 )
     
     def _render_visualizer(self) -> None:
-        """Render the visualizer for current step."""
+        """Render the visualizer for current step with loading indicator."""
+        if not self._container:
+            return
+        
+        self._container.clear()
+        
+        # Show loading spinner first
+        with self._container:
+            with ui.row().classes('w-full justify-center items-center p-8'):
+                ui.spinner('dots', size='lg', color='primary')
+                ui.label('Cargando visualización...').style(
+                    f'color: {THEME_TEXT_DIM}; font-size: 0.8rem; margin-left: 8px;'
+                )
+        
+        # Use ui.timer to defer rendering (allows spinner to show)
+        ui.timer(0.05, lambda: self._do_render_visualizer(), once=True)
+    
+    def _do_render_visualizer(self) -> None:
+        """Actually render the visualizer content."""
         if not self._container:
             return
         

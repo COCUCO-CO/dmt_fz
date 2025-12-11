@@ -198,15 +198,16 @@ class TestVisualizationPanelErrorHandling:
     """Test visualization panel handles errors gracefully."""
     
     def test_render_visualizer_has_try_except(self):
-        """_render_visualizer should catch exceptions."""
+        """_do_render_visualizer should catch exceptions."""
         import inspect
         from app.pages.pipeline.components.visualization_panel import VisualizationPanel
         
-        source = inspect.getsource(VisualizationPanel._render_visualizer)
+        # Error handling is now in _do_render_visualizer (deferred rendering)
+        source = inspect.getsource(VisualizationPanel._do_render_visualizer)
         
         # Should have try-except for error handling
-        assert 'try:' in source, "_render_visualizer should have try block"
-        assert 'except' in source, "_render_visualizer should have except block"
+        assert 'try:' in source, "_do_render_visualizer should have try block"
+        assert 'except' in source, "_do_render_visualizer should have except block"
     
     def test_visualization_panel_update_button_styles_method_exists(self):
         """Panel should have _update_button_styles method for selector."""

@@ -1,12 +1,13 @@
 """
 Step 2 Visualizer: Consolidate Data (save_load_pickle.py)
 
-Shows consolidated subject data overview - compact layout.
+Shows consolidated subject data overview - compact layout with Plotly.
 """
 from pathlib import Path
 from typing import Dict, Any, List
 import numpy as np
 from nicegui import ui
+import plotly.graph_objects as go
 
 from config import THEME_PRIMARY, THEME_SECONDARY, THEME_TEXT_DIM
 from .base import BaseVisualizer
@@ -19,7 +20,7 @@ class Step2Visualizer(BaseVisualizer):
     step_name = "Consolidar Datos"
     step_description = "Agrupa archivos por condición"
     file_patterns = ["subject_phases_*.pkl", "*/subject_phases_*.pkl", "**/subject_phases_*.pkl"]
-    supported_backends = ['matplotlib']
+    supported_backends = ['plotly']
     
     def get_controls(self) -> Dict[str, Any]:
         return {}
@@ -34,7 +35,7 @@ class Step2Visualizer(BaseVisualizer):
         # Compact horizontal layout
         with ui.row().classes('w-full gap-4 items-start'):
             # Left: File list (compact)
-            with ui.column().style('min-width: 180px;'):
+            with ui.column().style('min-width: 180px; max-width: 200px;'):
                 ui.label('📦 Consolidados').style(
                     f'color: {THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.8rem;'
                 )
@@ -69,22 +70,51 @@ class Step2Visualizer(BaseVisualizer):
                             f'color: {THEME_TEXT_DIM}; font-size: 0.65rem; margin-left: auto;'
                         )
             
-            # Right: Compact bar chart
+            # Right: Compact Plotly bar chart
             if conditions:
-                with ui.column().classes('flex-1'):
+                with ui.column().classes('flex-1').style('max-width: 350px;'):
                     self._render_condition_chart(conditions, counts)
     
     def _render_condition_chart(self, conditions: List[str], counts: List[int]) -> None:
-        """Render compact bar chart."""
-        fig, ax = self.create_matplotlib_figure(figsize=(4, 2.5))
-        colors = ['#00d4aa', '#f59e0b', '#a78bfa'][:len(conditions)]
-        bars = ax.bar(conditions, counts, color=colors)
-        ax.set_ylabel('Sujetos', color='#888888', fontsize=9)
-        ax.set_title('Por Condición', color=THEME_PRIMARY, fontsize=9)
-        ax.tick_params(labelsize=8)
+        """Render compact bar chart using Plotly."""
+        colors = {'DMT': '#00d4aa', 'EC': '#f59e0b', 'EO': '#a78bfa'}
+        bar_colors = [colors.get(c, '#888888') for c in conditions]
         
-        for bar, count in zip(bars, counts):
-            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.2,
-                   str(count), ha='center', va='bottom', color='#888888', fontsize=8)
+        fig = go.Figure(data=[
+            go.Bar(
+                x=conditions,
+                y=counts,
+                marker_color=bar_colors,
+                text=counts,
+                textposition='outside',
+                textfont=dict(size=12, color='#888888'),
+                hovertemplate='%{x}: %{y} sujetos<extra></extra>'
+            )
+        ])
         
-        self.show_matplotlib(fig)
+        fig.update_layout(
+            template='plotly_dark',
+            height=200,
+            margin=dict(l=40, r=20, t=30, b=30),
+            paper_bgcolor='rgba(0,0,0,0)',
+            plot_bgcolor='rgba(0,0,0,0)',
+            title=dict(
+                text='Sujetos por Condición',
+                font=dict(size=11, color=THEME_PRIMARY),
+                x=0.5
+            ),
+            xaxis=dict(
+                tickfont=dict(size=10, color='#888888'),
+                showgrid=False
+            ),
+            yaxis=dict(
+                title='Sujetos',
+                titlefont=dict(size=9, color='#888888'),
+                tickfont=dict(size=9, color='#888888'),
+                gridcolor='rgba(100,100,100,0.2)'
+            ),
+            showlegend=False,
+            bargap=0.3
+        )
+        
+        ui.plotly(fig).classes('w-full')

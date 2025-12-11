@@ -1,11 +1,12 @@
 """
 Step 3 Visualizer: Network Filter (multi2pool2.py)
 
-Shows brain network separation - compact horizontal layout.
+Shows brain network separation - compact horizontal layout with Plotly.
 """
 from typing import Dict, Any
 import numpy as np
 from nicegui import ui
+import plotly.graph_objects as go
 
 from config import THEME_PRIMARY, THEME_SECONDARY, THEME_TEXT_DIM
 from .base import BaseVisualizer
@@ -30,7 +31,7 @@ class Step3Visualizer(BaseVisualizer):
     step_name = "Filtrar por Redes"
     step_description = "7 redes cerebrales funcionales"
     file_patterns = ["network_*.pkl", "*/network_*.pkl", "**/network_*.pkl"]
-    supported_backends = ['matplotlib']
+    supported_backends = ['plotly']
     
     def get_controls(self) -> Dict[str, Any]:
         return {}
@@ -39,8 +40,8 @@ class Step3Visualizer(BaseVisualizer):
         # Horizontal layout: networks on left, pie on right
         with ui.row().classes('w-full gap-4 items-start'):
             # Left: Compact network cards in 2 columns
-            with ui.column().style('min-width: 300px;'):
-                ui.label('🧠 7 Redes (Schaefer)').style(
+            with ui.column().style('min-width: 280px; max-width: 300px;'):
+                ui.label('🧠 7 Redes Funcionales (Schaefer)').style(
                     f'color: {THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.8rem; margin-bottom: 4px;'
                 )
                 
@@ -61,32 +62,45 @@ class Step3Visualizer(BaseVisualizer):
                                 ui.label(net_id).style(
                                     f'color: {info["color"]}; font-weight: bold; font-size: 0.7rem;'
                                 )
-                            ui.label(f'{info["parcels"]}p').style(
+                            ui.label(f'{info["parcels"]} parcelas').style(
                                 f'color: {THEME_TEXT_DIM}; font-size: 0.6rem;'
                             )
             
-            # Right: Compact pie chart
-            with ui.column().classes('flex-1'):
+            # Right: Compact Plotly pie chart
+            with ui.column().style('flex: 1; max-width: 280px;'):
                 self._render_network_pie()
     
     def _render_network_pie(self) -> None:
-        """Render compact pie chart."""
-        fig, ax = self.create_matplotlib_figure(figsize=(3.5, 3))
-        
+        """Render compact pie chart using Plotly."""
         labels = list(NETWORKS.keys())
-        sizes = [info['parcels'] for info in NETWORKS.values()]
+        values = [info['parcels'] for info in NETWORKS.values()]
         colors = [info['color'] for info in NETWORKS.values()]
         
-        wedges, texts, autotexts = ax.pie(
-            sizes, labels=labels, colors=colors, autopct='%1.0f%%',
-            startangle=90, pctdistance=0.75, textprops={'fontsize': 7}
+        fig = go.Figure(data=[
+            go.Pie(
+                labels=labels,
+                values=values,
+                marker=dict(colors=colors, line=dict(color='#1a1a1a', width=1)),
+                textinfo='percent',
+                textfont=dict(size=10, color='#000000'),
+                hovertemplate='%{label}<br>%{value} parcelas<br>%{percent}<extra></extra>',
+                hole=0.3
+            )
+        ])
+        
+        fig.update_layout(
+            template='plotly_dark',
+            height=220,
+            margin=dict(l=10, r=10, t=30, b=10),
+            paper_bgcolor='rgba(0,0,0,0)',
+            plot_bgcolor='rgba(0,0,0,0)',
+            title=dict(
+                text='Distribución de Parcelas',
+                font=dict(size=10, color=THEME_PRIMARY),
+                x=0.5
+            ),
+            showlegend=False,
+            font=dict(size=9)
         )
         
-        for text in texts:
-            text.set_color('#888888')
-            text.set_fontsize(7)
-        for autotext in autotexts:
-            autotext.set_color('#000000')
-            autotext.set_fontsize(6)
-        
-        self.show_matplotlib(fig)
+        ui.plotly(fig).classes('w-full')

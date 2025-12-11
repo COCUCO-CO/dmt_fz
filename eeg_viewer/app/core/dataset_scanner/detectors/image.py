@@ -14,9 +14,23 @@ class ImageDetector(BaseDetector):
     """Detector for image datasets."""
     
     EXTENSIONS: Set[str] = {
+        # Common formats
         '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.tiff', '.tif',
-        '.webp', '.ico', '.ppm', '.pgm', '.pbm'
+        '.webp', '.ico', '.ppm', '.pgm', '.pbm', '.pnm',
+        # Medical imaging
+        '.dcm', '.dicom',  # DICOM
+        '.nii', '.nii.gz',  # NIfTI (handled specially)
+        # Raw formats
+        '.raw', '.cr2', '.nef', '.arw', '.dng',  # Camera RAW
+        # Scientific
+        '.fits', '.fit',  # FITS astronomical
     }
+    
+    # Medical imaging extensions (require special handling)
+    MEDICAL_EXTENSIONS = {'.dcm', '.dicom', '.nii'}
+    
+    # Compressed NIfTI extension
+    NIFTI_COMPRESSED = '.nii.gz'
     
     def detect(self, path: Path, analyze_samples: bool = False,
                sample_size: int = 10) -> DetectionResult:
@@ -27,8 +41,12 @@ class ImageDetector(BaseDetector):
             result.warnings.append(f"Path does not exist: {path}")
             return result
         
-        # Find all image files
+        # Find all image files (including compressed NIfTI)
         files = self._find_files(path, self.EXTENSIONS)
+        
+        # Also search for .nii.gz files (compressed NIfTI)
+        nifti_gz_files = list(path.rglob('*.nii.gz'))
+        files.extend(nifti_gz_files)
         
         if not files:
             return result

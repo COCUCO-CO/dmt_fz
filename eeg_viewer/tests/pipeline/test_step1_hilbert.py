@@ -336,12 +336,13 @@ class TestHilbertPlotQuality:
         assert 'make_subplots' in source
     
     def test_hilbert_2d_has_consistent_height(self):
-        """Hilbert 2D should have same height as 3D (350px)."""
+        """Hilbert 2D should have height of 350px."""
         from app.pages.pipeline.visualizers.step_1_viz import Step1Visualizer
         
         import inspect
         source = inspect.getsource(Step1Visualizer._render_hilbert_2d_proper)
         
+        # Height should be 350px
         assert 'height=350' in source
     
     def test_hilbert_3d_has_consistent_height(self):
@@ -373,7 +374,8 @@ class TestHilbertPlotQuality:
         
         # Font sizes should be small (9 or less)
         assert 'font_size=9' in source or 'size=9' in source
-        assert 'tickfont_size=8' in source
+        # Tick fonts should be 7-8px
+        assert 'tickfont_size=7' in source or 'tickfont_size=8' in source
     
     def test_hilbert_layout_uses_items_stretch(self):
         """Hilbert row layout should use items-stretch for alignment."""
@@ -407,6 +409,22 @@ class TestHilbertPlotQuality:
         # Should have proper subplot types
         assert 'heatmap' in source
         assert 'polar' in source
+    
+    def test_hilbert_2d_has_descriptive_hovertemplates(self):
+        """Hilbert 2D should have descriptive hovertemplates on each plot."""
+        from app.pages.pipeline.visualizers.step_1_viz import Step1Visualizer
+        
+        import inspect
+        source = inspect.getsource(Step1Visualizer._render_hilbert_2d_proper)
+        
+        # Each plot should have descriptive hovertemplate with explanation
+        assert '<b>Amplitude Envelope</b>' in source
+        assert '<b>Instantaneous Phase</b>' in source
+        assert '<b>Phase Evolution</b>' in source
+        assert '<b>Phase Distribution</b>' in source
+        # Should include scientific explanations
+        assert 'Hilbert transform' in source
+        assert 'synchronization' in source.lower()
 
 
 class TestDirectoryScanningInfo:

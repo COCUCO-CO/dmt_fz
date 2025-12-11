@@ -323,10 +323,11 @@ class Step1Visualizer(BaseVisualizer):
                 specs=[[{'type': 'heatmap'}, {'type': 'heatmap'}],
                        [{'type': 'xy'}, {'type': 'polar'}]],
                 horizontal_spacing=0.12,
-                vertical_spacing=0.15
+                vertical_spacing=0.18
             )
             
             # 1. Amplitude Envelope Heatmap (top-left)
+            # Shows instantaneous power of the analytic signal for each ROI over time
             if band_amps is not None:
                 if isinstance(band_amps, list):
                     band_amps = np.array(band_amps)
@@ -338,12 +339,19 @@ class Step1Visualizer(BaseVisualizer):
                         y=list(range(20)),
                         colorscale='YlOrRd',
                         showscale=False,
-                        hovertemplate='Time: %{x:.2f}s<br>ROI: %{y}<br>Amp: %{z:.3f}<extra></extra>'
+                        hovertemplate=(
+                            '<b>Amplitude Envelope</b><br>'
+                            'Instantaneous power of the Hilbert transform.<br>'
+                            'Warm colors = higher neural activity.<br><br>'
+                            'Time: %{x:.2f}s | ROI: %{y} | Amp: %{z:.3f}'
+                            '<extra></extra>'
+                        )
                     ),
                     row=1, col=1
                 )
             
             # 2. Instantaneous Phase Heatmap (top-right)
+            # Shows phase angle (-π to +π) for each ROI over time
             fig.add_trace(
                 go.Heatmap(
                     z=phase_data[:20],
@@ -352,12 +360,20 @@ class Step1Visualizer(BaseVisualizer):
                     colorscale='HSV',
                     zmin=-np.pi, zmax=np.pi,
                     colorbar=dict(title='Phase', len=0.4, y=0.8, x=1.02),
-                    hovertemplate='Time: %{x:.2f}s<br>ROI: %{y}<br>Phase: %{z:.2f}<extra></extra>'
+                    hovertemplate=(
+                        '<b>Instantaneous Phase</b><br>'
+                        'Phase angle of the Hilbert transform (-π to +π).<br>'
+                        'Cyclic colors (HSV) represent the full phase cycle.<br>'
+                        'Useful for detecting phase synchronization.<br><br>'
+                        'Time: %{x:.2f}s | ROI: %{y} | Phase: %{z:.2f} rad'
+                        '<extra></extra>'
+                    )
                 ),
                 row=1, col=2
             )
             
             # 3. Phase Evolution (bottom-left)
+            # Shows how phase oscillates over time for representative ROIs
             colors = ['#ff6b6b', '#4ecdc4', '#45b7d1', '#f59e0b', '#a78bfa']
             roi_indices = [0, 6, 12, 18, 24]
             for i, (roi_idx, color) in enumerate(zip(roi_indices, colors)):
@@ -369,12 +385,19 @@ class Step1Visualizer(BaseVisualizer):
                             mode='lines',
                             name=f'ROI {roi_idx}',
                             line=dict(color=color, width=1),
-                            hovertemplate=f'ROI {roi_idx}<br>Time: %{{x:.2f}}s<br>Phase: %{{y:.2f}}<extra></extra>'
+                            hovertemplate=(
+                                '<b>Phase Evolution</b><br>'
+                                'Temporal evolution of phase for 5 representative ROIs.<br>'
+                                'Parallel lines indicate synchronized regions.<br><br>'
+                                f'ROI {roi_idx} | Time: %{{x:.2f}}s | Phase: %{{y:.2f}} rad'
+                                '<extra></extra>'
+                            )
                         ),
                         row=2, col=1
                     )
             
             # 4. Polar Phase Distribution (bottom-right)
+            # Shows phase distribution of all ROIs at a single time point
             t_idx = n_times // 2
             phases_at_t = phase_data[:, t_idx]
             r_values = np.ones_like(phases_at_t)
@@ -386,7 +409,14 @@ class Step1Visualizer(BaseVisualizer):
                     mode='markers',
                     marker=dict(color='#f59e0b', size=6, opacity=0.8),
                     name='Phases',
-                    hovertemplate='Phase: %{theta:.1f}°<extra></extra>'
+                    hovertemplate=(
+                        '<b>Phase Distribution</b><br>'
+                        'Polar distribution of all ROI phases at t=T/2.<br>'
+                        'Each dot is one ROI. White arrow = mean phase.<br>'
+                        'Arrow length = order parameter (coherence).<br><br>'
+                        'Phase: %{theta:.1f}°'
+                        '<extra></extra>'
+                    )
                 ),
                 row=2, col=2
             )
@@ -402,7 +432,13 @@ class Step1Visualizer(BaseVisualizer):
                     line=dict(color='white', width=3),
                     marker=dict(color='white', size=[0, 8]),
                     name='Mean',
-                    hoverinfo='skip'
+                    hovertemplate=(
+                        '<b>Mean Phase Vector</b><br>'
+                        f'Mean phase: {np.degrees(mean_phase):.1f}°<br>'
+                        f'Order parameter (R): {r_mean:.3f}<br>'
+                        'R close to 1 = high synchronization'
+                        '<extra></extra>'
+                    )
                 ),
                 row=2, col=2
             )
@@ -410,8 +446,8 @@ class Step1Visualizer(BaseVisualizer):
             # Update layout for dark theme
             fig.update_layout(
                 template='plotly_dark',
-                height=350,  # Match 3D height
-                margin=dict(l=50, r=60, t=40, b=40),
+                height=350,
+                margin=dict(l=50, r=70, t=40, b=50),
                 showlegend=False,
                 paper_bgcolor='rgba(10,10,10,1)',
                 plot_bgcolor='rgba(10,10,10,1)',
@@ -419,9 +455,9 @@ class Step1Visualizer(BaseVisualizer):
             )
             
             # Update axes
-            fig.update_xaxes(title_text='Time (s)', title_font_size=9, tickfont_size=8, row=1, col=1)
+            fig.update_xaxes(title_text='', tickfont_size=8, row=1, col=1)
             fig.update_yaxes(title_text='ROI', title_font_size=9, tickfont_size=8, row=1, col=1)
-            fig.update_xaxes(title_text='Time (s)', title_font_size=9, tickfont_size=8, row=1, col=2)
+            fig.update_xaxes(title_text='', tickfont_size=8, row=1, col=2)
             fig.update_yaxes(title_text='ROI', title_font_size=9, tickfont_size=8, row=1, col=2)
             fig.update_xaxes(title_text='Time (s)', title_font_size=9, tickfont_size=8, row=2, col=1)
             fig.update_yaxes(title_text='Phase (rad)', title_font_size=9, tickfont_size=8, 
