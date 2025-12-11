@@ -98,6 +98,7 @@ class PipelineState:
         self.max_k = 15
         self.min_comps = 2
         self.max_comps = 10
+        self.clustering_search_mode = "Quick"  # 'Quick' or 'Full'
         self.input_dir = None  # Persists input directory path
 
 
