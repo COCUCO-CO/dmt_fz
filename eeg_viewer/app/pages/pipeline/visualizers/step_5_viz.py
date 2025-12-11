@@ -109,13 +109,31 @@ class Step5Visualizer(BaseVisualizer):
         return False
     
     def _render_visualization(self) -> None:
+        # Try to load data for selected subject
         if not self._data:
-            files = self.find_data_files()
-            if files:
-                self.load_data(files[0])
+            if self._selected_subject:
+                self._load_subject_data()
+            else:
+                # Try loading first available file
+                files = self.find_data_files()
+                if files:
+                    self.load_data(files[0])
+                    # Set subject from first file
+                    subjects = self._get_subjects()
+                    if subjects:
+                        self._selected_subject = subjects[0]
         
         if not self._data:
-            self._render_no_data_message("No hay datos de orden Kuramoto")
+            # Show debug info
+            files = self.find_data_files()
+            with ui.column().classes('w-full'):
+                ui.label("No hay datos de orden Kuramoto").style(f'color: {THEME_WARN};')
+                ui.label(f"Buscando en: {self.run_dir}").style(f'color: {THEME_TEXT_DIM}; font-size: 0.7rem;')
+                ui.label(f"Patrones: {self.file_patterns}").style(f'color: {THEME_TEXT_DIM}; font-size: 0.7rem;')
+                ui.label(f"Archivos encontrados: {len(files)}").style(f'color: {THEME_TEXT_DIM}; font-size: 0.7rem;')
+                if files:
+                    for f in files[:5]:
+                        ui.label(f"  - {f.name}").style(f'color: {THEME_TEXT_DIM}; font-size: 0.65rem;')
             return
         
         with ui.row().classes('w-full gap-3'):

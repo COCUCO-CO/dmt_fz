@@ -176,22 +176,30 @@ class TestStepSelectorFunctionality:
             # Can't fully test without UI, but structure should work
             assert 1 <= step <= 8
     
-    def test_visualizer_registry_has_all_steps(self):
-        """VISUALIZER_REGISTRY should have all 8 steps."""
+    def test_visualizer_registry_has_scientific_steps(self):
+        """VISUALIZER_REGISTRY should have all scientific visualization steps."""
         from app.pages.pipeline.visualizers import VISUALIZER_REGISTRY
         
-        assert len(VISUALIZER_REGISTRY) == 8
-        for step in range(1, 9):
+        # Steps 2 and 6 are data processing (no visualization needed)
+        scientific_steps = [1, 3, 4, 5, 7, 8]
+        assert len(VISUALIZER_REGISTRY) == len(scientific_steps)
+        for step in scientific_steps:
             assert step in VISUALIZER_REGISTRY, f"Step {step} missing from registry"
     
     def test_get_visualizer_returns_correct_class(self):
-        """get_visualizer should return correct visualizer for each step."""
+        """get_visualizer should return correct visualizer for scientific steps."""
         from app.pages.pipeline.visualizers import get_visualizer, VISUALIZER_REGISTRY
         
-        for step in range(1, 9):
+        # Steps 2 and 6 are data processing (no visualization needed)
+        scientific_steps = [1, 3, 4, 5, 7, 8]
+        for step in scientific_steps:
             viz = get_visualizer(step, lambda: None)
             assert viz is not None, f"No visualizer for step {step}"
             assert viz.step_number == step, f"Wrong step number for step {step}"
+        
+        # Steps 2 and 6 should return None
+        assert get_visualizer(2, lambda: None) is None
+        assert get_visualizer(6, lambda: None) is None
 
 
 class TestVisualizationPanelErrorHandling:

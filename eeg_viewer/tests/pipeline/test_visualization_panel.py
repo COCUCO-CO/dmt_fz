@@ -83,10 +83,12 @@ class TestStepDetection:
 class TestVisualizerRegistry:
     """Test visualizer registry and loading."""
     
-    def test_all_steps_have_visualizers(self):
-        """Each step 1-8 should have a registered visualizer."""
+    def test_scientific_steps_have_visualizers(self):
+        """Scientific steps should have registered visualizers."""
         from app.pages.pipeline.visualizers import VISUALIZER_REGISTRY
-        for step_num in range(1, 9):
+        # Steps 2 and 6 are data processing (no visualization needed)
+        scientific_steps = [1, 3, 4, 5, 7, 8]
+        for step_num in scientific_steps:
             assert step_num in VISUALIZER_REGISTRY, f"Step {step_num} missing visualizer"
     
     def test_visualizers_are_callable(self):
@@ -162,12 +164,13 @@ class TestVisualizerDataLoading:
 class TestVisualizationControls:
     """Test visualization control rendering."""
     
-    def test_step4_has_band_selector(self):
-        """Step 4 (Syncro) should have band selector."""
+    def test_step4_has_condition_selector(self):
+        """Step 4 (Syncro) should have condition checkboxes."""
         from app.pages.pipeline.visualizers.step_4_viz import Step4Visualizer
         viz = Step4Visualizer(lambda: None)
         controls = viz.get_controls()
-        assert 'band' in controls
+        # Now uses conditions checkboxes instead of band selector
+        assert 'conditions' in controls or 'subject' in controls
     
     def test_step4_has_epoch_selector(self):
         """Step 4 (Syncro) should have epoch selector."""

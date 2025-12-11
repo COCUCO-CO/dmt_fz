@@ -536,7 +536,7 @@ def model_page():
                 # Subsample option
                 with ui.row().classes('items-center gap-2 mt-2'):
                     ui.label('Subsample:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.75rem; min-width: 70px;')
-                    subsample_slider = ui.slider(min=0.1, max=1.0, step=0.1, value=0.3).props('label-always').classes('flex-1')
+                    subsample_slider = ui.slider(min=0.1, max=1.0, step=0.1, value=0.3).props('label label-always :label-value="value.toFixed(1)"').classes('flex-1')
                 
                 ui.label('Use 0.1-0.3 for quick tests, 1.0 for full training').style(f'color:{THEME_TEXT_DIM}; font-size: 0.6rem;')
             
@@ -994,7 +994,7 @@ def model_page():
                         # Epoch selector
                         with ui.row().classes('items-center gap-3 mb-3'):
                             ui.label('Epoch:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.75rem;')
-                            epoch_slider = ui.slider(min=1, max=100, step=10, value=10).props('label-always').classes('flex-1')
+                            epoch_slider = ui.slider(min=1, max=100, step=10, value=10).props('label label-always :label-value="value"').classes('flex-1')
                             refresh_btn = ui.button('Refresh', icon='refresh').props('flat dense size=sm')
                         
                         def load_reconstruction(epoch_val):
