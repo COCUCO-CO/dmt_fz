@@ -8,7 +8,6 @@ Tests:
 - pipeline_log: Log message handling
 """
 
-import pytest
 import sys
 from pathlib import Path
 from datetime import datetime

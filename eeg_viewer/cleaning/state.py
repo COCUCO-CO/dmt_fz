@@ -12,9 +12,7 @@ from enum import Enum, auto
 from typing import Optional, List, Dict, Any, Callable
 from datetime import datetime
 from pathlib import Path
-import numpy as np
 import mne
-from copy import deepcopy
 
 
 class CleaningStep(Enum):

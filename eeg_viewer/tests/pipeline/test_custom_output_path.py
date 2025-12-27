@@ -6,7 +6,6 @@ Verifies that:
 - Path validation works correctly
 - Directory creation works
 """
-import pytest
 import sys
 import tempfile
 from pathlib import Path
@@ -84,5 +83,8 @@ class TestPathDisplayFormatting:
         
         assert '📁' in display
         assert 'my_run' in display
+
+
+
 
 

@@ -6,7 +6,6 @@ Verifies that:
 - Dict values (from select) are properly extracted
 - All visualizer handlers use the helper correctly
 """
-import pytest
 import sys
 from pathlib import Path
 
@@ -174,5 +173,8 @@ class TestAllVisualizersImportHelper:
         """Step 8 visualizer should import extract_event_value."""
         from app.pages.pipeline.visualizers import step_8_viz
         assert hasattr(step_8_viz, 'extract_event_value')
+
+
+
 
 

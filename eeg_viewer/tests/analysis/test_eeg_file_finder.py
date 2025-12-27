@@ -1,5 +1,4 @@
 """Tests for EEG sync utilities."""
-import pytest
 from pathlib import Path
 
 

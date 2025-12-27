@@ -7,8 +7,8 @@ import numpy as np
 
 from cleaning.rereferencing import (
     ReferenceType, get_available_references, find_mastoid_channels,
-    apply_average_reference, apply_linked_mastoids, apply_single_reference,
-    apply_rest_reference, apply_reference, get_current_reference
+    apply_average_reference, apply_single_reference,
+    apply_reference, get_current_reference
 )
 
 
@@ -214,6 +214,9 @@ class TestGetCurrentReference:
         
         # Should indicate some reference was applied
         assert len(ref) > 0
+
+
+
 
 
 

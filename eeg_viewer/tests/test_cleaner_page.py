@@ -2,7 +2,6 @@
 Tests for cleaning/cleaner_page.py - UI state and toggle functions.
 """
 
-import pytest
 
 
 class TestCleanerPageState:

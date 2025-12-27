@@ -8,10 +8,9 @@ These tests ensure that:
 - System tab updates periodically
 - Visualize tab maintains selections
 """
-import pytest
 from pathlib import Path
 from datetime import datetime
-from unittest.mock import Mock, MagicMock, patch
+from unittest.mock import Mock
 import sys
 
 # Ensure proper path

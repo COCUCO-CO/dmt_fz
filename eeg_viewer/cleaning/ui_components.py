@@ -4,10 +4,9 @@ UI Components for EEG Cleaning Pipeline
 Reusable NiceGUI components for the cleaning interface.
 """
 
-from typing import Callable, Optional, List, Dict, Any
+from typing import Callable, Optional, List, Dict
 from nicegui import ui
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 import numpy as np
 
 from .state import CleaningState, CleaningStep
@@ -18,7 +17,7 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from config import (
-    THEME_BG, THEME_CARD, THEME_BORDER, THEME_PRIMARY, THEME_SECONDARY,
+    THEME_CARD, THEME_BORDER, THEME_PRIMARY, THEME_SECONDARY,
     THEME_WARN, THEME_ERROR, THEME_TEXT, THEME_TEXT_DIM, SIGNAL_COLORS
 )
 
@@ -53,7 +52,7 @@ class StepIndicator:
                 
                 # Determine styling
                 if is_current:
-                    bg = f'rgba(0, 255, 136, 0.15)'
+                    bg = 'rgba(0, 255, 136, 0.15)'
                     border = THEME_PRIMARY
                     text_color = THEME_PRIMARY
                     icon = '●'
@@ -150,11 +149,11 @@ class ChannelBadgeGrid:
             is_bad = ch in self.bad_channels
             
             if is_bad:
-                bg = f'rgba(255, 85, 85, 0.2)'
+                bg = 'rgba(255, 85, 85, 0.2)'
                 border = THEME_ERROR
                 color = THEME_ERROR
             elif is_selected:
-                bg = f'rgba(0, 255, 136, 0.15)'
+                bg = 'rgba(0, 255, 136, 0.15)'
                 border = THEME_PRIMARY
                 color = THEME_PRIMARY
             else:
@@ -290,10 +289,10 @@ class ICAComponentGrid:
             label = self.labels.get(i, '')
             
             if is_excluded:
-                bg = f'rgba(255, 85, 85, 0.2)'
+                bg = 'rgba(255, 85, 85, 0.2)'
                 border = THEME_ERROR
             elif is_selected:
-                bg = f'rgba(0, 212, 255, 0.2)'
+                bg = 'rgba(0, 212, 255, 0.2)'
                 border = THEME_SECONDARY
             else:
                 bg = THEME_CARD
@@ -400,6 +399,9 @@ def create_section_header(title: str) -> None:
         f'color: {THEME_TEXT_DIM}; letter-spacing: 1px; '
         f'border-bottom: 1px solid {THEME_BORDER}; padding-bottom: 4px;'
     )
+
+
+
 
 
 

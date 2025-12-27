@@ -5,7 +5,6 @@ Displays real-time log output with status indicator and controls.
 Can be used standalone or within a tab panel.
 """
 from datetime import datetime
-from typing import Callable
 from nicegui import ui
 
 from config import THEME_PRIMARY, THEME_TEXT_DIM, THEME_TEXT

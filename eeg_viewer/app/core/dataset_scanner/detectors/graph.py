@@ -198,7 +198,7 @@ class GraphDetector(BaseDetector):
             
             return info
             
-        except Exception as e:
+        except Exception:
             return None
     
     def _detect_pyg_dataset(self, path: Path, files: List[Path],

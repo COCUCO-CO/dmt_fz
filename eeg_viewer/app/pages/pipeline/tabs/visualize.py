@@ -294,7 +294,7 @@ class VisualizeTab:
             # Phase Distribution
             with ui.card().classes('dark-card p-3 flex-1'):
                 ui.label('▌PHASE DISTRIBUTION').style(
-                    f'color:#a78bfa; font-family: JetBrains Mono; font-size: 0.8rem;'
+                    'color:#a78bfa; font-family: JetBrains Mono; font-size: 0.8rem;'
                 ).classes('mb-2')
                 self._containers['phase'] = ui.column().classes('w-full')
                 if self.viz_state.get('data'):
@@ -303,7 +303,7 @@ class VisualizeTab:
             # Sync Matrix
             with ui.card().classes('dark-card p-3 flex-1'):
                 ui.label('▌SYNC MATRIX').style(
-                    f'color:#60a5fa; font-family: JetBrains Mono; font-size: 0.8rem;'
+                    'color:#60a5fa; font-family: JetBrains Mono; font-size: 0.8rem;'
                 ).classes('mb-2')
                 self._containers['sync_matrix'] = ui.column().classes('w-full')
                 if self.viz_state.get('data'):
@@ -312,7 +312,7 @@ class VisualizeTab:
             # Connectivity
             with ui.card().classes('dark-card p-3 flex-1'):
                 ui.label('▌ROI CONNECTIVITY').style(
-                    f'color:#22c55e; font-family: JetBrains Mono; font-size: 0.8rem;'
+                    'color:#22c55e; font-family: JetBrains Mono; font-size: 0.8rem;'
                 ).classes('mb-2')
                 self._conn_threshold = ui.slider(min=0.3, max=0.9, step=0.1, value=0.5).props('label-always').classes('w-full')
                 self._conn_threshold.on('update:model-value', lambda e: self._update_connectivity_plot())
@@ -326,7 +326,7 @@ class VisualizeTab:
             # Hilbert 2D
             with ui.card().classes('dark-card p-3 flex-1'):
                 ui.label('▌HILBERT 2D').style(
-                    f'color:#f472b6; font-family: JetBrains Mono; font-size: 0.8rem;'
+                    'color:#f472b6; font-family: JetBrains Mono; font-size: 0.8rem;'
                 ).classes('mb-2')
                 self._containers['hilbert_2d'] = ui.column().classes('w-full')
                 self.viz_state['update_hilbert_2d'] = self._update_hilbert_2d_plot
@@ -336,7 +336,7 @@ class VisualizeTab:
             # Hilbert 3D
             with ui.card().classes('dark-card p-3 flex-1'):
                 ui.label('▌HILBERT 3D PHASE SPACE').style(
-                    f'color:#c084fc; font-family: JetBrains Mono; font-size: 0.8rem;'
+                    'color:#c084fc; font-family: JetBrains Mono; font-size: 0.8rem;'
                 ).classes('mb-2')
                 self._containers['hilbert_3d'] = ui.column().classes('w-full')
                 self.viz_state['update_hilbert_3d'] = self._update_hilbert_3d_plot
@@ -356,7 +356,7 @@ class VisualizeTab:
                 # Cluster Scores
                 with ui.card().classes('dark-card p-3 flex-1'):
                     ui.label('▌CLUSTER SCORES').style(
-                        f'color:#ec4899; font-family: JetBrains Mono; font-size: 0.8rem;'
+                        'color:#ec4899; font-family: JetBrains Mono; font-size: 0.8rem;'
                     ).classes('mb-2')
                     ui.button('Load', on_click=self._update_cluster_scores).props('dense flat size=sm').classes('mb-2')
                     self._containers['cluster_scores'] = ui.column().classes('w-full')
@@ -364,7 +364,7 @@ class VisualizeTab:
                 # PCA Scatter
                 with ui.card().classes('dark-card p-3 flex-1'):
                     ui.label('▌PCA CLUSTERS').style(
-                        f'color:#f97316; font-family: JetBrains Mono; font-size: 0.8rem;'
+                        'color:#f97316; font-family: JetBrains Mono; font-size: 0.8rem;'
                     ).classes('mb-2')
                     ui.button('Load', on_click=self._update_pca_scatter).props('dense flat size=sm').classes('mb-2')
                     self._containers['pca_scatter'] = ui.column().classes('w-full')

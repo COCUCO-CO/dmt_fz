@@ -5,7 +5,7 @@ Analyzes directory structure to detect splits, classes, subjects, etc.
 """
 
 from pathlib import Path
-from typing import Dict, List, Set, Tuple
+from typing import Dict, List, Tuple
 import re
 
 from ..models import StructureInfo, SplitType
@@ -157,9 +157,9 @@ class StructureAnalyzer:
                     return SplitType.HIERARCHICAL, True, classes, class_counts
             return SplitType.TRAIN_TEST, False, [], {}
         
-        # Check for conditions (EEG style)
+        # Check for conditions (EEG style) - detect even single conditions
         conditions = [s for s in root_subdirs if s in self.CONDITION_FOLDERS]
-        if len(conditions) >= 2:
+        if len(conditions) >= 1:
             class_counts = {}
             for cond in conditions:
                 cond_dir = path / cond

@@ -11,10 +11,7 @@ from config import THEME_TEXT_DIM
 
 from app.state import PS
 from ..config import (
-    DEFAULT_MAX_SUBJECTS,
-    DEFAULT_MAX_EPOCHS,
     DEFAULT_WORKERS,
-    DEFAULT_JOBS,
 )
 
 

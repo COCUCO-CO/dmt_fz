@@ -5,7 +5,7 @@ Handles plain text, JSON, JSONL, and other text formats.
 """
 
 from pathlib import Path
-from typing import Set, List, Optional, Dict, Any
+from typing import Set, List
 import json
 
 from .base import BaseDetector, DetectionResult

@@ -9,22 +9,20 @@ import numpy as np
 import mne
 from pathlib import Path
 
-from cleaning.state import CleaningState, CleaningStep, OperationRecord
+from cleaning.state import CleaningState, CleaningStep
 from cleaning.filters import (
     FilterPreset, FilterParams, apply_notch_filter, apply_bandpass_filter,
-    apply_filter_preset, get_filter_presets
+    apply_filter_preset
 )
 from cleaning.bad_channels import (
-    detect_bad_channels, interpolate_channels, BadChannelResult
+    detect_bad_channels, interpolate_channels
 )
 from cleaning.rereferencing import (
-    ReferenceType, apply_average_reference, apply_single_reference,
-    apply_reference, get_available_references
+    apply_average_reference, apply_single_reference
 )
-from cleaning.ica import compute_ica, apply_ica_exclusion, ICAResult
+from cleaning.ica import compute_ica, apply_ica_exclusion
 from cleaning.epochs import (
-    create_epochs, detect_bad_epochs, apply_epoch_rejection,
-    EpochRejectionCriteria, EpochResult
+    create_epochs, detect_bad_epochs, EpochRejectionCriteria
 )
 from cleaning.export import export_cleaned_eeg, export_epochs, ExportFormat
 

@@ -5,7 +5,7 @@ Handles CSV, TSV, Parquet, HDF5, and Excel files.
 """
 
 from pathlib import Path
-from typing import Set, List, Optional, Dict, Any
+from typing import Set, List, Dict
 import csv
 
 from .base import BaseDetector, DetectionResult
@@ -299,5 +299,8 @@ class TabularDetector(BaseDetector):
         if '.parquet' in result.extensions_found:
             return "pandas.read_parquet"
         return "pandas.read_csv"
+
+
+
 
 

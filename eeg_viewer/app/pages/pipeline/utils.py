@@ -134,7 +134,7 @@ def extract_dataset_metadata(file_path: Path) -> dict:
             'ch_names': ch_names,
             'file': file_path.name
         }
-    except Exception as e:
+    except Exception:
         # Return empty dict on any error (file not found, corrupt, etc.)
         return {}
 

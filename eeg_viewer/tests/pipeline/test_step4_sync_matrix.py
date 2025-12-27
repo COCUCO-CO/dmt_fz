@@ -5,8 +5,6 @@ Tests the PLV matrix visualization with proper styling.
 """
 import pytest
 import numpy as np
-from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
 
 
 class TestStep4VisualizerDisplayNumber:
@@ -114,7 +112,6 @@ class TestCacheOptimization:
     
     def test_direct_path_patterns(self, tmp_path):
         """Test the direct path patterns used for fast lookup."""
-        from pathlib import Path
         
         run_dir = tmp_path
         subject = "S01"

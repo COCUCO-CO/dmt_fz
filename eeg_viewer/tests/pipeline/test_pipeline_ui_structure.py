@@ -7,9 +7,7 @@ These tests verify that:
 - Layout structure is correct
 - Buttons and inputs are properly configured
 """
-import pytest
 from pathlib import Path
-from unittest.mock import Mock, MagicMock
 import sys
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -457,5 +455,8 @@ class TestComponentConfiguration:
         """Secondary action buttons should use flat prop."""
         flat_button_props = 'flat dense'
         assert 'flat' in flat_button_props
+
+
+
 
 

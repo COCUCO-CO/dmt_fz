@@ -3,9 +3,9 @@ import pytest
 import pickle
 import numpy as np
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock
 
-from app.core.dataset_scanner.detectors.graph import GraphDetector, PhasesInfo
+from app.core.dataset_scanner.detectors.graph import GraphDetector
 
 
 class TestNodeFeaturesExtraction:
@@ -210,7 +210,7 @@ class TestRealDataset:
         
         info = detect_dataset_type(Path('/media/storage_hdd/dmt_fz/fwd-inv-stc'))
         
-        print(f"\n=== REAL DATASET INFO ===")
+        print("\n=== REAL DATASET INFO ===")
         print(f"bands: {info.get('bands')}")
         print(f"eeg_feature_types: {info.get('eeg_feature_types')}")
         print(f"stc_feature_types: {info.get('stc_feature_types')}")
@@ -231,5 +231,8 @@ class TestRealDataset:
         
         assert eeg_node_features > 0, "EEG node features is 0!"
         assert stc_node_features > 0, "STC node features is 0!"
+
+
+
 
 

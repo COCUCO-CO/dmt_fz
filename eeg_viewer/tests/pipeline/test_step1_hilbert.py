@@ -7,11 +7,9 @@ Validates:
 - Hilbert 2D/3D visualization rendering
 - Multi-condition display
 """
-import pytest
 import sys
 import pickle
 from pathlib import Path
-from unittest.mock import MagicMock
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))

@@ -8,11 +8,10 @@ Visualizes global coherence/synchronization:
 - Mean R by network (7 brain networks)
 """
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any
 import numpy as np
 from nicegui import ui
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 
 from config import THEME_PRIMARY, THEME_SECONDARY, THEME_TEXT_DIM, THEME_WARN
 from .base import BaseVisualizer, extract_event_value
@@ -193,7 +192,7 @@ class Step5Visualizer(BaseVisualizer):
                         f'color: {THEME_TEXT_DIM}; font-size: 0.65rem;'
                     )
             else:
-                ui.label(f"⚠️ Directorio no existe").style(f'color: {THEME_WARN}; font-size: 0.7rem;')
+                ui.label("⚠️ Directorio no existe").style(f'color: {THEME_WARN}; font-size: 0.7rem;')
     
     def _render_oscillator_plot(self) -> None:
         """Render Kuramoto oscillators as polar scatter (like Wikipedia diagram)."""
@@ -320,7 +319,7 @@ class Step5Visualizer(BaseVisualizer):
                 y=r_values,
                 mode='lines',
                 fill='tozeroy',
-                fillcolor=f'rgba(0, 212, 170, 0.2)',
+                fillcolor='rgba(0, 212, 170, 0.2)',
                 line=dict(color=THEME_PRIMARY, width=1.5),
                 name='R(t)',
                 hovertemplate='t=%{x}<br>R=%{y:.3f}<extra></extra>'

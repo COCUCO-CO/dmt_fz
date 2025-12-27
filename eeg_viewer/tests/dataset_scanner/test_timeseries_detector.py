@@ -5,7 +5,6 @@ Verifies detection of time series datasets including EEG signals,
 numpy arrays, and other temporal data formats.
 """
 
-import pytest
 from pathlib import Path
 import numpy as np
 

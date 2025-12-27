@@ -7,7 +7,6 @@ These tests ensure that critical UI state is preserved when:
 - Running pipeline steps
 - Changing parameters
 """
-import pytest
 from pathlib import Path
 from datetime import datetime
 from unittest.mock import Mock, MagicMock, patch
@@ -469,5 +468,8 @@ class TestStateIsolationBetweenPages:
         
         # Restore
         PS.running = original_running
+
+
+
 
 

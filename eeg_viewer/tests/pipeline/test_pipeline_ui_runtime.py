@@ -8,11 +8,9 @@ These tests verify that:
 - Error handling works properly
 - Log output is captured correctly
 """
-import pytest
 from pathlib import Path
 from datetime import datetime, timedelta
-from unittest.mock import Mock, MagicMock, patch, AsyncMock
-import asyncio
+from unittest.mock import Mock
 import sys
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -544,5 +542,8 @@ class TestUIUpdateDuringExecution:
         
         # This is the pattern used to allow UI updates
         assert sleep_time == 0.01
+
+
+
 
 

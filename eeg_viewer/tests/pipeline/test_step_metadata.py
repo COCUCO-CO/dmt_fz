@@ -3,7 +3,6 @@ Tests for step metadata and phase grouping.
 
 Verifies that all steps have complete metadata for the improved UI.
 """
-import pytest
 import sys
 from pathlib import Path
 

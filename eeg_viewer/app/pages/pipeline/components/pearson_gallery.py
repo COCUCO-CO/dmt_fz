@@ -121,3 +121,6 @@ class PearsonGallery:
                 ui.button('Cerrar', on_click=dialog.close).props('flat').classes('mt-3')
 
 
+
+
+

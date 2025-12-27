@@ -3,9 +3,7 @@ Step 2 Visualizer: Consolidate Data (save_load_pickle.py)
 
 Shows consolidated subject data overview - compact layout with Plotly.
 """
-from pathlib import Path
 from typing import Dict, Any, List
-import numpy as np
 from nicegui import ui
 import plotly.graph_objects as go
 

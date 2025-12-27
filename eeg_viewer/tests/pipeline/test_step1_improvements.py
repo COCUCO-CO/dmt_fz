@@ -6,10 +6,8 @@ Validates:
 - Shows summary stats instead of selectors
 - Proper data gathering from generated files
 """
-import pytest
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -188,7 +186,7 @@ class TestStepSelectorFunctionality:
     
     def test_get_visualizer_returns_correct_class(self):
         """get_visualizer should return correct visualizer for scientific steps."""
-        from app.pages.pipeline.visualizers import get_visualizer, VISUALIZER_REGISTRY
+        from app.pages.pipeline.visualizers import get_visualizer
         
         # Steps 2 and 6 are data processing (no visualization needed)
         scientific_steps = [1, 3, 4, 5, 7, 8]

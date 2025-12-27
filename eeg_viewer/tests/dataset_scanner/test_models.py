@@ -5,7 +5,6 @@ These tests verify that the data structures used by the scanner
 work correctly and provide all expected functionality.
 """
 
-import pytest
 from pathlib import Path
 from enum import Enum
 

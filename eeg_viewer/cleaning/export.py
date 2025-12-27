@@ -4,10 +4,9 @@ Export Module
 Provides export functionality for cleaned EEG data.
 """
 
-from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, List
 from datetime import datetime
 import json
 import numpy as np

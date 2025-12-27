@@ -5,10 +5,9 @@ Shows correlation analysis results with image gallery.
 """
 from typing import Dict, Any, List
 from pathlib import Path
-import numpy as np
 from nicegui import ui
 
-from config import THEME_PRIMARY, THEME_SECONDARY, THEME_TEXT_DIM, THEME_WARN
+from config import THEME_PRIMARY, THEME_TEXT_DIM
 from .base import BaseVisualizer, extract_event_value
 
 

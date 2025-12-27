@@ -1,7 +1,6 @@
 """
 Animation Generator - Simple working version
 """
-import pickle
 import numpy as np
 import plotly.graph_objects as go
 
@@ -74,7 +73,6 @@ def create_kuramoto_animation(data, band='Alpha'):
 
 def create_matrix_animation(data, band='Alpha'):
     """Animated sync matrix."""
-    import plotly.express as px
     
     matrices = []
     if 'syncros_stc' in data and band in data['syncros_stc']:

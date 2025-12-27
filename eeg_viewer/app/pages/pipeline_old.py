@@ -1,8 +1,6 @@
 """Pipeline page for EEG processing."""
 from pathlib import Path
 import asyncio
-import subprocess
-import time
 from datetime import datetime
 from nicegui import ui
 
@@ -57,7 +55,6 @@ def pipeline_log(msg):
 
 async def run_pipeline_step(script_name, args_list, step_name, output_dir=None, input_dir=None):
     """Run a pipeline script with arguments"""
-    import subprocess
     import os as _os
     
     if PS.running:
@@ -158,7 +155,7 @@ async def run_pipeline_step(script_name, args_list, step_name, output_dir=None, 
                     if len(buffer) > 100*1024:
                         buffer = b''
                         
-                except Exception as e:
+                except Exception:
                     # Continue on read errors
                     await asyncio.sleep(0.1)
                     continue
@@ -403,7 +400,7 @@ def pipeline_page():
                         args = ['--conditions'] + get_conditions()
                         await run_pipeline_step('save_load_pickle.py', args, 'Consolidate Phases', current_run_dir[0])
                     
-                    ui.button('RUN save_load_pickle.py', on_click=run_consolidate, icon='play_arrow').props('dense').style(f'background:#06b6d4; color:black;')
+                    ui.button('RUN save_load_pickle.py', on_click=run_consolidate, icon='play_arrow').props('dense').style('background:#06b6d4; color:black;')
                     ui.label('~1-2 min').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
             
             # STEP 3: MULTI2POOL2.PY
@@ -436,7 +433,7 @@ def pipeline_page():
                         args = ['--workers', str(int(workers_num.value or 7)), '--conditions'] + get_conditions()
                         await run_pipeline_step('calculate_syncro.py', args, 'Sync Metrics', current_run_dir[0])
                     
-                    ui.button('RUN calculate_syncro.py', on_click=run_syncro, icon='play_arrow').props('dense').style(f'background:#10b981; color:black;')
+                    ui.button('RUN calculate_syncro.py', on_click=run_syncro, icon='play_arrow').props('dense').style('background:#10b981; color:black;')
                     ui.label('~10-30 min').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
             
             # STEP 5: GENERATE_ORDER.PY
@@ -470,7 +467,7 @@ def pipeline_page():
                         args = ['--build-all', '--workers', str(int(workers_num.value or 7))]
                         await run_pipeline_step('build_order_data.py', args, 'Aggregate Data', current_run_dir[0])
                     
-                    ui.button('RUN build_order_data.py', on_click=run_build_order, icon='play_arrow').props('dense').style(f'background:#60a5fa; color:black;')
+                    ui.button('RUN build_order_data.py', on_click=run_build_order, icon='play_arrow').props('dense').style('background:#60a5fa; color:black;')
                     ui.label('~2-5 min').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
             
             # STEP 7: PEARSON.PY
@@ -486,7 +483,7 @@ def pipeline_page():
                             return
                         await run_pipeline_step('pearson.py', [], 'Correlations', current_run_dir[0])
                     
-                    ui.button('RUN pearson.py', on_click=run_pearson, icon='play_arrow').props('dense').style(f'background:#a78bfa; color:black;')
+                    ui.button('RUN pearson.py', on_click=run_pearson, icon='play_arrow').props('dense').style('background:#a78bfa; color:black;')
                     ui.label('~3-5 min').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
             
             # STEP 8: CLUSTERING.PY (Optional)
@@ -543,7 +540,7 @@ def pipeline_page():
                         ]
                         await run_pipeline_step('clustering.py', args, 'Clustering', current_run_dir[0])
                     
-                    ui.button('RUN clustering.py', on_click=run_clustering, icon='play_arrow').props('dense').style(f'background:#ff6b9d; color:black;')
+                    ui.button('RUN clustering.py', on_click=run_clustering, icon='play_arrow').props('dense').style('background:#ff6b9d; color:black;')
                     ui.label('Quick: ~30min, Full: ~4h').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
         
         # RIGHT: Tabbed Panel (Console, Files, System, Visualize)
@@ -553,7 +550,7 @@ def pipeline_page():
                     tab_console = ui.tab('CONSOLE', icon='terminal').style(f'color:{THEME_PRIMARY};')
                     tab_files = ui.tab('FILES', icon='folder').style(f'color:{THEME_SECONDARY};')
                     tab_system = ui.tab('SYSTEM', icon='memory').style(f'color:{THEME_WARN};')
-                    tab_viz = ui.tab('VISUALIZE', icon='analytics').style(f'color:#a78bfa;')
+                    tab_viz = ui.tab('VISUALIZE', icon='analytics').style('color:#a78bfa;')
                 
                 with ui.tab_panels(tabs, value=tab_console).classes('w-full').style('flex: 1; min-height: 0; overflow: hidden;'):
                     # CONSOLE TAB
@@ -863,7 +860,6 @@ def pipeline_page():
                                                 brain_plot_container.clear()
                                                 try:
                                                     from viz_scripts import brain_3d
-                                                    import pickle
                                                     
                                                     # Use already loaded data from refresh_all_plots
                                                     data = viz_state.get('data')
@@ -1009,7 +1005,7 @@ def pipeline_page():
                                 with ui.row().classes('w-full gap-3'):
                                     # Phase Distribution
                                     with ui.card().classes('dark-card p-3 flex-1'):
-                                        ui.label('▌PHASE DISTRIBUTION').style(f'color:#a78bfa; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-2')
+                                        ui.label('▌PHASE DISTRIBUTION').style('color:#a78bfa; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-2')
                                         
                                         phase_container = ui.column().classes('w-full')
                                         
@@ -1034,7 +1030,7 @@ def pipeline_page():
                                     
                                     # Sync Matrix
                                     with ui.card().classes('dark-card p-3 flex-1'):
-                                        ui.label('▌SYNC MATRIX').style(f'color:#60a5fa; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-2')
+                                        ui.label('▌SYNC MATRIX').style('color:#60a5fa; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-2')
                                         
                                         sync_matrix_container = ui.column().classes('w-full')
                                         
@@ -1059,7 +1055,7 @@ def pipeline_page():
                                     
                                     # Connectivity Graph
                                     with ui.card().classes('dark-card p-3 flex-1'):
-                                        ui.label('▌ROI CONNECTIVITY').style(f'color:#22c55e; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-2')
+                                        ui.label('▌ROI CONNECTIVITY').style('color:#22c55e; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-2')
                                         
                                         connectivity_container = ui.column().classes('w-full')
                                         conn_threshold = ui.slider(min=0.3, max=0.9, step=0.1, value=0.5).props('label-always').classes('w-full')
@@ -1088,7 +1084,7 @@ def pipeline_page():
                                 with ui.row().classes('w-full gap-3'):
                                     # Hilbert 2D
                                     with ui.card().classes('dark-card p-3 flex-1'):
-                                        ui.label('▌HILBERT 2D').style(f'color:#f472b6; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-2')
+                                        ui.label('▌HILBERT 2D').style('color:#f472b6; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-2')
                                         
                                         hilbert_2d_container = ui.column().classes('w-full')
                                         
@@ -1115,7 +1111,7 @@ def pipeline_page():
                                     
                                     # Hilbert 3D
                                     with ui.card().classes('dark-card p-3 flex-1'):
-                                        ui.label('▌HILBERT 3D PHASE SPACE').style(f'color:#c084fc; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-2')
+                                        ui.label('▌HILBERT 3D PHASE SPACE').style('color:#c084fc; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-2')
                                         
                                         hilbert_3d_container = ui.column().classes('w-full')
                                         
@@ -1158,7 +1154,7 @@ def pipeline_page():
                                     with ui.row().classes('w-full gap-3 p-2'):
                                         # Clustering Scores
                                         with ui.card().classes('dark-card p-3 flex-1'):
-                                            ui.label('▌CLUSTER SCORES').style(f'color:#ec4899; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-2')
+                                            ui.label('▌CLUSTER SCORES').style('color:#ec4899; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-2')
                                             
                                             cluster_scores_container = ui.column().classes('w-full')
                                             
@@ -1181,7 +1177,7 @@ def pipeline_page():
                                         
                                         # PCA Scatter
                                         with ui.card().classes('dark-card p-3 flex-1'):
-                                            ui.label('▌PCA CLUSTERS').style(f'color:#f97316; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-2')
+                                            ui.label('▌PCA CLUSTERS').style('color:#f97316; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-2')
                                             
                                             pca_container = ui.column().classes('w-full')
                                             
@@ -1288,7 +1284,6 @@ def pipeline_page():
                                                 return
                                             
                                             # Build command
-                                            import subprocess
                                             from pathlib import Path
                                             
                                             # Use plot.py directly (generate_frames.py is deprecated)

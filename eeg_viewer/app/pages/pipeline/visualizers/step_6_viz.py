@@ -3,11 +3,10 @@ Step 6 Visualizer: Aggregate Metrics (build_order_data.py)
 
 Shows aggregated metrics - file summary only (no chart to avoid duplication with Step 2).
 """
-from typing import Dict, Any, List
-import numpy as np
+from typing import Dict, Any
 from nicegui import ui
 
-from config import THEME_PRIMARY, THEME_SECONDARY, THEME_TEXT_DIM, THEME_WARN
+from config import THEME_PRIMARY, THEME_SECONDARY, THEME_TEXT_DIM
 from .base import BaseVisualizer
 
 

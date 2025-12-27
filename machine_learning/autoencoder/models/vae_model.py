@@ -271,7 +271,12 @@ class GraphDecoder(nn.Module):
         dropout = dec_config.get('dropout', 0.1)
         activation = dec_config.get('activation', 'leaky_relu')
         self.reconstruct_edges = dec_config.get('reconstruct_edges', True)
-        self.use_graph_conv = dec_config.get('use_graph_conv', False)
+        
+        # Support both 'use_graph_conv' (bool) and 'gat_layers' (int) for flexibility
+        # gat_layers > 0 means use graph conv decoder
+        gat_layers = dec_config.get('gat_layers', 0)
+        self.use_graph_conv = dec_config.get('use_graph_conv', gat_layers > 0)
+        self.num_gat_layers = gat_layers if gat_layers > 0 else len(hidden_dims)
         self.conv_type = dec_config.get('conv_type', 'gatv2')
         
         self.latent_dim = latent_dim
@@ -388,12 +393,20 @@ class GraphDecoder(nn.Module):
         Returns:
             Dict with 'x_recon' and optionally 'edge_attr_recon'
         """
+        # Store attention weights for analysis
+        self._last_attention_weights = {}
+        
         if self.use_graph_conv and self.conv_layers is not None:
             # Graph convolutional decoding
             h = z
-            for conv, norm, drop in zip(self.conv_layers, self.norms, self.dropouts):
+            for i, (conv, norm, drop) in enumerate(zip(self.conv_layers, self.norms, self.dropouts)):
                 if self.conv_type == 'gatv2':
-                    h = conv(h, edge_index)
+                    # Get attention weights from GAT layer
+                    h, (edge_idx, attention) = conv(h, edge_index, return_attention_weights=True)
+                    self._last_attention_weights[f'decoder_layer_{i}'] = {
+                        'edge_index': edge_idx.detach(),
+                        'attention': attention.detach()
+                    }
                 else:
                     h = conv(h, edge_index)
                 h = norm(h)
@@ -419,6 +432,10 @@ class GraphDecoder(nn.Module):
             result['edge_attr_recon'] = edge_attr_recon
         
         return result
+    
+    def get_attention_weights(self) -> Dict[str, Dict[str, torch.Tensor]]:
+        """Get attention weights from last forward pass (only for GAT decoder)."""
+        return getattr(self, '_last_attention_weights', {})
 
 
 class BrainStateVAE(nn.Module):
@@ -819,6 +836,17 @@ class BrainStateVAE(nn.Module):
             activations['z'] = self._last_z
             
             return activations
+    
+    def get_decoder_attention_weights(self) -> Dict[str, Dict[str, torch.Tensor]]:
+        """
+        Get attention weights from decoder's last forward pass.
+        Only works if decoder uses GAT (gat_layers > 0).
+        
+        Returns:
+            Dict with attention weights for each decoder layer:
+                {'decoder_layer_0': {'edge_index': ..., 'attention': ...}, ...}
+        """
+        return self.decoder.get_attention_weights()
     
     def extract_gat_activations_per_node(self, data: Batch, layer_idx: int = -1) -> torch.Tensor:
         """

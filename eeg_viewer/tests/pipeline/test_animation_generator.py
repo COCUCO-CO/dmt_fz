@@ -5,7 +5,6 @@ Tests the folder/subject detection functionality.
 """
 import pytest
 from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
 
 
 class TestAnimationGeneratorFolderDetection:

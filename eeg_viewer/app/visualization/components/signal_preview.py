@@ -15,7 +15,7 @@ Features:
 """
 import asyncio
 import numpy as np
-from typing import List, Dict, Optional, Callable, Any, Set
+from typing import List, Optional, Callable, Any
 from dataclasses import dataclass, field
 from nicegui import ui
 import plotly.graph_objects as go
@@ -26,8 +26,8 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 from config import (
-    THEME_BG, THEME_CARD, THEME_BORDER, THEME_PRIMARY, THEME_SECONDARY,
-    THEME_WARN, THEME_ERROR, THEME_TEXT, THEME_TEXT_DIM
+    THEME_SECONDARY,
+    THEME_ERROR, THEME_TEXT_DIM
 )
 
 
@@ -164,7 +164,7 @@ class SignalPreviewComponent:
                         self.reverse_btn = ui.button(
                             icon='swap_horiz',
                             on_click=self._toggle_reverse
-                        ).props(f'flat dense round size=sm')
+                        ).props('flat dense round size=sm')
                         self.reverse_btn.tooltip('Reverse EEG temporally')
                     
                     # Time display
@@ -484,6 +484,9 @@ class SignalPreviewComponent:
         """Enable/disable bad channel highlighting."""
         self.state.show_bad_channels_highlight = enabled
         self.update()
+
+
+
 
 
 

@@ -12,7 +12,6 @@ import pytest
 import tempfile
 from pathlib import Path
 import numpy as np
-import mne
 
 from cleaning.state import CleaningState, CleaningStep
 from cleaning.filters import apply_filter_preset, FilterPreset
@@ -211,7 +210,7 @@ class TestFullPipeline:
         criteria = EpochRejectionCriteria.default()
         epoch_result = detect_bad_epochs(epoch_result, criteria)
         
-        print(f"✓ Epoch rejection detection:")
+        print("✓ Epoch rejection detection:")
         print(f"  - Total: {epoch_result.n_total}")
         print(f"  - Good: {epoch_result.n_good}")
         print(f"  - Rejected: {epoch_result.n_rejected}")
@@ -269,7 +268,7 @@ class TestFullPipeline:
                 include_epochs=True
             )
             
-            print(f"✓ Export completed:")
+            print("✓ Export completed:")
             for name, path in outputs.items():
                 size = path.stat().st_size / 1024  # KB
                 print(f"  - {name}: {path.name} ({size:.1f} KB)")
@@ -404,7 +403,7 @@ class TestPipelineWithRealData:
         assert epochs.n_total > 0
         assert epochs.epochs is not None
         
-        print(f"\nReal data pipeline:")
+        print("\nReal data pipeline:")
         print(f"  - Sample rate: {sample_raw.info['sfreq']} Hz")
         print(f"  - Channels: {len(sample_raw.ch_names)}")
         print(f"  - Duration: {sample_raw.n_times / sample_raw.info['sfreq']:.1f}s")

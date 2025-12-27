@@ -10,7 +10,7 @@ from nicegui import ui
 
 from config import THEME_PRIMARY, THEME_SECONDARY, THEME_TEXT_DIM, THEME_BORDER, THEME_BG
 from app.state import PS
-from ..visualizers import get_visualizer, VISUALIZER_REGISTRY
+from ..visualizers import get_visualizer
 
 
 # File pattern to step mapping for auto-detection
@@ -292,7 +292,7 @@ class VisualizationPanel:
             # Handle errors gracefully without breaking the UI
             with self._container:
                 ui.label(f'⚠️ Error in Step {self._active_step} visualizer').style(
-                    f'color: #f59e0b; font-family: JetBrains Mono; font-size: 0.8rem;'
+                    'color: #f59e0b; font-family: JetBrains Mono; font-size: 0.8rem;'
                 )
                 ui.label(str(e)).style(
                     f'color: {THEME_TEXT_DIM}; font-size: 0.7rem; max-width: 400px;'

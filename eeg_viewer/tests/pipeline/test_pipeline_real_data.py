@@ -74,7 +74,7 @@ class TestRealDataLoading:
     def test_epochs_have_multiple_trials(self, real_epochs):
         """Should have multiple epochs/trials."""
         n_epochs = len(real_epochs)
-        assert n_epochs >= 1, f"No epochs found"
+        assert n_epochs >= 1, "No epochs found"
     
     def test_epochs_data_shape(self, real_epochs):
         """Epochs data should have correct shape (n_epochs, n_channels, n_samples)."""
@@ -131,7 +131,7 @@ class TestRealDataFiltering:
     
     def test_filter_reduces_out_of_band_power(self, single_epoch_data, real_epochs_limited):
         """Filter should reduce power outside the passband."""
-        from fwd import filtered, freq_bands
+        from fwd import filtered
         
         sfreq = real_epochs_limited.info['sfreq']
         
@@ -429,5 +429,8 @@ class TestFullMiniPipelineRealData:
         assert np.allclose(p1, p2), "Phase not reproducible"
         assert np.allclose(s1, s2), "Syncro not reproducible"
         assert np.allclose(r1, r2), "Kuramoto not reproducible"
+
+
+
 
 

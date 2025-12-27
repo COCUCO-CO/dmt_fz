@@ -6,21 +6,383 @@ from nicegui import ui
 import plotly.graph_objects as go
 
 from config import (
-    THEME_BG, THEME_CARD, THEME_BORDER, THEME_PRIMARY, THEME_SECONDARY,
+    THEME_PRIMARY, THEME_SECONDARY,
     THEME_WARN, THEME_ERROR, THEME_TEXT, THEME_TEXT_DIM,
     EEG_CLEAN_DIR
 )
 from app.state import AS
 from app.visualization.styles.css import STYLE
-from app.visualization.components.running_indicator import render_running_indicator
 from app.visualization.components.global_header import render_global_header
-from app.core.kuramoto_proxy import compute_kuramoto_proxy_from_edges, compute_kuramoto_comparison
+from app.core.kuramoto_proxy import compute_kuramoto_comparison
 # EEG sync is now manual - user selects EEG file directly
 from eeg_loader import load_eeg_file, get_channel_data
 from app.core.signal import process_data as signal_process_data
 
 AUTOENCODER_DIR = Path(__file__).parent.parent.parent.parent / "machine_learning" / "autoencoder"
 AUTOENCODER_CACHE_DIR = Path(__file__).parent.parent.parent / "cache" / "autoencoder"
+
+# Electrode positions (10-20 system) for brain topology visualization
+# Coordinates are normalized to fit in [-1, 1] range with head facing up
+ELECTRODE_POSITIONS_10_20 = {
+    # Frontal pole
+    'Fp1': (-0.31, 0.95), 'Fpz': (0.0, 0.98), 'Fp2': (0.31, 0.95),
+    # Frontal
+    'F7': (-0.81, 0.59), 'F3': (-0.39, 0.67), 'Fz': (0.0, 0.72), 'F4': (0.39, 0.67), 'F8': (0.81, 0.59),
+    # Frontal-Central
+    'FC5': (-0.63, 0.39), 'FC1': (-0.22, 0.42), 'FCz': (0.0, 0.45), 'FC2': (0.22, 0.42), 'FC6': (0.63, 0.39),
+    # Temporal & Central
+    'T7': (-0.99, 0.0), 'T3': (-0.99, 0.0),  # T7/T3 same position
+    'C3': (-0.49, 0.0), 'Cz': (0.0, 0.0), 'C4': (0.49, 0.0),
+    'T8': (0.99, 0.0), 'T4': (0.99, 0.0),  # T8/T4 same position
+    # Central-Parietal
+    'CP5': (-0.63, -0.39), 'CP1': (-0.22, -0.42), 'CPz': (0.0, -0.45), 'CP2': (0.22, -0.42), 'CP6': (0.63, -0.39),
+    # Parietal & Temporal
+    'T5': (-0.81, -0.59), 'P7': (-0.81, -0.59),  # T5/P7 same
+    'P3': (-0.39, -0.67), 'Pz': (0.0, -0.72), 'P4': (0.39, -0.67),
+    'T6': (0.81, -0.59), 'P8': (0.81, -0.59),  # T6/P8 same
+    # Occipital
+    'O1': (-0.31, -0.95), 'Oz': (0.0, -0.98), 'O2': (0.31, -0.95),
+    # Mastoid/Ear references
+    'M1': (-1.05, 0.0), 'A1': (-1.05, 0.0),
+    'M2': (1.05, 0.0), 'A2': (1.05, 0.0),
+}
+
+# Standard 24-channel EEG montage order (common clinical setup)
+STANDARD_24_CHANNELS = [
+    'Fp1', 'Fp2', 'F7', 'F3', 'Fz', 'F4', 'F8',
+    'T3', 'C3', 'Cz', 'C4', 'T4',
+    'T5', 'P3', 'Pz', 'P4', 'T6',
+    'O1', 'Oz', 'O2',
+    'FC1', 'FC2', 'CP1', 'CP2'
+]
+
+# Alternative 24-channel montage (10-20 extended)
+STANDARD_24_CHANNELS_ALT = [
+    'Fp1', 'Fp2', 'F7', 'F3', 'Fz', 'F4', 'F8',
+    'FC5', 'FC1', 'FC2', 'FC6',
+    'T7', 'C3', 'Cz', 'C4', 'T8',
+    'CP5', 'CP1', 'CP2', 'CP6',
+    'P3', 'Pz', 'P4',
+    'O1', 'O2'
+]
+
+
+def generate_eeg_positions(n_nodes: int, channel_names: list = None) -> dict:
+    """
+    Generate EEG electrode positions for visualization.
+    
+    Args:
+        n_nodes: Number of nodes/channels
+        channel_names: Optional list of channel names to use for positioning
+        
+    Returns:
+        Dict mapping node index to (x, y) position
+    """
+    positions = {}
+    
+    # If channel names provided, try to match to 10-20 positions
+    if channel_names:
+        for i, name in enumerate(channel_names):
+            # Clean channel name (remove spaces, handle case)
+            clean_name = name.strip()
+            # Try exact match first
+            if clean_name in ELECTRODE_POSITIONS_10_20:
+                positions[i] = ELECTRODE_POSITIONS_10_20[clean_name]
+            # Try uppercase
+            elif clean_name.upper() in ELECTRODE_POSITIONS_10_20:
+                positions[i] = ELECTRODE_POSITIONS_10_20[clean_name.upper()]
+            # Try title case
+            elif clean_name.title() in ELECTRODE_POSITIONS_10_20:
+                positions[i] = ELECTRODE_POSITIONS_10_20[clean_name.title()]
+        
+        # If we matched all, return
+        if len(positions) == n_nodes:
+            return positions
+    
+    # Use standard montage for common node counts
+    if n_nodes == 24:
+        montage = STANDARD_24_CHANNELS_ALT
+        for i, ch in enumerate(montage[:n_nodes]):
+            if ch in ELECTRODE_POSITIONS_10_20:
+                positions[i] = ELECTRODE_POSITIONS_10_20[ch]
+    elif n_nodes == 19:
+        # Standard 10-20 montage
+        montage_19 = ['Fp1', 'Fp2', 'F7', 'F3', 'Fz', 'F4', 'F8', 
+                      'T3', 'C3', 'Cz', 'C4', 'T4', 
+                      'T5', 'P3', 'Pz', 'P4', 'T6', 'O1', 'O2']
+        for i, ch in enumerate(montage_19):
+            if ch in ELECTRODE_POSITIONS_10_20:
+                positions[i] = ELECTRODE_POSITIONS_10_20[ch]
+    elif n_nodes == 32:
+        # Extended 10-20
+        montage_32 = ['Fp1', 'Fpz', 'Fp2', 'F7', 'F3', 'Fz', 'F4', 'F8',
+                      'FC5', 'FC1', 'FCz', 'FC2', 'FC6',
+                      'T7', 'C3', 'Cz', 'C4', 'T8',
+                      'CP5', 'CP1', 'CPz', 'CP2', 'CP6',
+                      'P7', 'P3', 'Pz', 'P4', 'P8',
+                      'O1', 'Oz', 'O2']
+        for i, ch in enumerate(montage_32[:n_nodes]):
+            if ch in ELECTRODE_POSITIONS_10_20:
+                positions[i] = ELECTRODE_POSITIONS_10_20[ch]
+    
+    # Fill any missing positions with interpolated grid
+    if len(positions) < n_nodes:
+        # Create a grid layout for remaining nodes
+        remaining = [i for i in range(n_nodes) if i not in positions]
+        n_remaining = len(remaining)
+        
+        if n_remaining == n_nodes:
+            # No positions matched, create full EEG-like grid
+            # Arrange in rows like EEG cap
+            rows = [
+                (0.9, 3),   # Frontal pole: 3 electrodes
+                (0.6, 5),   # Frontal: 5 electrodes
+                (0.3, 5),   # FC: 5 electrodes
+                (0.0, 5),   # Central: 5 electrodes
+                (-0.3, 5),  # CP: 5 electrodes
+                (-0.6, 5),  # Parietal: 5 electrodes
+                (-0.9, 3),  # Occipital: 3 electrodes
+            ]
+            
+            idx = 0
+            for y, n_in_row in rows:
+                if idx >= n_nodes:
+                    break
+                n_this_row = min(n_in_row, n_nodes - idx)
+                for j in range(n_this_row):
+                    if n_this_row == 1:
+                        x = 0
+                    else:
+                        x = -0.8 + (1.6 * j / (n_this_row - 1))
+                    positions[idx] = (x, y)
+                    idx += 1
+        else:
+            # Fill remaining with circular positions in unused space
+            for j, node_idx in enumerate(remaining):
+                angle = 2 * np.pi * j / n_remaining - np.pi / 2
+                x = 0.5 * np.cos(angle)
+                y = 0.5 * np.sin(angle)
+                positions[node_idx] = (x, y)
+    
+    return positions
+
+
+def generate_circular_positions(n_nodes: int) -> dict:
+    """Generate evenly spaced circular positions for n nodes (fallback)."""
+    positions = {}
+    for i in range(n_nodes):
+        angle = 2 * np.pi * i / n_nodes - np.pi / 2  # Start from top
+        x = 0.8 * np.cos(angle)
+        y = 0.8 * np.sin(angle)
+        positions[i] = (x, y)
+    return positions
+
+
+def build_sync_matrix_from_edges(edge_index, edge_attr, num_nodes, normalize=False):
+    """Build synchronization matrix from edge representation.
+    
+    Args:
+        edge_index: [2, num_edges] source and target indices
+        edge_attr: [num_edges, ...] edge weights
+        num_nodes: Number of nodes
+        normalize: If True, normalize weights to [0, 1] range (useful for reconstruction)
+    
+    Returns:
+        [num_nodes, num_nodes] symmetric sync matrix
+    """
+    if isinstance(edge_index, np.ndarray):
+        src, dst = edge_index[0], edge_index[1]
+    else:
+        src = edge_index[0].cpu().numpy()
+        dst = edge_index[1].cpu().numpy()
+    
+    if isinstance(edge_attr, np.ndarray):
+        weights = edge_attr.copy()
+    else:
+        weights = edge_attr.cpu().numpy().copy()
+    
+    # Get PLV values (first column if multi-dimensional)
+    if weights.ndim > 1:
+        weights = weights[:, 0]
+    
+    # Normalize if requested (handles reconstructed values that may be out of range)
+    if normalize:
+        w_min, w_max = weights.min(), weights.max()
+        if w_max > w_min:
+            weights = (weights - w_min) / (w_max - w_min)
+        else:
+            weights = np.ones_like(weights) * 0.5
+        # Apply sigmoid if values were very large (likely raw decoder output)
+        # This keeps values already in [0,1] mostly unchanged
+    
+    # Clip to valid range
+    weights = np.clip(weights, 0, 1)
+    
+    sync_matrix = np.zeros((num_nodes, num_nodes))
+    for i, (s, d) in enumerate(zip(src, dst)):
+        if i < len(weights) and s < num_nodes and d < num_nodes:
+            sync_matrix[int(s), int(d)] = weights[i]
+            sync_matrix[int(d), int(s)] = weights[i]  # Symmetric
+    
+    return sync_matrix
+
+
+def make_sync_network_fig(sync_matrix, num_nodes, title="Sync Network", 
+                          primary_color=THEME_PRIMARY, edge_colorscale='Viridis',
+                          threshold=0.3, channel_names=None):
+    """
+    Create a brain network visualization showing synchronization between nodes.
+    
+    Args:
+        sync_matrix: [num_nodes, num_nodes] synchronization matrix (PLV values)
+        num_nodes: Number of nodes in the graph
+        title: Plot title
+        primary_color: Color for nodes and head outline
+        edge_colorscale: Colorscale for edges
+        threshold: Minimum PLV to show edge (reduces clutter)
+        channel_names: Optional list of EEG channel names for positioning
+    
+    Returns:
+        Plotly figure with network visualization
+    """
+    fig = go.Figure()
+    
+    # Head outline
+    theta = np.linspace(0, 2 * np.pi, 100)
+    head_color = f'rgba({int(primary_color[1:3], 16)}, {int(primary_color[3:5], 16)}, {int(primary_color[5:7], 16)}, 0.4)'
+    
+    fig.add_trace(go.Scatter(
+        x=np.cos(theta), y=np.sin(theta), mode='lines',
+        line=dict(color=head_color, width=1.5), showlegend=False, hoverinfo='skip'
+    ))
+    # Nose (pointing up)
+    fig.add_trace(go.Scatter(
+        x=[-0.08, 0, 0.08], y=[0.98, 1.12, 0.98], mode='lines',
+        line=dict(color=head_color, width=1.5), showlegend=False, hoverinfo='skip'
+    ))
+    # Ears
+    fig.add_trace(go.Scatter(
+        x=[-1.01, -1.08, -1.01], y=[0.12, 0, -0.12], mode='lines',
+        line=dict(color=head_color, width=1), showlegend=False, hoverinfo='skip'
+    ))
+    fig.add_trace(go.Scatter(
+        x=[1.01, 1.08, 1.01], y=[0.12, 0, -0.12], mode='lines',
+        line=dict(color=head_color, width=1), showlegend=False, hoverinfo='skip'
+    ))
+    
+    # Generate node positions (use EEG layout)
+    positions = generate_eeg_positions(num_nodes, channel_names)
+    
+    # Draw edges (connections) - only above threshold
+    edge_x, edge_y, edge_colors, edge_texts = [], [], [], []
+    
+    for i in range(num_nodes):
+        for j in range(i + 1, num_nodes):  # Upper triangle only
+            plv = sync_matrix[i, j]
+            if plv > threshold:
+                x0, y0 = positions[i]
+                x1, y1 = positions[j]
+                # Add edge as line segment with None separator
+                edge_x.extend([x0, x1, None])
+                edge_y.extend([y0, y1, None])
+    
+    # Draw all edges at once (more efficient)
+    if edge_x:
+        # Create edge traces with varying opacity based on PLV
+        # Group edges by PLV strength for better visualization
+        for plv_min, plv_max, opacity, width in [
+            (threshold, 0.5, 0.15, 0.5),
+            (0.5, 0.7, 0.35, 1.0),
+            (0.7, 0.85, 0.6, 1.5),
+            (0.85, 1.0, 0.9, 2.0)
+        ]:
+            ex, ey = [], []
+            for i in range(num_nodes):
+                for j in range(i + 1, num_nodes):
+                    plv = sync_matrix[i, j]
+                    if plv_min <= plv < plv_max:
+                        x0, y0 = positions[i]
+                        x1, y1 = positions[j]
+                        ex.extend([x0, x1, None])
+                        ey.extend([y0, y1, None])
+            
+            if ex:
+                # Map PLV range to color
+                avg_plv = (plv_min + plv_max) / 2
+                if edge_colorscale == 'Viridis':
+                    # Blue -> Green -> Yellow
+                    if avg_plv < 0.5:
+                        color = f'rgba(68, 1, 84, {opacity})'
+                    elif avg_plv < 0.7:
+                        color = f'rgba(59, 82, 139, {opacity})'
+                    elif avg_plv < 0.85:
+                        color = f'rgba(33, 145, 140, {opacity})'
+                    else:
+                        color = f'rgba(94, 201, 98, {opacity})'
+                else:  # Pink/magenta scale for reconstructed
+                    if avg_plv < 0.5:
+                        color = f'rgba(131, 24, 67, {opacity})'
+                    elif avg_plv < 0.7:
+                        color = f'rgba(190, 24, 93, {opacity})'
+                    elif avg_plv < 0.85:
+                        color = f'rgba(244, 114, 182, {opacity})'
+                    else:
+                        color = f'rgba(253, 164, 175, {opacity})'
+                
+                fig.add_trace(go.Scatter(
+                    x=ex, y=ey, mode='lines',
+                    line=dict(color=color, width=width),
+                    hoverinfo='skip', showlegend=False
+                ))
+    
+    # Draw nodes
+    node_x = [positions[i][0] for i in range(num_nodes)]
+    node_y = [positions[i][1] for i in range(num_nodes)]
+    
+    # Node color based on total connectivity (degree)
+    node_degrees = sync_matrix.sum(axis=1)
+    if node_degrees.max() > 0:
+        node_colors = node_degrees / node_degrees.max()
+    else:
+        node_colors = np.ones(num_nodes) * 0.5
+    
+    fig.add_trace(go.Scatter(
+        x=node_x, y=node_y, mode='markers',
+        marker=dict(
+            size=10,
+            color=node_colors,
+            colorscale='Viridis' if edge_colorscale == 'Viridis' else 'RdPu',
+            cmin=0, cmax=1,
+            line=dict(width=1, color=primary_color),
+            showscale=False
+        ),
+        text=[f'Node {i}<br>Degree: {node_degrees[i]:.2f}' for i in range(num_nodes)],
+        hoverinfo='text',
+        showlegend=False
+    ))
+    
+    # Layout
+    fig.update_layout(
+        template='plotly_dark',
+        paper_bgcolor='rgba(8,8,8,1)',
+        plot_bgcolor='rgba(12,12,12,1)',
+        margin=dict(l=5, r=5, t=25, b=5),
+        height=200,
+        title=dict(text=title, font=dict(size=10, color=primary_color), x=0.5, y=0.98),
+        xaxis=dict(
+            range=[-1.2, 1.2], showgrid=False, zeroline=False, 
+            showticklabels=False, fixedrange=True
+        ),
+        yaxis=dict(
+            range=[-0.95, 1.15], showgrid=False, zeroline=False, 
+            showticklabels=False, fixedrange=True, scaleanchor='x'
+        ),
+        showlegend=False,
+        hovermode='closest'
+    )
+    
+    return fig
+
 
 def analysis_log(msg: str, msg_type: str = 'info'):
     """Add message to analysis log."""
@@ -82,7 +444,6 @@ def load_trained_model(model_path: Path):
 def load_image_model(checkpoint, model_path: Path):
     """Load an image-based convolutional VAE model."""
     import torch
-    import sys
     
     # The model is stored directly in the checkpoint
     model = checkpoint['full_model']
@@ -212,7 +573,6 @@ def load_graph_model(checkpoint, model_path: Path):
 
 def register_image_activation_hooks(model):
     """Register forward hooks to capture activations for image models."""
-    import torch.nn as nn
     AS.activations = {}
     AS.attention_weights = {}
     AS.layer_info = {'encoder': [], 'decoder': []}  # Store layer info for UI
@@ -338,7 +698,6 @@ def process_sample(sample, store_latent=True):
 
 def process_image_sample(sample, store_latent=True):
     """Process an image sample through the model."""
-    import torch
     
     # sample is a tuple (image_tensor, label) or just image_tensor
     if isinstance(sample, tuple):
@@ -362,7 +721,7 @@ def process_image_sample(sample, store_latent=True):
     AS.current_z = output.get('mu', None) if isinstance(output, dict) else None
     
     if store_latent and AS.current_z is not None:
-        z_np = AS.current_z.cpu().numpy().flatten()
+        z_np = AS.current_z.detach().cpu().numpy().flatten()
         AS.latent_codes.append(z_np)
         label = AS.current_label if AS.current_label is not None else 0
         AS.latent_labels.append(label)
@@ -413,14 +772,52 @@ def process_graph_sample(sample, store_latent=True):
     if hasattr(AS.model, 'encoder') and hasattr(AS.model.encoder, 'get_all_attention_weights'):
         AS.attention_weights = AS.model.encoder.get_all_attention_weights()
     
-    # Extract layer activations
+    # Extract attention weights from decoder (if using GAT decoder)
+    if hasattr(AS.model, 'get_decoder_attention_weights'):
+        decoder_att = AS.model.get_decoder_attention_weights()
+        for key, val in decoder_att.items():
+            AS.attention_weights[key] = val
+    
+    # Extract layer activations from encoder
     if hasattr(AS.model, 'encoder') and hasattr(AS.model.encoder, 'get_layer_activations'):
         layer_acts = AS.model.encoder.get_layer_activations()
         for key, val in layer_acts.items():
             AS.activations[f'encoder.{key}'] = val
     
+    # Extract decoder activations/attention
+    if hasattr(AS.model, 'decoder'):
+        decoder = AS.model.decoder
+        decoder_att = decoder.get_attention_weights() if hasattr(decoder, 'get_attention_weights') else {}
+        
+        if decoder_att:
+            # GAT decoder - use attention matrices as "activations"
+            for key, att_data in decoder_att.items():
+                if 'attention' in att_data:
+                    # Reshape attention to 2D matrix for visualization
+                    attn = att_data['attention'].cpu()
+                    edge_index = att_data['edge_index'].cpu()
+                    
+                    # Build attention matrix
+                    num_nodes = batch.x.shape[0]
+                    if attn.ndim > 1:
+                        attn_flat = attn.mean(dim=1)  # Average across heads
+                    else:
+                        attn_flat = attn
+                    
+                    attn_matrix = torch.zeros(num_nodes, num_nodes)
+                    for e_idx in range(min(edge_index.shape[1], len(attn_flat))):
+                        src, dst = int(edge_index[0, e_idx]), int(edge_index[1, e_idx])
+                        if src < num_nodes and dst < num_nodes:
+                            attn_matrix[src, dst] = attn_flat[e_idx]
+                    
+                    AS.activations[f'decoder.{key}'] = attn_matrix
+        elif hasattr(decoder, 'node_decoder'):
+            # MLP decoder - use reconstructed features as visualization
+            if 'x_recon' in output:
+                AS.activations['decoder.output'] = output['x_recon'].detach().cpu()
+    
     if store_latent and AS.current_z is not None:
-        z_np = AS.current_z.cpu().numpy().flatten()
+        z_np = AS.current_z.detach().cpu().numpy().flatten()
         AS.latent_codes.append(z_np)
         # Get label from sample
         label = batch.y[0].item() if hasattr(batch, 'y') and batch.y is not None else 0
@@ -522,7 +919,7 @@ def load_hdf5_image_dataset(h5_path, split, dataset_info_container, progress_sli
         
         dataset_info_container.clear()
         with dataset_info_container:
-            ui.label(f"✓ Image dataset loaded").style(f'color:{THEME_PRIMARY}; font-size: 0.75rem;')
+            ui.label("✓ Image dataset loaded").style(f'color:{THEME_PRIMARY}; font-size: 0.75rem;')
             ui.label(f"  Split: {split}").style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
             ui.label(f"  Samples: {AS.total_samples}").style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
             ui.label(f"  Size: {resolution}×{resolution} RGB").style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
@@ -601,7 +998,7 @@ def load_image_folder_dataset(images_dir, split, base_path, dataset_info_contain
         
         dataset_info_container.clear()
         with dataset_info_container:
-            ui.label(f"✓ Image folder loaded").style(f'color:{THEME_PRIMARY}; font-size: 0.75rem;')
+            ui.label("✓ Image folder loaded").style(f'color:{THEME_PRIMARY}; font-size: 0.75rem;')
             ui.label(f"  Split: {split}").style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
             ui.label(f"  Samples: {AS.total_samples}").style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
             ui.label(f"  Size: {resolution}×{resolution} RGB").style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
@@ -679,7 +1076,8 @@ def compute_dataset_ranges():
                 # Get activations
                 for name, act in AS.activations.items():
                     if name in all_activations:
-                        all_activations[name].append(act.numpy().flatten())
+                        act_np = act.cpu().numpy() if hasattr(act, 'cpu') else act.numpy()
+                        all_activations[name].append(act_np.flatten())
             except Exception:
                 continue
     
@@ -780,8 +1178,8 @@ def analysis_page():
                         # Show loading indicator
                         model_info_container.clear()
                         with model_info_container:
-                            ui.label(f"⏳ Loading model...").style(f'color:{THEME_WARN}; font-size: 0.75rem;')
-                            ui.label(f"  This may take a moment").style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                            ui.label("⏳ Loading model...").style(f'color:{THEME_WARN}; font-size: 0.75rem;')
+                            ui.label("  This may take a moment").style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
                         
                         # Load model in background thread to avoid blocking UI
                         loop = asyncio.get_event_loop()
@@ -789,7 +1187,7 @@ def analysis_page():
                         
                         model_info_container.clear()
                         with model_info_container:
-                            ui.label(f"✓ Model loaded").style(f'color:{THEME_PRIMARY}; font-size: 0.75rem;')
+                            ui.label("✓ Model loaded").style(f'color:{THEME_PRIMARY}; font-size: 0.75rem;')
                             ui.label(f"  Type: {info.get('model_type', 'graph')}").style(f'color:{THEME_SECONDARY}; font-size: 0.7rem;')
                             ui.label(f"  Epoch: {info['epoch']}").style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
                             ui.label(f"  Val Loss: {info['val_loss']:.4f}" if isinstance(info['val_loss'], float) else f"  Val Loss: {info['val_loss']}").style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
@@ -802,7 +1200,7 @@ def analysis_page():
                     except Exception as e:
                         model_info_container.clear()
                         with model_info_container:
-                            ui.label(f"✗ Error loading model").style(f'color:{THEME_ERROR}; font-size: 0.75rem;')
+                            ui.label("✗ Error loading model").style(f'color:{THEME_ERROR}; font-size: 0.75rem;')
                         ui.notify(f'Error: {e}', type='negative')
                         analysis_log(f"Error loading model: {e}", 'error')
                         import traceback
@@ -828,8 +1226,6 @@ def analysis_page():
                 def load_dataset():
                     import torch
                     import pickle
-                    import h5py
-                    import numpy as np
                     try:
                         cache_path = Path(dataset_path_input.value.strip())
                         split = split_select.value
@@ -915,7 +1311,7 @@ def analysis_page():
                                 
                                 dataset_info_container.clear()
                                 with dataset_info_container:
-                                    ui.label(f"✓ Graph dataset loaded").style(f'color:{THEME_PRIMARY}; font-size: 0.75rem;')
+                                    ui.label("✓ Graph dataset loaded").style(f'color:{THEME_PRIMARY}; font-size: 0.75rem;')
                                     ui.label(f"  Split: {split}").style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
                                     ui.label(f"  Samples: {AS.total_samples}").style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
                                     if AS.dataset and hasattr(AS.dataset[0], 'x'):
@@ -1051,7 +1447,7 @@ def analysis_page():
                     eeg_sync_info = ui.label('Load EEG to sync').style(f'color:{THEME_TEXT_DIM}; font-family: JetBrains Mono; font-size: 0.7rem; margin-left: auto;')
                     
                     def on_sync_toggle(e):
-                        AS.eeg_sync_enabled = e.value
+                        AS.eeg_sync_enabled = e.args
                     eeg_sync_toggle.on('update:model-value', on_sync_toggle)
                 
                 # EEG File selector
@@ -1301,6 +1697,207 @@ def analysis_page():
                 kuramoto_plot = ui.plotly(make_kuramoto_fig()).classes('w-full').style('height: 145px;')
                 AS.activation_plots['kuramoto'] = kuramoto_plot
             
+            # ROW 1.5: SYNC NETWORK VISUALIZATION (Original vs Reconstructed)
+            with ui.row().classes('gap-3 w-full'):
+                # ORIGINAL SYNC NETWORK
+                with ui.card().classes('dark-card p-3 flex-1'):
+                    with ui.row().classes('items-center gap-2 mb-1'):
+                        ui.label('▌ORIGINAL SYNC').style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.75rem;')
+                        sync_threshold_slider = ui.slider(min=0.1, max=0.8, step=0.1, value=0.3).props('label-always').classes('w-24')
+                        ui.label('threshold').style(f'color:{THEME_TEXT_DIM}; font-size: 0.6rem;')
+                    
+                    def make_original_sync_fig():
+                        """Create original synchronization network visualization."""
+                        # Default empty figure
+                        if AS.current_sample is None or not hasattr(AS.current_sample, 'edge_attr'):
+                            fig = go.Figure()
+                            fig.add_annotation(
+                                text="Load sample to visualize",
+                                x=0.5, y=0.5, showarrow=False,
+                                font=dict(color=THEME_TEXT_DIM, size=10)
+                            )
+                            fig.update_layout(
+                                template='plotly_dark',
+                                paper_bgcolor='rgba(8,8,8,1)',
+                                plot_bgcolor='rgba(12,12,12,1)',
+                                height=200,
+                                margin=dict(l=5, r=5, t=10, b=5),
+                                xaxis=dict(showticklabels=False, showgrid=False),
+                                yaxis=dict(showticklabels=False, showgrid=False)
+                            )
+                            return fig
+                        
+                        # Build sync matrix from original edges
+                        batch = AS.current_sample
+                        num_nodes = batch.x.shape[0]
+                        sync_matrix = build_sync_matrix_from_edges(
+                            batch.edge_index, batch.edge_attr, num_nodes
+                        )
+                        
+                        threshold = sync_threshold_slider.value if sync_threshold_slider else 0.3
+                        return make_sync_network_fig(
+                            sync_matrix, num_nodes,
+                            title="Original PLV Network",
+                            primary_color=THEME_PRIMARY,
+                            edge_colorscale='Viridis',
+                            threshold=threshold
+                        )
+                    
+                    original_sync_plot = ui.plotly(make_original_sync_fig()).classes('w-full').style('height: 200px;')
+                    AS.activation_plots['original_sync'] = original_sync_plot
+                
+                # RECONSTRUCTED SYNC NETWORK
+                with ui.card().classes('dark-card p-3 flex-1'):
+                    with ui.row().classes('items-center gap-2 mb-1'):
+                        ui.label('▌RECONSTRUCTED SYNC').style('color:#f472b6; font-family: JetBrains Mono; font-size: 0.75rem;')
+                        ui.label('(VAE decoder)').style(f'color:{THEME_TEXT_DIM}; font-size: 0.6rem;')
+                    
+                    def make_recon_sync_fig():
+                        """Create reconstructed synchronization network visualization.
+                        
+                        Uses decoder attention weights if available (GAT decoder),
+                        otherwise falls back to edge_attr_recon.
+                        """
+                        # Default empty figure
+                        if AS.current_sample is None:
+                            fig = go.Figure()
+                            fig.add_annotation(
+                                text="No reconstruction available",
+                                x=0.5, y=0.5, showarrow=False,
+                                font=dict(color=THEME_TEXT_DIM, size=10)
+                            )
+                            fig.update_layout(
+                                template='plotly_dark',
+                                paper_bgcolor='rgba(8,8,8,1)',
+                                plot_bgcolor='rgba(12,12,12,1)',
+                                height=200,
+                                margin=dict(l=5, r=5, t=10, b=5),
+                                xaxis=dict(showticklabels=False, showgrid=False),
+                                yaxis=dict(showticklabels=False, showgrid=False)
+                            )
+                            return fig
+                        
+                        batch = AS.current_sample
+                        num_nodes = batch.x.shape[0]
+                        sync_matrix = None
+                        title_suffix = ""
+                        
+                        # Priority 1: Use decoder attention weights if available (GAT decoder)
+                        decoder_att_keys = [k for k in AS.attention_weights.keys() if k.startswith('decoder_layer_')]
+                        if decoder_att_keys:
+                            try:
+                                # Use last decoder layer attention as sync proxy
+                                last_layer_key = sorted(decoder_att_keys)[-1]
+                                att_data = AS.attention_weights[last_layer_key]
+                                
+                                # Safe conversion to numpy (handle both CPU and CUDA tensors)
+                                ei = att_data['edge_index']
+                                at = att_data['attention']
+                                edge_index = ei.detach().cpu().numpy() if hasattr(ei, 'detach') else (ei.cpu().numpy() if hasattr(ei, 'cpu') else np.array(ei))
+                                attention = at.detach().cpu().numpy() if hasattr(at, 'detach') else (at.cpu().numpy() if hasattr(at, 'cpu') else np.array(at))
+                                
+                                # Average across heads if multi-head
+                                if attention.ndim > 1:
+                                    attention = attention.mean(axis=1)
+                                
+                                # Build sync matrix from attention
+                                sync_matrix = np.zeros((num_nodes, num_nodes))
+                                for e_idx in range(edge_index.shape[1]):
+                                    src, dst = edge_index[0, e_idx], edge_index[1, e_idx]
+                                    if src < num_nodes and dst < num_nodes:
+                                        sync_matrix[int(src), int(dst)] = attention[e_idx]
+                                        sync_matrix[int(dst), int(src)] = attention[e_idx]
+                                
+                                title_suffix = " (GAT attention)"
+                            except Exception:
+                                sync_matrix = None  # Fall back to other methods
+                        
+                        # Priority 2: Use edge_attr_recon if available and has variance
+                        if sync_matrix is None and AS.current_recon is not None and 'edge_attr_recon' in AS.current_recon:
+                            recon_attr = AS.current_recon['edge_attr_recon']
+                            if hasattr(recon_attr, 'cpu'):
+                                recon_np = recon_attr.cpu().numpy()
+                            else:
+                                recon_np = recon_attr
+                            
+                            recon_std = np.std(recon_np)
+                            
+                            if recon_std >= 0.001:
+                                # Has variance - use it
+                                sync_matrix = build_sync_matrix_from_edges(
+                                    batch.edge_index, AS.current_recon['edge_attr_recon'], num_nodes,
+                                    normalize=True
+                                )
+                                title_suffix = " (edge recon)"
+                        
+                        # Handle visualization
+                        if sync_matrix is None:
+                            # No data at all - show empty with message
+                            fig = go.Figure()
+                            theta_head = np.linspace(0, 2 * np.pi, 100)
+                            fig.add_trace(go.Scatter(
+                                x=np.cos(theta_head), y=np.sin(theta_head), mode='lines',
+                                line=dict(color='rgba(244,114,182,0.4)', width=1.5), 
+                                showlegend=False, hoverinfo='skip'
+                            ))
+                            positions = generate_circular_positions(num_nodes)
+                            node_x = [positions[i][0] for i in range(num_nodes)]
+                            node_y = [positions[i][1] for i in range(num_nodes)]
+                            fig.add_trace(go.Scatter(
+                                x=node_x, y=node_y, mode='markers',
+                                marker=dict(size=8, color='#f472b6', opacity=0.5),
+                                showlegend=False, hoverinfo='skip'
+                            ))
+                            fig.add_annotation(
+                                text="No reconstruction data", x=0.5, y=0, xref='paper', yref='paper',
+                                showarrow=False, font=dict(color=THEME_TEXT_DIM, size=10)
+                            )
+                            fig.update_layout(
+                                template='plotly_dark',
+                                paper_bgcolor='rgba(8,8,8,1)',
+                                plot_bgcolor='rgba(12,12,12,1)',
+                                height=200,
+                                margin=dict(l=5, r=5, t=25, b=25),
+                                title=dict(text="Reconstructed Sync", font=dict(size=10, color='#f472b6'), x=0.5),
+                                xaxis=dict(range=[-1.2, 1.2], showgrid=False, zeroline=False, showticklabels=False, fixedrange=True),
+                                yaxis=dict(range=[-0.95, 1.15], showgrid=False, zeroline=False, showticklabels=False, fixedrange=True, scaleanchor='x')
+                            )
+                            return fig
+                        
+                        # Check if has variance
+                        has_variance = np.std(sync_matrix) > 0.001
+                        threshold = sync_threshold_slider.value if sync_threshold_slider else 0.3
+                        
+                        # If uniform, use threshold=0 to show all connections equally
+                        if not has_variance:
+                            # Set all values to 0.5 to show uniform connections
+                            sync_matrix = np.where(sync_matrix > 0, 0.5, 0)
+                            title_suffix = " ⚠uniform"
+                            threshold = 0.1  # Lower threshold to show all
+                        
+                        return make_sync_network_fig(
+                            sync_matrix, num_nodes,
+                            title=f"Recon PLV{title_suffix}",
+                            primary_color='#f472b6',
+                            edge_colorscale='RdPu',
+                            threshold=threshold
+                        )
+                    
+                    recon_sync_plot = ui.plotly(make_recon_sync_fig()).classes('w-full').style('height: 200px;')
+                    AS.activation_plots['recon_sync'] = recon_sync_plot
+                
+                # Update both plots when threshold changes
+                def on_threshold_change(e):
+                    try:
+                        original_sync_plot.figure = make_original_sync_fig()
+                        original_sync_plot.update()
+                        recon_sync_plot.figure = make_recon_sync_fig()
+                        recon_sync_plot.update()
+                    except Exception:
+                        pass
+                
+                sync_threshold_slider.on('update:model-value', on_threshold_change)
+            
             # ROW 2: ENCODER + DECODER ACTIVATIONS
             with ui.row().classes('gap-3 w-full'):
                 
@@ -1339,7 +1936,9 @@ def analysis_page():
                             act = AS.activations[layer_name]
                             channel_idx = int(channel_str.split(' ')[1]) if channel_str else 0
                             
-                            # Handle different activation shapes
+                            # Handle different activation shapes - ensure CPU before numpy
+                            if hasattr(act, 'cpu'):
+                                act = act.cpu()
                             if len(act.shape) == 4:  # [B, C, H, W]
                                 act_2d = act[0, channel_idx].numpy()
                             elif len(act.shape) == 3:  # [C, H, W]
@@ -1389,7 +1988,7 @@ def analysis_page():
                 # DECODER ACTIVATIONS
                 with ui.card().classes('dark-card p-3 flex-1'):
                     with ui.row().classes('items-center gap-2 mb-2'):
-                        ui.label('▌DECODER').style(f'color:#f472b6; font-family: JetBrains Mono; font-size: 0.75rem;')
+                        ui.label('▌DECODER').style('color:#f472b6; font-family: JetBrains Mono; font-size: 0.75rem;')
                         decoder_layer_select = ui.select([], value=None).props('dense dark').classes('w-24').style('font-size: 0.7rem;')
                         decoder_channel_select = ui.select([], value=None).props('dense dark').classes('w-20').style('font-size: 0.7rem;')
                     
@@ -1421,7 +2020,9 @@ def analysis_page():
                             act = AS.activations[layer_name]
                             channel_idx = int(channel_str.split(' ')[1]) if channel_str else 0
                             
-                            # Handle different activation shapes
+                            # Handle different activation shapes - ensure CPU before numpy
+                            if hasattr(act, 'cpu'):
+                                act = act.cpu()
                             if len(act.shape) == 4:  # [B, C, H, W]
                                 act_2d = act[0, channel_idx].numpy()
                             elif len(act.shape) == 3:  # [C, H, W]
@@ -1575,8 +2176,8 @@ def analysis_page():
                     
                     for i, (layer_name, att_data) in enumerate(AS.attention_weights.items()):
                         if 'attention' in att_data and 'edge_index' in att_data:
-                            edge_index = att_data['edge_index'].numpy()
-                            alpha = att_data['attention'].numpy()
+                            edge_index = att_data['edge_index'].detach().cpu().numpy()
+                            alpha = att_data['attention'].detach().cpu().numpy()
                             
                             # Build attention matrix from sparse edge data
                             # alpha shape: (num_edges, num_heads) - average across heads
@@ -1679,7 +2280,7 @@ def analysis_page():
                 
                 # RECONSTRUCTED
                 with ui.card().classes('dark-card p-3 flex-1'):
-                    ui.label('▌RECONSTRUCTED').style(f'color:#f472b6; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-2')
+                    ui.label('▌RECONSTRUCTED').style('color:#f472b6; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-2')
                     
                     def make_recon_fig():
                         fig = go.Figure()
@@ -1855,7 +2456,7 @@ def analysis_page():
                                 k_proxy = AS.current_kuramoto_comparison['kuramoto_proxy']
                                 k_error = AS.current_kuramoto_comparison['absolute_error']
                                 AS.kuramoto_proxy_history.append((AS.current_idx, k_proxy))
-                                ui.label(f'K. Proxy: {k_proxy:.3f} (Δ={k_error:.3f})').style(f'color:#f472b6; font-size: 0.7rem;')
+                                ui.label(f'K. Proxy: {k_proxy:.3f} (Δ={k_error:.3f})').style('color:#f472b6; font-size: 0.7rem;')
                 
                 # EEG Synchronization - simple: current_idx * epoch_duration = view_start
                 if AS.eeg_sync_enabled and AS.eeg_data is not None:
@@ -1890,6 +2491,19 @@ def analysis_page():
                     kuramoto_plot.update()
                 except Exception as e:
                     analysis_log(f"Kuramoto plot error: {e}", 'warning')
+                
+                # Update sync network visualizations (Original vs Reconstructed)
+                try:
+                    original_sync_plot.figure = make_original_sync_fig()
+                    original_sync_plot.update()
+                except Exception as e:
+                    analysis_log(f"Original sync plot error: {e}", 'warning')
+                
+                try:
+                    recon_sync_plot.figure = make_recon_sync_fig()
+                    recon_sync_plot.update()
+                except Exception as e:
+                    analysis_log(f"Recon sync plot error: {e}", 'warning')
                 
                 try:
                     # Update encoder selectors and plot

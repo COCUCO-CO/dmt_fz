@@ -20,10 +20,6 @@ from app.visualization import (
 )
 from app.visualization.figures import (
     EEGFigure,
-    FFTFigure,
-    HilbertFigure,
-    BrainFigure,
-    BaseFigure,
 )
 from app.visualization.styles import (
     THEME_PRIMARY,

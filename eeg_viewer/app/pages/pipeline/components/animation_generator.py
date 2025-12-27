@@ -449,7 +449,7 @@ class AnimationGenerator:
                                 icon='fullscreen'
                             ).props('dense flat size=sm')
             else:
-                self._log(f'ffmpeg error', THEME_ERROR)
+                self._log('ffmpeg error', THEME_ERROR)
                 
         except Exception as e:
             self._log(f'Error: {e}', THEME_ERROR)

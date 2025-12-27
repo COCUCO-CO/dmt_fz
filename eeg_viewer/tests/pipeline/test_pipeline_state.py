@@ -8,7 +8,6 @@ Tests:
 - viz_state dictionary management
 """
 
-import pytest
 import sys
 from pathlib import Path
 from datetime import datetime
@@ -484,5 +483,8 @@ class TestStateIsolation:
         
         assert "State 1 message" in state1.log_history
         assert "State 1 message" not in state2.log_history
+
+
+
 
 

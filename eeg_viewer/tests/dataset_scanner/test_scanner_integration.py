@@ -5,7 +5,6 @@ Verifies the main scanner class correctly orchestrates all detectors
 and produces complete DatasetInfo objects.
 """
 
-import pytest
 from pathlib import Path
 
 

@@ -2,7 +2,6 @@
 Tests for cleaning/ica.py - ICA decomposition and artifact detection.
 """
 
-import pytest
 import numpy as np
 
 from cleaning.ica import (
@@ -254,6 +253,9 @@ class TestGetComponentTimeseries:
         assert len(times) > 0
         assert len(data) > 0
         assert len(times) == len(data)
+
+
+
 
 
 

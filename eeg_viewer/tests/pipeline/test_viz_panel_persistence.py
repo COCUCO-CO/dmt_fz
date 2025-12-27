@@ -1,7 +1,6 @@
 """
 Tests for visualization panel state persistence.
 """
-import pytest
 import inspect
 
 
@@ -93,5 +92,8 @@ class TestAnimationGeneratorSubfolders:
         from app.pages.pipeline.components.animation_generator import AnimationGenerator
         
         assert hasattr(AnimationGenerator, '_load_subjects_from_folder')
+
+
+
 
 

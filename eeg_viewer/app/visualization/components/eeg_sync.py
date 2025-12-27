@@ -6,7 +6,6 @@ The user manually selects the EEG file - no auto-detection needed.
 """
 import logging
 from pathlib import Path
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 

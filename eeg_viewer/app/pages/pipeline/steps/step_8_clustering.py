@@ -10,7 +10,7 @@ from nicegui import ui
 from config import THEME_TEXT_DIM
 
 from app.state import PS
-from .base import BasePipelineStep, StepContext
+from .base import BasePipelineStep
 
 
 class Step8Clustering(BasePipelineStep):

@@ -14,10 +14,10 @@ from pathlib import Path
 from typing import Callable, Optional
 from nicegui import ui
 
-from config import THEME_TEXT_DIM, THEME_PRIMARY, THEME_BG, THEME_BORDER
+from config import THEME_TEXT_DIM, THEME_PRIMARY
 
 from app.state import PS
-from ..constants.step_info import STEP_INFO, get_step_by_script
+from ..constants.step_info import get_step_by_script
 from ..utils import format_dataset_metadata
 
 

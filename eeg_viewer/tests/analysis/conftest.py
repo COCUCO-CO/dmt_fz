@@ -1,6 +1,5 @@
 """Fixtures for analysis tests."""
 import pytest
-import numpy as np
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Optional, Dict, List, Any

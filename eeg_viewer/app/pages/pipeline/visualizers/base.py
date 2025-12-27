@@ -5,7 +5,7 @@ Provides common interface and functionality for all step-specific visualizers.
 """
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Any, Union
+from typing import Callable, Dict, List, Optional, Any
 import pickle
 from nicegui import ui
 

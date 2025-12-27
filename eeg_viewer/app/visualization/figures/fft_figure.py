@@ -10,7 +10,6 @@ from .base import BaseFigure, FigureFactory
 from ..styles.theme import (
     THEME_SECONDARY,
     THEME_TEXT_DIM,
-    THEME_CARD,
     FFT_HEIGHT,
     FREQ_BANDS,
     BAND_COLORS,

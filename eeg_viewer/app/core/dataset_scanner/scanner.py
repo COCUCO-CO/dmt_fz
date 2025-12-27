@@ -309,7 +309,7 @@ class DatasetScanner:
     
     def _build_split_info(self, structure: StructureInfo, best_result) -> Optional[SplitInfo]:
         """Build SplitInfo if splits are detected."""
-        if not structure.split_type in {SplitType.TRAIN_TEST, SplitType.TRAIN_VAL_TEST, SplitType.HIERARCHICAL}:
+        if structure.split_type not in {SplitType.TRAIN_TEST, SplitType.TRAIN_VAL_TEST, SplitType.HIERARCHICAL}:
             # Check detection result for splits
             if best_result and best_result.has_splits:
                 return SplitInfo(

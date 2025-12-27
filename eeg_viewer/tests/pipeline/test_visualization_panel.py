@@ -7,7 +7,6 @@ Verifies that:
 - Each step has appropriate visualizer
 - Controls update based on selected step
 """
-import pytest
 import sys
 from pathlib import Path
 import tempfile

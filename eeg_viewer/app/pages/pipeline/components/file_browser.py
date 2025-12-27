@@ -6,12 +6,10 @@ to show new files as they are generated.
 """
 from pathlib import Path
 from typing import Callable, Optional
-from datetime import datetime
 from nicegui import ui
 
 from config import THEME_PRIMARY, THEME_SECONDARY, THEME_TEXT_DIM, THEME_BG, THEME_BORDER
 
-from app.state import PS
 
 
 def format_file_size(size_bytes: int) -> str:
@@ -122,13 +120,17 @@ class FileBrowserPanel:
     
     def _refresh(self) -> None:
         """Refresh file list and stats."""
-        run_dir = self._get_run_dir()
-        
-        # Update stats
-        self._update_stats(run_dir)
-        
-        # Update file list
-        self._update_files(run_dir)
+        try:
+            run_dir = self._get_run_dir()
+            
+            # Update stats
+            self._update_stats(run_dir)
+            
+            # Update file list
+            self._update_files(run_dir)
+        except RuntimeError:
+            # Client disconnected, ignore
+            pass
     
     def _update_stats(self, run_dir: Optional[Path]) -> None:
         """Update stats badges."""

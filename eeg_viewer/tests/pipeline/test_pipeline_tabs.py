@@ -8,7 +8,6 @@ Tests:
 - Visualize tab (plot rendering)
 """
 
-import pytest
 import sys
 import psutil
 from pathlib import Path
@@ -470,5 +469,8 @@ class TestVisualizeTabClustering:
         assert len(csv_files) == 1
         assert len(png_files) == 1
         assert len(pkl_files) == 1
+
+
+
 
 

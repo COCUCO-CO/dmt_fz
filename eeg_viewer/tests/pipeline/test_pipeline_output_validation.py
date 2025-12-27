@@ -387,7 +387,7 @@ class TestMathematicalConsistency:
         # Report but don't fail for known bug - this is a data quality issue, not a test issue
         if problems:
             import warnings
-            warnings.warn(f"Syncro diagonal issues found (potential data quality problem):\n" + "\n".join(problems[:5]))
+            warnings.warn("Syncro diagonal issues found (potential data quality problem):\n" + "\n".join(problems[:5]))
     
     def test_kuramoto_is_mean_order_parameter(self, real_phases_data):
         """Kuramoto order parameter should be |mean(e^(i*phase))| across channels."""

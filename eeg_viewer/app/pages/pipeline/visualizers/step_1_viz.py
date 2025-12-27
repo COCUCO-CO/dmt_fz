@@ -278,7 +278,7 @@ class Step1Visualizer(BaseVisualizer):
                     'background: #0a0a0a; display: flex; flex-direction: column; min-height: 380px;'
                 ):
                     ui.label('▌HILBERT 2D').style(
-                        f'color: #f472b6; font-family: JetBrains Mono; font-size: 0.75rem; margin-bottom: 4px;'
+                        'color: #f472b6; font-family: JetBrains Mono; font-size: 0.75rem; margin-bottom: 4px;'
                     )
                     with ui.element('div').classes('flex-1').style('min-height: 350px;'):
                         self._render_hilbert_2d_proper(subject_data, cond)
@@ -288,7 +288,7 @@ class Step1Visualizer(BaseVisualizer):
                     'background: #0a0a0a; display: flex; flex-direction: column; min-height: 380px;'
                 ):
                     ui.label('▌HILBERT 3D PHASE SPACE').style(
-                        f'color: #c084fc; font-family: JetBrains Mono; font-size: 0.75rem; margin-bottom: 4px;'
+                        'color: #c084fc; font-family: JetBrains Mono; font-size: 0.75rem; margin-bottom: 4px;'
                     )
                     with ui.element('div').classes('flex-1').style('min-height: 350px;'):
                         self._render_hilbert_3d_proper(subject_data, cond, current_subject)

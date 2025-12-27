@@ -8,10 +8,9 @@ the expected effects, including:
 - State changes
 - Notifications
 """
-import pytest
 from pathlib import Path
 from datetime import datetime
-from unittest.mock import Mock, MagicMock, patch, AsyncMock
+from unittest.mock import Mock
 import asyncio
 import sys
 
@@ -145,7 +144,6 @@ class TestNewRunCallback:
         PIPELINE_OUTPUTS = tmp_path / "pipeline_outputs"
         PIPELINE_OUTPUTS.mkdir()
         
-        from datetime import datetime
         
         def create_new_run():
             ts = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -606,5 +604,8 @@ class TestAnimationGeneratorCallbacks:
         assert '5' in cmd
         assert '-c:v' in cmd
         assert 'libx264' in cmd
+
+
+
 
 

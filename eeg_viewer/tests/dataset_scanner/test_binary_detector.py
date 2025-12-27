@@ -1,6 +1,5 @@
 """Tests for BinaryDatasetDetector (IDX/ubyte format)."""
 
-import pytest
 import struct
 import gzip
 from pathlib import Path

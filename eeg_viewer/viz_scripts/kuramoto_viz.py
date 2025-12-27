@@ -6,7 +6,6 @@ Creates beautiful and informative plots for synchronization analysis
 import pickle
 import numpy as np
 import plotly.graph_objects as go
-import plotly.express as px
 from plotly.subplots import make_subplots
 from pathlib import Path
 

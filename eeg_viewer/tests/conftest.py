@@ -11,7 +11,7 @@ import sys
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from cleaning.state import CleaningState, CleaningStep
+from cleaning.state import CleaningState
 
 
 # Test data paths
@@ -152,6 +152,9 @@ def synthetic_raw_with_artifacts():
     raw.set_montage(montage, on_missing='ignore')
     
     return raw
+
+
+
 
 
 

@@ -199,3 +199,6 @@ def render_system_monitor_detailed():
         ui.timer(2.0, update_detailed)
 
 
+
+
+

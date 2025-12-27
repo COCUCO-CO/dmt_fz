@@ -1,7 +1,6 @@
 """
 Tests for visualizer consistency: size, quality, and loading behavior.
 """
-import pytest
 import inspect
 
 

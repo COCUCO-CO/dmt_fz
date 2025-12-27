@@ -4,11 +4,10 @@ Step 3 Visualizer: Network Filter (multi2pool2.py)
 Shows brain network separation - compact horizontal layout with Plotly.
 """
 from typing import Dict, Any
-import numpy as np
 from nicegui import ui
 import plotly.graph_objects as go
 
-from config import THEME_PRIMARY, THEME_SECONDARY, THEME_TEXT_DIM
+from config import THEME_PRIMARY, THEME_TEXT_DIM
 from .base import BaseVisualizer
 
 

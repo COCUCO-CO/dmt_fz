@@ -6,7 +6,6 @@ These tests verify that:
 - Parameters are restored when returning to pipeline page
 - Changes to parameters update PS state
 """
-import pytest
 import sys
 from pathlib import Path
 
@@ -213,5 +212,8 @@ class TestClusteringNavigationWorkflow:
             assert 'Gamma' not in PS2.bands
         finally:
             PS.bands = original
+
+
+
 
 

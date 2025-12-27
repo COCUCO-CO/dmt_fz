@@ -5,7 +5,7 @@ Handles input directory selection and run directory management.
 """
 import asyncio
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Optional
 from nicegui import ui
 
 from config import THEME_PRIMARY, THEME_SECONDARY, THEME_TEXT_DIM
@@ -147,7 +147,7 @@ class IOConfigPanel:
         # Log metadata if extracted
         metadata = result.get('metadata')
         if metadata:
-            pipeline_log(f"[INPUT] Dataset metadata:")
+            pipeline_log("[INPUT] Dataset metadata:")
             pipeline_log(f"        Frecuencia: {metadata.get('sfreq', '?')} Hz")
             pipeline_log(f"        Canales: {metadata.get('n_channels', '?')}")
             pipeline_log(f"        Duración época: {metadata.get('epoch_duration', '?')} seg")

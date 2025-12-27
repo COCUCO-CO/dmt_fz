@@ -4,12 +4,10 @@ Pipeline page main orchestrator.
 Composes all components, tabs, and steps into the complete pipeline page.
 This follows the Composition pattern - the page is built from smaller, focused components.
 """
-from pathlib import Path
 from nicegui import ui
 
-from config import THEME_BG, THEME_PRIMARY, THEME_SECONDARY, THEME_WARN, THEME_BORDER
+from config import THEME_BORDER
 from app.visualization.styles.css import STYLE
-from app.state import PS
 
 from .config import LEFT_PANEL_WIDTH
 from .runner import run_pipeline_step

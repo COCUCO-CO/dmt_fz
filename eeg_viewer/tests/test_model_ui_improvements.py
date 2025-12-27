@@ -1,6 +1,5 @@
 """Tests for Model UI improvements."""
 
-import pytest
 import numpy as np
 from pathlib import Path
 
@@ -418,5 +417,8 @@ class TestErrorHandling:
         
         result = load_sample_preview('/nonexistent/path.pkl')
         assert 'error' in result
+
+
+
 
 

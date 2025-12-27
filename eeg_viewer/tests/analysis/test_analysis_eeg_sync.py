@@ -1,5 +1,4 @@
 """Integration tests for EEG sync in analysis page."""
-import pytest
 
 
 class TestEEGSyncIntegration:

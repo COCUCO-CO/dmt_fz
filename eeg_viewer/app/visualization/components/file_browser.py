@@ -8,14 +8,13 @@ Allows browsing any directory for EEG files with:
 - File listing with load buttons
 """
 from pathlib import Path
-from typing import Callable, Optional, List, Dict
+from typing import Callable, List
 from nicegui import ui
-import os
 
 # Import theme
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
-from config import THEME_PRIMARY, THEME_SECONDARY, THEME_TEXT_DIM
+from config import THEME_PRIMARY, THEME_TEXT_DIM
 from eeg_loader import scan_eeg_directory
 
 
@@ -187,6 +186,9 @@ class FileBrowserComponent:
         """Set the paths to scan."""
         self.initial_paths = paths
         self._refresh_files()
+
+
+
 
 
 

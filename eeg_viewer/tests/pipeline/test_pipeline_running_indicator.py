@@ -6,7 +6,6 @@ These tests verify that:
 - Running state persists when navigating away and back
 - State is NOT reset when returning to pipeline page while task is running
 """
-import pytest
 from datetime import datetime
 from unittest.mock import Mock
 import sys

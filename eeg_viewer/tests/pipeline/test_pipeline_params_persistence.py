@@ -6,10 +6,8 @@ These tests verify that:
 - Parameters are restored when returning to pipeline page
 - Changes to parameters update PS state
 """
-import pytest
 import sys
 from pathlib import Path
-from unittest.mock import Mock
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
@@ -351,5 +349,8 @@ class TestInputDirPersistence:
             assert str(PS.input_dir) == '/media/storage/test/EEG_CLEAN'
         finally:
             PS.input_dir = original
+
+
+
 
 

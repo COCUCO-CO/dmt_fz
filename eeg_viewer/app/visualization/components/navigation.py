@@ -4,10 +4,10 @@ Navigation controls component for EEG viewer.
 Provides reusable navigation buttons and time controls.
 """
 from __future__ import annotations
-from typing import Callable, Optional, TYPE_CHECKING
+from typing import Callable, Optional
 from nicegui import ui
 
-from ..styles.theme import THEME_PRIMARY, THEME_CARD, THEME_BORDER
+from ..styles.theme import THEME_PRIMARY
 
 
 class NavigationControls:

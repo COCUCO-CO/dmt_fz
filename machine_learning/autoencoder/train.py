@@ -338,12 +338,28 @@ def evaluate(model: nn.Module,
 
 
 def main(config_path: str, force_rebuild: bool = False,
-         subsample_fraction: float = 1.0, normalize: bool = True):
-    """Main training function."""
+         subsample_fraction: float = 1.0, normalize: bool = True,
+         num_workers_override: int = None, dataset_workers_override: int = None):
+    """Main training function.
+    
+    Args:
+        config_path: Path to config YAML file
+        force_rebuild: Force rebuild dataset cache
+        subsample_fraction: Fraction of data to use (0.0-1.0)
+        normalize: Whether to normalize features
+        num_workers_override: Override num_workers for DataLoader
+        dataset_workers_override: Override workers for dataset building
+    """
     
     # Load configuration
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
+    
+    # Apply worker overrides if provided (before logging setup)
+    if num_workers_override is not None:
+        config['num_workers'] = num_workers_override
+    if dataset_workers_override is not None:
+        config['dataset_workers'] = dataset_workers_override
     
     # Create output directories
     output_dir = Path(config['paths']['output_dir'])
@@ -374,6 +390,7 @@ def main(config_path: str, force_rebuild: bool = False,
     logger.info("Loading datasets...")
     
     dataset_workers = config.get('dataset_workers', None)
+    logger.info(f"Using {dataset_workers} workers for dataset building")
     
     train_graphs, val_graphs, test_graphs = create_dataset_from_config(
         config, 
@@ -405,8 +422,9 @@ def main(config_path: str, force_rebuild: bool = False,
     
     # Create data loaders
     batch_size = config['training']['batch_size']
-    num_workers = config['num_workers']
-    pin_memory = config['pin_memory']
+    num_workers = config.get('num_workers', 4)
+    pin_memory = config.get('pin_memory', True)
+    logger.info(f"DataLoader: batch_size={batch_size}, num_workers={num_workers}, pin_memory={pin_memory}")
     
     train_loader = DataLoader(
         train_graphs,
@@ -785,10 +803,16 @@ if __name__ == '__main__':
                        help='Fraction of dataset to use (0.0-1.0). Default: 1.0 (all)')
     parser.add_argument('--no-normalize', action='store_true',
                        help='Disable feature normalization')
+    parser.add_argument('--workers', type=int, default=None,
+                       help='Number of workers for data loading. Overrides config value.')
+    parser.add_argument('--dataset-workers', type=int, default=None,
+                       help='Number of workers for dataset building. Overrides config value.')
     
     args = parser.parse_args()
     
     main(args.config, args.force_rebuild, 
          subsample_fraction=args.subsample,
-         normalize=not args.no_normalize)
+         normalize=not args.no_normalize,
+         num_workers_override=args.workers,
+         dataset_workers_override=args.dataset_workers)
 

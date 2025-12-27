@@ -6,7 +6,6 @@ Verifies that:
 - Auto-refresh detects new files
 - File counts update correctly
 """
-import pytest
 import sys
 import tempfile
 from pathlib import Path
@@ -141,5 +140,8 @@ class TestFileBrowserFormatting:
         from app.pages.pipeline.components.file_browser import format_file_size
         result = format_file_size(5_000_000)
         assert 'MB' in result or 'M' in result
+
+
+
 
 

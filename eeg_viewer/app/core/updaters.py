@@ -5,11 +5,11 @@ Eliminates code duplication between EEG1 and EEG2 by using parameters
 instead of separate functions.
 """
 from __future__ import annotations
-from typing import TYPE_CHECKING, Optional, List, Dict, Any
+from typing import TYPE_CHECKING, Optional, List, Dict
 import numpy as np
 import plotly.graph_objects as go
 
-from .signal import process_data, compute_fft, compute_hilbert
+from .signal import compute_fft, compute_hilbert
 
 if TYPE_CHECKING:
     from nicegui.elements.plotly import Plotly

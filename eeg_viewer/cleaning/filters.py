@@ -5,10 +5,9 @@ Provides filtering functions and presets for EEG preprocessing.
 """
 
 from dataclasses import dataclass
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple
 from enum import Enum
 import numpy as np
-from scipy import signal
 import mne
 
 

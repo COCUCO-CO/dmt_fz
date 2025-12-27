@@ -6,13 +6,13 @@ Visualizes PLV synchronization matrices:
 - Show matrices side by side (up to 3)
 - Stats and histogram below each matrix
 """
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, Optional
 import numpy as np
 from nicegui import ui
 import io
 import base64
 
-from config import THEME_PRIMARY, THEME_SECONDARY, THEME_TEXT_DIM, THEME_WARN
+from config import THEME_TEXT_DIM, THEME_WARN
 from .base import BaseVisualizer, extract_event_value
 
 
@@ -160,7 +160,6 @@ class Step4Visualizer(BaseVisualizer):
     def _load_condition_data(self, subject: str, condition: str) -> Optional[dict]:
         """Load data for a specific subject-condition pair - FAST direct path."""
         import pickle
-        from pathlib import Path
         
         cache_key = f"{subject}-{condition}"
         if cache_key in self._loaded_data_by_condition:

@@ -6,7 +6,6 @@ Verifies that:
 - System monitor is available globally (not just in pipeline)
 - Stats update periodically
 """
-import pytest
 import sys
 from pathlib import Path
 
@@ -86,5 +85,8 @@ class TestSystemMonitorFormatting:
         assert stats['mem_total_gb'] > 0
         assert stats['mem_used_gb'] >= 0
         assert stats['mem_used_gb'] <= stats['mem_total_gb']
+
+
+
 
 

@@ -1,14 +1,12 @@
 """Model training page."""
 from pathlib import Path
 import asyncio
-import subprocess
-import json
+import signal
 import sys
 import os
 import re
-import yaml
 import numpy as np
-from nicegui import ui
+from nicegui import ui, background_tasks
 import plotly.graph_objects as go
 
 from config import (
@@ -17,7 +15,6 @@ from config import (
 )
 from app.state import MS
 from app.visualization.styles.css import STYLE
-from app.visualization.components.running_indicator import render_running_indicator
 from app.visualization.components.global_header import render_global_header
 from app.core.dataset_scanner import DatasetScanner
 from app.core.dataset_scanner.models import DatasetType
@@ -169,39 +166,143 @@ def detect_dataset_type(path: Path) -> dict:
 
 
 def model_log(msg: str, msg_type: str = 'info'):
-    """Add message to model training log - persists even when tab switches."""
+    """Add message to model training log - persists even when tab switches.
+    
+    NOTE: This function only stores logs in history. The UI is updated
+    by a timer that polls this history, which handles page switches gracefully.
+    """
     # Store in history for persistence
     MS.log_history.append((msg, msg_type))
     # Keep only last 500 messages
     if len(MS.log_history) > 500:
         MS.log_history = MS.log_history[-500:]
     
-    # Try to update UI if container exists and client is connected
-    if MS.log_container:
-        try:
-            colors = {
-                'info': THEME_TEXT,
-                'success': THEME_PRIMARY,
-                'warning': THEME_WARN,
-                'error': THEME_ERROR
-            }
-            with MS.log_container:
-                # Add line break before major sections
-                if any(x in msg for x in ['Starting', 'Training completed', '====', 'Epoch 001 ']):
-                    ui.label('').style('height: 8px;')
-                ui.label(msg).style(f'color:{colors.get(msg_type, THEME_TEXT)}; font-family: JetBrains Mono; font-size: 0.75rem;')
-            
-            # Auto-scroll to bottom
-            if hasattr(MS, 'log_scroll') and MS.log_scroll:
-                MS.log_scroll.scroll_to(percent=1.0)
-        except RuntimeError:
-            # Client disconnected (tab switched), log is still stored in history
-            pass
+    # Track last displayed count for polling
+    if not hasattr(MS, '_last_log_count'):
+        MS._last_log_count = 0
 
 
 def update_status_indicator(status: str):
     """Update the training status (used by global indicator)."""
     MS.status = status
+
+
+async def _run_training_background(cmd: list, env: dict, cwd: str):
+    """Background task to run training subprocess.
+    
+    This runs independently of the client connection, so it continues
+    even when the user navigates away from the model page.
+    """
+    epoch_pattern = re.compile(r'Epoch (\d+).*Loss: ([\d.]+).*Recon: ([\d.]+).*KL: ([\d.]+)')
+    val_pattern = re.compile(r'Epoch \d+.*\[val\].*Loss: ([\d.]+)')
+    
+    process = None
+    try:
+        # Start subprocess with new process group for clean termination
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            env=env,
+            cwd=cwd,
+            start_new_session=True  # Create new process group
+        )
+        MS.current_process = process
+        
+        # Read output line by line with timeout to prevent blocking
+        buffer = ""
+        while True:
+            try:
+                # Read chunks with small timeout
+                try:
+                    chunk = await asyncio.wait_for(
+                        process.stdout.read(1024),
+                        timeout=0.1
+                    )
+                except asyncio.TimeoutError:
+                    # Check if process is still running
+                    if process.returncode is not None:
+                        break
+                    continue
+                
+                if not chunk:
+                    # Process any remaining buffer
+                    if buffer.strip():
+                        model_log(buffer.strip(), 'info')
+                    break
+                
+                # Add to buffer and process complete lines
+                buffer += chunk.decode('utf-8', errors='replace')
+                while '\n' in buffer:
+                    line, buffer = buffer.split('\n', 1)
+                    line = line.strip()
+                    if line:
+                        model_log(line, 'info')
+                        
+                        # Parse training metrics
+                        epoch_match = epoch_pattern.search(line)
+                        if epoch_match and '[train]' in line:
+                            epoch = int(epoch_match.group(1))
+                            loss = float(epoch_match.group(2))
+                            recon = float(epoch_match.group(3))
+                            kl = float(epoch_match.group(4))
+                            
+                            MS.history['epoch'].append(epoch)
+                            MS.history['train_loss'].append(loss)
+                            MS.history['recon_loss'].append(recon)
+                            MS.history['kl_loss'].append(kl)
+                        
+                        val_match = val_pattern.search(line)
+                        if val_match:
+                            val_loss = float(val_match.group(1))
+                            MS.history['val_loss'].append(val_loss)
+                
+                # Also process carriage returns (for tqdm)
+                while '\r' in buffer and '\n' not in buffer:
+                    line, buffer = buffer.split('\r', 1)
+                    line = line.strip()
+                    if line:
+                        model_log(line, 'info')
+                        
+            except asyncio.CancelledError:
+                raise  # Re-raise to handle in outer except
+        
+        await process.wait()
+        
+        if process.returncode == 0:
+            model_log("Training completed successfully!", 'success')
+            update_status_indicator('completed')
+        elif process.returncode == -signal.SIGTERM or process.returncode == -signal.SIGKILL:
+            # Process was terminated by us
+            pass
+        else:
+            model_log(f"Training failed with code {process.returncode}", 'error')
+            update_status_indicator('error')
+    
+    except asyncio.CancelledError:
+        model_log("Training task cancelled", 'warning')
+        update_status_indicator('idle')
+        # Kill entire process group to stop workers too
+        if process and process.returncode is None:
+            try:
+                os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+            except (ProcessLookupError, OSError):
+                pass
+    
+    except Exception as e:
+        model_log(f"Error: {e}", 'error')
+        update_status_indicator('error')
+        # Try to kill process on error
+        if process and process.returncode is None:
+            try:
+                process.kill()
+            except (ProcessLookupError, OSError):
+                pass
+    
+    finally:
+        MS.training = False
+        MS.running_task_name = ""
+        MS.current_process = None
 
 
 def create_default_config(dataset_path: str, dataset_info: dict) -> dict:
@@ -215,8 +316,8 @@ def create_default_config(dataset_path: str, dataset_info: dict) -> dict:
             'tensorboard': str(AUTOENCODER_CACHE_DIR / 'runs'),
         },
         'data': {
-            # Use detected conditions, or fallback to default if empty
-            'conditions': dataset_info.get('conditions') or dataset_info.get('classes') or ['DMT', 'EC', 'EO'],
+            # Use detected conditions from dataset scan (no hardcoded fallback)
+            'conditions': dataset_info.get('conditions') or dataset_info.get('classes') or [],
             'bands': dataset_info.get('bands') or ['Delta', 'Theta', 'Alpha', 'Beta', 'Gamma'],
             'use_stc': dataset_info.get('has_stc', False),
             'graph': {
@@ -360,13 +461,15 @@ def model_page():
         with ui.column().classes('gap-4').style('width: 400px; overflow-y: auto;'):
             
             # DATASET CONFIGURATION
-            with ui.card().classes('dark-card p-4 w-full').style(f'border: 1px solid #f472b6;'):
+            with ui.card().classes('dark-card p-4 w-full').style('border: 1px solid #f472b6;'):
                 ui.label('// DATASET').classes('terminal-header')
                 
+                # Restore dataset path from state if available
+                default_path = MS.dataset_path if MS.dataset_path else '/media/storage_hdd/dmt_fz/fwd-inv-stc'
                 with ui.row().classes('items-center gap-2 mt-2 w-full'):
                     ui.label('Path:').style(f'color:{THEME_TEXT_DIM}; font-family: JetBrains Mono; font-size: 0.75rem; min-width: 50px;')
                     dataset_path_input = ui.input(
-                        value='/media/storage_hdd/dmt_fz/fwd-inv-stc'
+                        value=default_path
                     ).props('dense dark').classes('flex-1')
                 
                 dataset_info_container = ui.column().classes('w-full mt-2 gap-1')
@@ -518,7 +621,7 @@ def model_page():
                         else:
                             source_info_label.text = "No EEG/STC data found"
                 
-                ui.button('Scan Dataset', on_click=scan_dataset, icon='search').props('dense').classes('mt-2').style(f'background:#f472b6; color:black;')
+                ui.button('Scan Dataset', on_click=scan_dataset, icon='search').props('dense').classes('mt-2').style('background:#f472b6; color:black;')
                 
                 # Data Preview Panel (appears after scan)
                 data_preview_container = ui.column().classes('w-full mt-2')
@@ -618,35 +721,48 @@ def model_page():
                     ui.label('Source:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.75rem; min-width: 50px;')
                     data_source_select = ui.select(
                         ['EEG (channels)', 'STC (parcels)'],
-                        value='EEG (channels)'
+                        value=MS.ui_params.get('data_source', 'EEG (channels)')
                     ).props('dense dark').classes('flex-1')
+                    data_source_select.on_value_change(lambda e: MS.ui_params.update({'data_source': e.value}))
                 
                 source_info_label = ui.label('Scan dataset to see channel info').style(f'color:{THEME_TEXT_DIM}; font-size: 0.6rem;')
                 
-                # Band selection
+                # Band selection (restore from state)
                 ui.separator().classes('my-2')
                 ui.label('Bands to use:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.75rem;')
                 with ui.row().classes('gap-2 flex-wrap'):
                     band_checks = {}
                     for band in ['Delta', 'Theta', 'Alpha', 'Beta', 'Gamma']:
-                        band_checks[band] = ui.checkbox(band, value=(band == 'Alpha')).props('dense')
+                        band_val = MS.ui_params.get('bands', {}).get(band, band == 'Alpha')
+                        band_checks[band] = ui.checkbox(band, value=band_val).props('dense')
+                        # Save on change
+                        band_checks[band].on_value_change(
+                            lambda e, b=band: MS.ui_params['bands'].update({b: e.value})
+                        )
                 
                 ui.label('Tip: Start with 1-2 bands for faster training').style(f'color:{THEME_TEXT_DIM}; font-size: 0.6rem;')
                 
-                # Subsample option
+                # Subsample option (restore from state)
+                subsample_val = MS.ui_params.get('subsample', 0.3)
                 with ui.row().classes('items-center gap-2 mt-2 w-full'):
                     ui.label('Subsample:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.75rem; min-width: 70px;')
-                    subsample_slider = ui.slider(min=0.1, max=1.0, step=0.1, value=0.3).classes('flex-1')
-                    subsample_label = ui.label('0.3').style(f'color:{THEME_PRIMARY}; font-size: 0.75rem; min-width: 30px; text-align: right;')
+                    subsample_slider = ui.slider(min=0.1, max=1.0, step=0.1, value=subsample_val).classes('flex-1')
+                    subsample_label = ui.label(f'{subsample_val:.1f}').style(f'color:{THEME_PRIMARY}; font-size: 0.75rem; min-width: 30px; text-align: right;')
                 
-                # Use value from event args directly for immediate sync
-                subsample_slider.on_value_change(lambda e: subsample_label.set_text(f'{e.value:.1f}'))
+                def on_subsample_change(e):
+                    subsample_label.set_text(f'{e.value:.1f}')
+                    MS.ui_params['subsample'] = e.value
+                subsample_slider.on_value_change(on_subsample_change)
                 
                 ui.label('Use 0.1-0.3 for quick tests, 1.0 for full training').style(f'color:{THEME_TEXT_DIM}; font-size: 0.6rem;')
             
             # MODEL CONFIGURATION
             with ui.card().classes('dark-card p-4 w-full'):
                 ui.label('// MODEL CONFIG').classes('terminal-header')
+                
+                # Helper to save params on change
+                def save_param(key):
+                    return lambda e: MS.ui_params.update({key: e.value})
                 
                 with ui.column().classes('gap-1 mt-2'):
                     # Model type selector
@@ -659,26 +775,32 @@ def model_page():
                     
                     ui.separator().classes('my-1')
                     
-                    # Architecture params
+                    # Architecture params (restored from state)
                     ui.label('Architecture').style(f'color:{THEME_SECONDARY}; font-size: 0.65rem;')
                     
                     with ui.row().classes('items-center gap-2'):
                         ui.label('Latent:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem; min-width: 70px;')
-                        latent_dim = ui.number(value=64, min=8, max=512, step=8).props('dense').classes('w-16')
+                        latent_dim = ui.number(value=MS.ui_params.get('latent_dim', 64), min=8, max=512, step=8).props('dense').classes('w-16')
+                        latent_dim.on_value_change(save_param('latent_dim'))
                         ui.label('Hidden:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
-                        hidden_dim = ui.number(value=64, min=16, max=256, step=16).props('dense').classes('w-16')
+                        hidden_dim = ui.number(value=MS.ui_params.get('hidden_dim', 64), min=16, max=256, step=16).props('dense').classes('w-16')
+                        hidden_dim.on_value_change(save_param('hidden_dim'))
                     
                     with ui.row().classes('items-center gap-2'):
                         ui.label('GAT layers:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem; min-width: 70px;')
-                        gat_layers = ui.number(value=3, min=1, max=6).props('dense').classes('w-16')
+                        gat_layers = ui.number(value=MS.ui_params.get('gat_layers', 3), min=1, max=6).props('dense').classes('w-16')
+                        gat_layers.on_value_change(save_param('gat_layers'))
                         ui.label('Heads:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
-                        attention_heads = ui.number(value=4, min=1, max=8).props('dense').classes('w-16')
+                        attention_heads = ui.number(value=MS.ui_params.get('attention_heads', 4), min=1, max=8).props('dense').classes('w-16')
+                        attention_heads.on_value_change(save_param('attention_heads'))
                     
                     with ui.row().classes('items-center gap-2'):
                         ui.label('Dropout:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem; min-width: 70px;')
-                        dropout = ui.number(value=0.2, min=0.0, max=0.5, step=0.05).props('dense').classes('w-16')
+                        dropout = ui.number(value=MS.ui_params.get('dropout', 0.2), min=0.0, max=0.5, step=0.05).props('dense').classes('w-16')
+                        dropout.on_value_change(save_param('dropout'))
                         ui.label('Attn drop:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
-                        attn_dropout = ui.number(value=0.1, min=0.0, max=0.3, step=0.05).props('dense').classes('w-16')
+                        attn_dropout = ui.number(value=MS.ui_params.get('attn_dropout', 0.1), min=0.0, max=0.3, step=0.05).props('dense').classes('w-16')
+                        attn_dropout.on_value_change(save_param('attn_dropout'))
                     
                     ui.separator().classes('my-1')
                     
@@ -687,12 +809,14 @@ def model_page():
                     
                     with ui.row().classes('items-center gap-2'):
                         ui.label('Dec GAT:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem; min-width: 70px;')
-                        decoder_gat_layers = ui.number(value=0, min=0, max=4).props('dense').classes('w-16')
+                        decoder_gat_layers = ui.number(value=MS.ui_params.get('decoder_gat_layers', 0), min=0, max=4).props('dense').classes('w-16')
+                        decoder_gat_layers.on_value_change(save_param('decoder_gat_layers'))
                         ui.label('(0=MLP)').style(f'color:{THEME_TEXT_DIM}; font-size: 0.55rem;')
                     
                     with ui.row().classes('items-center gap-2'):
                         ui.label('Dec dims:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem; min-width: 70px;')
-                        decoder_hidden_dims = ui.input(value='256,128').props('dense').classes('w-24')
+                        decoder_hidden_dims = ui.input(value=MS.ui_params.get('decoder_hidden_dims', '256,128')).props('dense').classes('w-24')
+                        decoder_hidden_dims.on_value_change(save_param('decoder_hidden_dims'))
                     
                     ui.separator().classes('my-1')
                     
@@ -701,33 +825,39 @@ def model_page():
                     
                     with ui.row().classes('items-center gap-2'):
                         ui.label('Epochs:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem; min-width: 70px;')
-                        num_epochs = ui.number(value=100, min=10, max=500, step=10).props('dense').classes('w-16')
+                        num_epochs = ui.number(value=MS.ui_params.get('num_epochs', 100), min=10, max=500, step=10).props('dense').classes('w-16')
+                        num_epochs.on_value_change(save_param('num_epochs'))
                         ui.label('Batch:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
-                        batch_size = ui.number(value=256, min=16, max=1024, step=16).props('dense').classes('w-16')
+                        batch_size = ui.number(value=MS.ui_params.get('batch_size', 256), min=16, max=1024, step=16).props('dense').classes('w-16')
+                        batch_size.on_value_change(save_param('batch_size'))
                     
                     with ui.row().classes('items-center gap-2'):
                         ui.label('Learn rate:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem; min-width: 70px;')
                         learning_rate = ui.select(
                             ['1e-2', '5e-3', '1e-3', '5e-4', '1e-4'],
-                            value='1e-3'
+                            value=MS.ui_params.get('learning_rate', '1e-3')
                         ).props('dense dark').classes('w-20')
+                        learning_rate.on_value_change(save_param('learning_rate'))
                         ui.label('Decay:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
                         weight_decay = ui.select(
                             ['0', '1e-5', '1e-4', '1e-3'],
-                            value='1e-5'
+                            value=MS.ui_params.get('weight_decay', '1e-5')
                         ).props('dense dark').classes('w-20')
+                        weight_decay.on_value_change(save_param('weight_decay'))
                     
                     with ui.row().classes('items-center gap-2'):
                         ui.label('Optimizer:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem; min-width: 70px;')
                         optimizer_select = ui.select(
                             ['adamw', 'adam', 'sgd'],
-                            value='adamw'
+                            value=MS.ui_params.get('optimizer', 'adamw')
                         ).props('dense dark').classes('w-20')
+                        optimizer_select.on_value_change(save_param('optimizer'))
                         ui.label('Scheduler:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
                         scheduler_select = ui.select(
                             ['cosine', 'reduce_on_plateau', 'step', 'none'],
-                            value='cosine'
+                            value=MS.ui_params.get('scheduler', 'cosine')
                         ).props('dense dark').classes('w-24')
+                        scheduler_select.on_value_change(save_param('scheduler'))
                     
                     ui.separator().classes('my-1')
                     
@@ -736,9 +866,11 @@ def model_page():
                     
                     with ui.row().classes('items-center gap-2'):
                         ui.label('Patience:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem; min-width: 70px;')
-                        patience = ui.number(value=25, min=5, max=100, step=5).props('dense').classes('w-16')
+                        patience = ui.number(value=MS.ui_params.get('patience', 25), min=5, max=100, step=5).props('dense').classes('w-16')
+                        patience.on_value_change(save_param('patience'))
                         ui.label('Grad clip:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
-                        grad_clip = ui.number(value=0.5, min=0.0, max=5.0, step=0.1).props('dense').classes('w-16')
+                        grad_clip = ui.number(value=MS.ui_params.get('grad_clip', 0.5), min=0.0, max=5.0, step=0.1).props('dense').classes('w-16')
+                        grad_clip.on_value_change(save_param('grad_clip'))
                     
                     ui.separator().classes('my-1')
                     
@@ -747,21 +879,60 @@ def model_page():
                     
                     with ui.row().classes('items-center gap-2'):
                         ui.label('KL weight:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem; min-width: 70px;')
-                        kl_weight = ui.number(value=0.01, min=0.0, max=1.0, step=0.01).props('dense').classes('w-16')
+                        kl_weight = ui.number(value=MS.ui_params.get('kl_weight', 0.01), min=0.0, max=1.0, step=0.01).props('dense').classes('w-16')
+                        kl_weight.on_value_change(save_param('kl_weight'))
                         ui.label('β anneal:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
-                        beta_annealing = ui.switch(value=True).props('dense')
+                        beta_annealing = ui.switch(value=MS.ui_params.get('beta_annealing', True)).props('dense')
+                        beta_annealing.on_value_change(save_param('beta_annealing'))
                     
                     with ui.row().classes('items-center gap-2'):
                         ui.label('Node wt:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem; min-width: 70px;')
-                        node_weight = ui.number(value=0.3, min=0.0, max=1.0, step=0.1).props('dense').classes('w-16')
+                        node_weight = ui.number(value=MS.ui_params.get('node_weight', 0.3), min=0.0, max=1.0, step=0.1).props('dense').classes('w-16')
+                        node_weight.on_value_change(save_param('node_weight'))
                         ui.label('Edge wt:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
-                        edge_weight = ui.number(value=1.0, min=0.0, max=2.0, step=0.1).props('dense').classes('w-16')
+                        edge_weight = ui.number(value=MS.ui_params.get('edge_weight', 1.0), min=0.0, max=2.0, step=0.1).props('dense').classes('w-16')
+                        edge_weight.on_value_change(save_param('edge_weight'))
+                    
+                    ui.separator().classes('my-1')
+                    
+                    # Workers (parallelization)
+                    ui.label('Parallelization').style(f'color:{THEME_SECONDARY}; font-size: 0.65rem;')
+                    
+                    with ui.row().classes('items-center gap-2'):
+                        ui.label('Workers:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem; min-width: 70px;')
+                        num_workers = ui.number(value=MS.ui_params.get('num_workers', 4), min=0, max=32, step=1).props('dense').classes('w-16')
+                        num_workers.on_value_change(save_param('num_workers'))
+                        ui.label('Dataset:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
+                        dataset_workers = ui.number(value=MS.ui_params.get('dataset_workers', 8), min=1, max=32, step=1).props('dense').classes('w-16')
+                        dataset_workers.on_value_change(save_param('dataset_workers'))
+                    
+                    ui.label('Workers=0 uses main thread. Dataset workers for building graphs.').style(f'color:{THEME_TEXT_DIM}; font-size: 0.55rem;')
             
             # TRAINING CONTROLS
             with ui.card().classes('dark-card p-4 w-full'):
                 ui.label('// TRAINING').classes('terminal-header')
                 
-                training_status = ui.label('Ready').style(f'color:{THEME_TEXT_DIM}; font-size: 0.75rem;').classes('mt-2')
+                # Initialize status based on current state
+                initial_status = 'Training...' if MS.training else MS.status.title() if MS.status != 'idle' else 'Ready'
+                initial_color = THEME_PRIMARY if MS.training else (THEME_PRIMARY if MS.status == 'completed' else THEME_TEXT_DIM)
+                training_status = ui.label(initial_status).style(f'color:{initial_color}; font-size: 0.75rem;').classes('mt-2')
+                
+                # Timer to sync training status
+                def poll_training_status():
+                    try:
+                        if MS.training:
+                            training_status.text = 'Training...'
+                            training_status.style(f'color:{THEME_PRIMARY}; font-size: 0.75rem;')
+                        elif MS.status == 'completed':
+                            training_status.text = 'Completed'
+                            training_status.style(f'color:{THEME_PRIMARY}; font-size: 0.75rem;')
+                        elif MS.status == 'error':
+                            training_status.text = 'Error'
+                            training_status.style(f'color:{THEME_ERROR}; font-size: 0.75rem;')
+                    except Exception:
+                        pass
+                
+                ui.timer(1.0, poll_training_status)
                 
                 with ui.row().classes('gap-2 mt-3'):
                     async def start_training():
@@ -816,6 +987,13 @@ def model_page():
                         MS.config['data']['use_stc'] = use_stc
                         model_log(f"Using {'STC (parcels)' if use_stc else 'EEG (channels)'} data", 'info')
                         
+                        # Validate conditions were detected
+                        conditions = MS.config['data'].get('conditions', [])
+                        if not conditions:
+                            ui.notify('No conditions detected in dataset. Check directory structure.', type='error')
+                            return
+                        model_log(f"Conditions: {', '.join(conditions)}", 'info')
+                        
                         # Set selected bands
                         selected_bands = [band for band, cb in band_checks.items() if cb.value]
                         if not selected_bands:
@@ -861,122 +1039,70 @@ def model_page():
                         MS.running_task_name = 'train.py'  # For global indicator
                         MS.history = {'train_loss': [], 'val_loss': [], 'recon_loss': [], 'kl_loss': [], 'epoch': []}
                         MS.log_history = []  # Clear log history
+                        MS._last_log_count = 0  # Reset log polling counter
+                        MS._last_epoch_count = 0  # Reset epoch polling counter
                         
-                        # Clear previous logs and reset plot
+                        # Update status indicator
+                        update_status_indicator('training')
+                        
                         try:
-                            if MS.log_container:
-                                MS.log_container.clear()
-                            update_loss_plot()  # Reset the plot with empty data
-                            
-                            # Update status indicator
-                            update_status_indicator('training')
-                            
                             training_status.text = 'Training...'
                             training_status.style(f'color:{THEME_PRIMARY}; font-size: 0.75rem;')
-                        except RuntimeError:
+                        except Exception:
                             pass
                         model_log(f"Starting training with config: {config_path}", 'info')
                         
-                        # Run training in subprocess
-                        import subprocess
+                        # Get worker settings
+                        n_workers = int(num_workers.value) if num_workers.value else 4
+                        n_dataset_workers = int(dataset_workers.value) if dataset_workers.value else 8
+                        model_log(f"Workers: DataLoader={n_workers}, Dataset={n_dataset_workers}", 'info')
+                        
+                        # Prepare command and environment
                         cmd = [
                             sys.executable,
                             '-u',  # Unbuffered output - critical for real-time logs
                             str(AUTOENCODER_DIR / 'train.py'),
                             '--config', str(config_path),
-                            '--subsample', str(subsample_slider.value)
+                            '--subsample', str(subsample_slider.value),
+                            '--workers', str(n_workers),
+                            '--dataset-workers', str(n_dataset_workers),
                         ]
                         
                         env = os.environ.copy()
                         env['PYTHONPATH'] = str(AUTOENCODER_DIR.parent)
                         env['PYTHONUNBUFFERED'] = '1'  # Force unbuffered output
                         
-                        try:
-                            process = await asyncio.create_subprocess_exec(
-                                *cmd,
-                                stdout=asyncio.subprocess.PIPE,
-                                stderr=asyncio.subprocess.STDOUT,
-                                env=env,
-                                cwd=str(AUTOENCODER_DIR)
-                            )
-                            MS.current_process = process
-                            
-                            # Read output line by line
-                            epoch_pattern = re.compile(r'Epoch (\d+).*Loss: ([\d.]+).*Recon: ([\d.]+).*KL: ([\d.]+)')
-                            val_pattern = re.compile(r'Epoch \d+.*\[val\].*Loss: ([\d.]+)')
-                            
-                            while True:
-                                line = await process.stdout.readline()
-                                if not line:
-                                    break
-                                line = line.decode('utf-8', errors='replace').strip()
-                                if line:
-                                    model_log(line, 'info')
-                                    
-                                    # Parse training metrics
-                                    epoch_match = epoch_pattern.search(line)
-                                    if epoch_match and '[train]' in line:
-                                        epoch = int(epoch_match.group(1))
-                                        loss = float(epoch_match.group(2))
-                                        recon = float(epoch_match.group(3))
-                                        kl = float(epoch_match.group(4))
-                                        
-                                        MS.history['epoch'].append(epoch)
-                                        MS.history['train_loss'].append(loss)
-                                        MS.history['recon_loss'].append(recon)
-                                        MS.history['kl_loss'].append(kl)
-                                        
-                                        # Update loss plot (may fail if tab switched)
-                                        try:
-                                            update_loss_plot()
-                                        except RuntimeError:
-                                            pass
-                                    
-                                    val_match = val_pattern.search(line)
-                                    if val_match:
-                                        val_loss = float(val_match.group(1))
-                                        MS.history['val_loss'].append(val_loss)
-                                        try:
-                                            update_loss_plot()
-                                        except RuntimeError:
-                                            pass
-                            
-                            await process.wait()
-                            
-                            if process.returncode == 0:
-                                model_log("Training completed successfully!", 'success')
-                                try:
-                                    training_status.text = 'Completed'
-                                    training_status.style(f'color:{THEME_PRIMARY}; font-size: 0.75rem;')
-                                    update_status_indicator('completed')
-                                except RuntimeError:
-                                    pass
-                            else:
-                                model_log(f"Training failed with code {process.returncode}", 'error')
-                                try:
-                                    training_status.text = 'Failed'
-                                    training_status.style(f'color:{THEME_ERROR}; font-size: 0.75rem;')
-                                    update_status_indicator('error')
-                                except RuntimeError:
-                                    pass
-                        
-                        except Exception as e:
-                            model_log(f"Error: {e}", 'error')
-                            try:
-                                training_status.text = 'Error'
-                                training_status.style(f'color:{THEME_ERROR}; font-size: 0.75rem;')
-                                update_status_indicator('error')
-                            except RuntimeError:
-                                pass
-                        
-                        finally:
-                            MS.training = False
-                            MS.running_task_name = ""
-                            MS.current_process = None
+                        # Run training as background task (continues even when navigating away)
+                        background_tasks.create(
+                            _run_training_background(cmd, env, str(AUTOENCODER_DIR))
+                        )
                     
                     async def stop_training():
                         if MS.current_process:
-                            MS.current_process.terminate()
+                            try:
+                                # Kill entire process group (terminates all child workers)
+                                try:
+                                    pgid = os.getpgid(MS.current_process.pid)
+                                    os.killpg(pgid, signal.SIGTERM)
+                                except (ProcessLookupError, OSError):
+                                    # Fallback to just terminating main process
+                                    try:
+                                        MS.current_process.terminate()
+                                    except ProcessLookupError:
+                                        pass
+                                
+                                # Wait a bit for cleanup
+                                try:
+                                    await asyncio.wait_for(MS.current_process.wait(), timeout=2.0)
+                                except asyncio.TimeoutError:
+                                    # Force kill if it doesn't stop
+                                    try:
+                                        os.killpg(os.getpgid(MS.current_process.pid), signal.SIGKILL)
+                                    except (ProcessLookupError, OSError):
+                                        pass
+                            except Exception as e:
+                                model_log(f"Error stopping process: {e}", 'warning')
+                            
                             model_log("Training stopped by user", 'warning')
                             try:
                                 training_status.text = 'Stopped'
@@ -986,6 +1112,7 @@ def model_page():
                                 pass
                             MS.training = False
                             MS.running_task_name = ""
+                            MS.current_process = None
                     
                     ui.button('Train', on_click=start_training, icon='play_arrow').props('dense').style(f'background:{THEME_PRIMARY}; color:black;')
                     ui.button('Stop', on_click=stop_training, icon='stop').props('dense color=negative')
@@ -996,7 +1123,7 @@ def model_page():
             with ui.card().classes('dark-card p-2 w-full flex-1').style('display: flex; flex-direction: column; min-height: 0;'):
                 with ui.tabs().classes('w-full').style(f'background: {THEME_BG};') as model_tabs:
                     tab_arch = ui.tab('ARCH', icon='account_tree').style(f'color:{THEME_WARN};')
-                    tab_metrics = ui.tab('METRICS', icon='show_chart').style(f'color:#f472b6;')
+                    tab_metrics = ui.tab('METRICS', icon='show_chart').style('color:#f472b6;')
                     tab_recon = ui.tab('RECON', icon='compare').style(f'color:{THEME_SECONDARY};')
                     tab_console = ui.tab('CONSOLE', icon='terminal').style(f'color:{THEME_PRIMARY};')
                 
@@ -1065,7 +1192,7 @@ def model_page():
                                     
                                     # Latent
                                     with ui.card().classes('p-2').style(f'background: {THEME_CARD}; border: 1px solid #f472b6; min-width: 70px;'):
-                                        ui.label('LATENT').style(f'color:#f472b6; font-size: 0.6rem; font-weight: bold;')
+                                        ui.label('LATENT').style('color:#f472b6; font-size: 0.6rem; font-weight: bold;')
                                         ui.label(f'{lat_dim} dim').style(f'color:{THEME_TEXT_DIM}; font-size: 0.55rem;')
                                         ui.label('μ + σ').style(f'color:{THEME_TEXT_DIM}; font-size: 0.55rem;')
                                     
@@ -1096,7 +1223,7 @@ def model_page():
                                         ui.label('Input Nodes').style(f'color:{THEME_TEXT_DIM}; font-size: 0.6rem;')
                                     
                                     with ui.column().classes('items-center'):
-                                        ui.label(f'{lat_dim}').style(f'color:#f472b6; font-size: 1rem; font-weight: bold;')
+                                        ui.label(f'{lat_dim}').style('color:#f472b6; font-size: 1rem; font-weight: bold;')
                                         ui.label('Latent Dim').style(f'color:{THEME_TEXT_DIM}; font-size: 0.6rem;')
                                     
                                     with ui.column().classes('items-center'):
@@ -1111,9 +1238,13 @@ def model_page():
                     
                     # METRICS TAB
                     with ui.tab_panel(tab_metrics).classes('p-2').style('height: 100%; display: flex; flex-direction: column;'):
-                        ui.label('▌TRAINING METRICS').style(f'color:#f472b6; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-2')
+                        ui.label('▌TRAINING METRICS').style('color:#f472b6; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-2')
                         
                         loss_plot_container = ui.column().classes('w-full flex-1')
+                        
+                        # Track last epoch count for polling
+                        if not hasattr(MS, '_last_epoch_count'):
+                            MS._last_epoch_count = 0
                         
                         def make_loss_figure():
                             """Create separate plots for different metrics."""
@@ -1192,19 +1323,22 @@ def model_page():
                         
                         def update_loss_plot():
                             """Update the loss plot with current history."""
-                            loss_plot_container.clear()
-                            with loss_plot_container:
-                                fig = make_loss_figure()
-                                MS.loss_plot = ui.plotly(fig).classes('w-full').style('height: 280px;')
+                            try:
+                                loss_plot_container.clear()
+                                with loss_plot_container:
+                                    fig = make_loss_figure()
+                                    ui.plotly(fig).classes('w-full').style('height: 280px;')
+                            except Exception:
+                                pass  # Ignore errors when page is destroyed
                         
-                        # Initial empty plot
+                        # Initial plot
                         update_loss_plot()
                         
                         # Stats summary
                         with ui.row().classes('w-full gap-4 mt-4'):
                             with ui.card().classes('dark-card p-3 flex-1'):
                                 ui.label('Best Val Loss').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
-                                best_val_label = ui.label('--').style(f'color:#f472b6; font-size: 1.2rem; font-weight: bold;')
+                                best_val_label = ui.label('--').style('color:#f472b6; font-size: 1.2rem; font-weight: bold;')
                             
                             with ui.card().classes('dark-card p-3 flex-1'):
                                 ui.label('Current Epoch').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
@@ -1214,16 +1348,27 @@ def model_page():
                                 ui.label('Train Loss').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
                                 train_loss_label = ui.label('--').style(f'color:{THEME_SECONDARY}; font-size: 1.2rem; font-weight: bold;')
                         
-                        def update_stats():
-                            """Update stats labels."""
-                            if MS.history['epoch']:
-                                current_epoch_label.text = str(MS.history['epoch'][-1])
-                            if MS.history['train_loss']:
-                                train_loss_label.text = f"{MS.history['train_loss'][-1]:.4f}"
-                            if MS.history['val_loss']:
-                                best_val_label.text = f"{min(MS.history['val_loss']):.4f}"
+                        def poll_metrics():
+                            """Poll for new metrics and update UI."""
+                            try:
+                                current_epoch_count = len(MS.history.get('epoch', []))
+                                
+                                # Update stats labels
+                                if MS.history['epoch']:
+                                    current_epoch_label.text = str(MS.history['epoch'][-1])
+                                if MS.history['train_loss']:
+                                    train_loss_label.text = f"{MS.history['train_loss'][-1]:.4f}"
+                                if MS.history['val_loss']:
+                                    best_val_label.text = f"{min(MS.history['val_loss']):.4f}"
+                                
+                                # Update plot only when new epochs come in
+                                if current_epoch_count > MS._last_epoch_count:
+                                    MS._last_epoch_count = current_epoch_count
+                                    update_loss_plot()
+                            except Exception:
+                                pass  # Ignore errors when page is destroyed
                         
-                        ui.timer(2.0, update_stats)
+                        ui.timer(1.0, poll_metrics)  # Poll every second
                     
                     # RECONSTRUCTION TAB - Show original vs reconstructed with epoch slider
                     with ui.tab_panel(tab_recon).classes('p-2').style('height: 100%; display: flex; flex-direction: column;'):
@@ -1333,26 +1478,70 @@ def model_page():
                     
                     # CONSOLE TAB
                     with ui.tab_panel(tab_console).classes('p-2').style('height: 100%; display: flex; flex-direction: column; overflow: hidden;'):
+                        # Store reference for clear function
+                        console_state = {'log_container': None}
+                        
                         with ui.row().classes('items-center gap-3 mb-2 shrink-0'):
                             ui.label('// TRAINING_LOG').classes('terminal-header')
+                            ui.element('div').classes('flex-1')  # Spacer
                             
                             def clear_log():
-                                if MS.log_container:
-                                    MS.log_container.clear()
-                                MS.log_history = []
-                            ui.button('CLEAR', on_click=clear_log, icon='delete').props('flat dense size=sm').classes('ml-auto')
+                                if console_state['log_container']:
+                                    console_state['log_container'].clear()
+                                    MS.log_history = []
+                                    MS._last_log_count = 0
+                                    with console_state['log_container']:
+                                        ui.label('Log cleared.').style(f'color:{THEME_TEXT_DIM}; font-family: JetBrains Mono; font-size: 0.75rem;')
+                            
+                            ui.button('CLEAR', on_click=clear_log, icon='delete').props('flat dense size=sm')
                         
-                        MS.log_scroll = ui.scroll_area().classes('w-full').style('background: #050505; border-radius: 4px; flex: 1; min-height: 0;')
-                        with MS.log_scroll:
-                            MS.log_container = ui.column().classes('w-full p-3 gap-0')
-                            with MS.log_container:
-                                # Restore previous logs if any
-                                if MS.log_history:
-                                    colors = {'info': THEME_TEXT, 'success': THEME_PRIMARY, 'warning': THEME_WARN, 'error': THEME_ERROR}
+                        log_scroll_area = ui.scroll_area().classes('w-full').style('background: #050505; border-radius: 4px; flex: 1; min-height: 0;')
+                        with log_scroll_area:
+                            log_container = ui.column().classes('w-full p-3 gap-0')
+                            console_state['log_container'] = log_container  # Store reference
+                            
+                            # Initialize tracking
+                            MS._last_log_count = 0
+                            
+                            # Restore previous logs if any
+                            colors = {'info': THEME_TEXT, 'success': THEME_PRIMARY, 'warning': THEME_WARN, 'error': THEME_ERROR}
+                            if MS.log_history:
+                                with log_container:
                                     for msg, msg_type in MS.log_history[-100:]:  # Show last 100
                                         ui.label(msg).style(f'color:{colors.get(msg_type, THEME_TEXT)}; font-family: JetBrains Mono; font-size: 0.75rem;')
-                                else:
+                                MS._last_log_count = len(MS.log_history)
+                            else:
+                                with log_container:
                                     ui.label('Ready. Select a dataset and click Train.').style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.75rem;')
+                        
+                        # Status indicator for polling
+                        with ui.row().classes('items-center gap-2 mt-2'):
+                            poll_status = ui.label('').style(f'color:{THEME_TEXT_DIM}; font-size: 0.6rem;')
+                        
+                        # Polling timer for log updates (runs while on this page)
+                        def poll_logs():
+                            """Poll for new log messages and update UI."""
+                            try:
+                                current_count = len(MS.log_history)
+                                # Update status indicator
+                                status_text = f"📊 Logs: {current_count} | Last: {MS._last_log_count} | Training: {'🟢' if MS.training else '⚫'}"
+                                poll_status.text = status_text
+                                
+                                if current_count > MS._last_log_count:
+                                    # Add only new messages
+                                    new_messages = MS.log_history[MS._last_log_count:]
+                                    with log_container:
+                                        for msg, msg_type in new_messages:
+                                            if any(x in msg for x in ['Starting', 'Training completed', '====', 'Epoch 001 ']):
+                                                ui.label('').style('height: 8px;')
+                                            ui.label(msg).style(f'color:{colors.get(msg_type, THEME_TEXT)}; font-family: JetBrains Mono; font-size: 0.75rem;')
+                                    MS._last_log_count = current_count
+                                    # Auto-scroll to bottom
+                                    log_scroll_area.scroll_to(percent=1.0)
+                            except Exception as e:
+                                poll_status.text = f"❌ Error: {e}"
+                        
+                        ui.timer(0.5, poll_logs)  # Poll every 500ms
 
 
 # ============================================================================

@@ -1,13 +1,10 @@
 """Tests for MIXED dataset type detection and warnings."""
 
-import pytest
-from pathlib import Path
 import numpy as np
 from PIL import Image
-import json
 
 from app.core.dataset_scanner import DatasetScanner
-from app.core.dataset_scanner.models import DatasetType, SplitType
+from app.core.dataset_scanner.models import DatasetType
 
 
 class TestMixedDetection:
@@ -306,5 +303,8 @@ class TestIntegrationWithModelPage:
         
         # Should have suggestions
         assert len(result.suggestions) > 0
+
+
+
 
 

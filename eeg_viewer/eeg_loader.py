@@ -5,7 +5,7 @@ from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Optional, Dict, List, Any
 
-from config import SUPPORTED_FORMATS, FREQ_BANDS
+from config import SUPPORTED_FORMATS
 
 
 @dataclass

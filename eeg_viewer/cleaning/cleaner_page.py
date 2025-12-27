@@ -21,30 +21,26 @@ import mne
 # Import cleaning modules
 from .state import CleaningState, CleaningStep
 from .filters import (
-    FilterPreset, FilterParams, get_filter_presets,
-    apply_filter_preset, apply_bandpass_filter, apply_notch_filter
+    FilterPreset, apply_filter_preset, apply_bandpass_filter, apply_notch_filter
 )
 from .bad_channels import (
-    detect_bad_channels, interpolate_channels,
-    compute_channel_quality_metrics, BadChannelResult
+    detect_bad_channels, interpolate_channels
 )
 from .rereferencing import (
     ReferenceType, apply_reference, get_available_references,
-    find_mastoid_channels, get_current_reference
+    get_current_reference
 )
 from .ica import (
     compute_ica, detect_eog_components, detect_ecg_components,
-    apply_ica_exclusion, ICAResult, get_component_timeseries,
-    get_component_properties, detect_muscle_components
+    apply_ica_exclusion, ICAResult, detect_muscle_components
 )
 from .epochs import (
     create_epochs, detect_bad_epochs, apply_epoch_rejection,
-    EpochRejectionCriteria, EpochResult, get_epoch_data,
-    export_rejection_info, add_manual_rejection, get_rejection_stats
+    EpochRejectionCriteria, EpochResult, export_rejection_info
 )
 from .export import (
-    ExportFormat, export_cleaned_eeg, export_epochs,
-    export_preprocessing_log, create_export_bundle,
+    ExportFormat, export_epochs,
+    create_export_bundle,
     get_pipeline_compatible_name
 )
 
@@ -53,8 +49,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from config import (
     THEME_BG, THEME_CARD, THEME_BORDER, THEME_PRIMARY, THEME_SECONDARY,
-    THEME_WARN, THEME_ERROR, THEME_TEXT, THEME_TEXT_DIM, SIGNAL_COLORS,
-    EEG_RAW_DIR, EEG_CLEAN_DIR, SUPPORTED_FORMATS
+    THEME_WARN, THEME_ERROR, THEME_TEXT, THEME_TEXT_DIM, EEG_RAW_DIR, EEG_CLEAN_DIR
 )
 from eeg_loader import load_eeg_file, scan_eeg_directory
 from app.visualization.components.running_indicator import render_running_indicator
@@ -1424,7 +1419,6 @@ def render_reject_controls():
     with ui.row().classes('gap-2 mt-3'):
         def export_rejection_json():
             from pathlib import Path
-            import json
             try:
                 output_path = Path(EEG_CLEAN_DIR) / f'{PS.cleaning.filename.rsplit(".", 1)[0]}_rejection_info.json'
                 export_rejection_info(PS.epoch_result, str(output_path))
@@ -1558,7 +1552,7 @@ def render_visualize_controls():
             max_epoch = PS.epoch_result.n_total - 1
             
             with ui.row().classes('items-center gap-3 mt-4'):
-                ui.label(f'Current Epoch:').style(f'color: {THEME_TEXT_DIM}; font-size: 0.8rem;')
+                ui.label('Current Epoch:').style(f'color: {THEME_TEXT_DIM}; font-size: 0.8rem;')
                 ui.label(f'{current_epoch}').style(
                     f'color: {THEME_PRIMARY}; font-size: 1.2rem; font-weight: 600; font-family: JetBrains Mono;'
                 )
@@ -2565,7 +2559,7 @@ def do_undo():
         else:
             safe_notify('Nothing to undo', type='warning')
     else:
-        safe_notify(f'No history to undo. Use Reset to go back to original.', type='warning')
+        safe_notify('No history to undo. Use Reset to go back to original.', type='warning')
 
 
 def do_full_reset():
@@ -2731,7 +2725,7 @@ def update_main_plot():
             CleaningStep.EXPORT: 'Export Preview',
         }
         
-        title_text = f'Time (s)'
+        title_text = 'Time (s)'
         if PS.cleaning.current_step == CleaningStep.VISUALIZE and PS.epoch_result is not None:
             epoch_dur = PS.cleaning.epoch_duration or 2.0
             if epoch_dur > 0:

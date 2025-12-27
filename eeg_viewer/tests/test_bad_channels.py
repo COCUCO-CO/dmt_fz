@@ -2,7 +2,6 @@
 Tests for cleaning/bad_channels.py - Bad channel detection and interpolation.
 """
 
-import pytest
 import numpy as np
 
 from cleaning.bad_channels import (

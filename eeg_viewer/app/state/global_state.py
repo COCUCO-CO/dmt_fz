@@ -4,7 +4,6 @@ Global state classes for EEG Viewer application.
 These are the actual state classes used by main.py, moved here for organization.
 Each page has its own state class to avoid coupling.
 """
-from pathlib import Path
 
 
 class State:
@@ -130,6 +129,43 @@ class ModelState:
         self.update_plots = None
         self.tabs = None
         self.tab_console = None
+        
+        # UI parameters persistence (survives page navigation)
+        self.ui_params = {
+            'data_source': 'EEG (channels)',
+            'bands': {'Delta': False, 'Theta': False, 'Alpha': True, 'Beta': False, 'Gamma': False},
+            'subsample': 0.3,
+            # Model architecture
+            'latent_dim': 64,
+            'hidden_dim': 64,
+            'gat_layers': 3,
+            'attention_heads': 4,
+            'dropout': 0.2,
+            'attn_dropout': 0.1,
+            'decoder_gat_layers': 0,
+            'decoder_hidden_dims': '256,128',
+            # Training
+            'num_epochs': 100,
+            'batch_size': 256,
+            'learning_rate': '1e-3',
+            'weight_decay': '1e-5',
+            'optimizer': 'adamw',
+            'scheduler': 'cosine',
+            'patience': 25,
+            'grad_clip': 0.5,
+            # Loss
+            'kl_weight': 0.01,
+            'beta_annealing': True,
+            'node_weight': 0.3,
+            'edge_weight': 1.0,
+            # Workers
+            'num_workers': 4,
+            'dataset_workers': 8,
+        }
+        
+        # Polling counters
+        self._last_log_count = 0
+        self._last_epoch_count = 0
 
 
 class AnalysisState:

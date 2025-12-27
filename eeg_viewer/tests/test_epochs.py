@@ -2,8 +2,6 @@
 Tests for cleaning/epochs.py - Epoch creation and rejection.
 """
 
-import pytest
-import numpy as np
 
 from cleaning.epochs import (
     EpochRejectionCriteria, EpochResult, create_epochs, detect_bad_epochs,

@@ -1,5 +1,4 @@
 """Tests for epoch calculation utilities."""
-import pytest
 
 
 class TestEpochCalculation:

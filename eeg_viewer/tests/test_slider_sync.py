@@ -1,6 +1,5 @@
 """Test slider value synchronization logic."""
 
-import pytest
 
 
 class TestSliderValueSync:

@@ -6,7 +6,6 @@ Provides different re-referencing schemes for EEG data.
 
 from enum import Enum
 from typing import List, Optional, Tuple
-import numpy as np
 import mne
 
 
@@ -273,6 +272,9 @@ def get_current_reference(raw: mne.io.Raw) -> str:
                 return "Average reference"
     
     return "Original/Unknown"
+
+
+
 
 
 

@@ -11,10 +11,7 @@ Tests:
 import pytest
 import asyncio
 import sys
-import os
 from pathlib import Path
-from datetime import datetime
-import subprocess
 
 # Add parent directories to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -45,7 +42,7 @@ class TestRunPipelineStepBasic:
     @pytest.mark.asyncio
     async def test_sets_running_state(self, clean_pipeline_globals, tmp_path):
         """Should set PS.running to True during execution."""
-        from app.pages.pipeline import run_pipeline_step, PIPELINE_DIR
+        from app.pages.pipeline import run_pipeline_step
         
         PS = clean_pipeline_globals
         
@@ -112,7 +109,7 @@ class TestRunPipelineStepBasic:
     @pytest.mark.asyncio
     async def test_handles_script_not_found(self, clean_pipeline_globals, tmp_path, monkeypatch):
         """Should handle missing script gracefully."""
-        from app.pages.pipeline import run_pipeline_step, PIPELINE_DIR
+        from app.pages.pipeline import run_pipeline_step
         
         PS = clean_pipeline_globals
         
@@ -461,7 +458,7 @@ class TestPipelineScriptExecution:
     @pytest.mark.asyncio
     async def test_fwd_script_help(self, clean_pipeline_globals):
         """Should be able to run fwd.py --help."""
-        from app.pages.pipeline import run_pipeline_step, PIPELINE_DIR
+        from app.pages.pipeline import PIPELINE_DIR
         
         PS = clean_pipeline_globals
         
@@ -510,5 +507,8 @@ class TestPipelineScriptExecution:
                     compile(source, script_path, 'exec')
                 except SyntaxError as e:
                     pytest.fail(f"Syntax error in {script_name}: {e}")
+
+
+
 
 

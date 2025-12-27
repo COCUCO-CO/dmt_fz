@@ -4,7 +4,6 @@ These verify the app still works correctly.
 
 Run with: pytest tests/test_smoke.py -v
 """
-import pytest
 import numpy as np
 
 
@@ -173,10 +172,7 @@ class TestImports:
     def test_main_imports(self):
         """Test that main module can be imported."""
         from main import (
-            State, PipelineState, ModelState, AnalysisState,
-            apply_notch, apply_bandpass, compute_fft, compute_hilbert,
-            process_data, make_eeg_fig, make_fft_fig, make_hilbert_fig,
-            make_brain_fig, ELECTRODE_POSITIONS, STYLE
+            State, apply_notch, ELECTRODE_POSITIONS, STYLE
         )
         assert State is not None
         assert apply_notch is not None
@@ -186,8 +182,7 @@ class TestImports:
     def test_config_imports(self):
         """Test that config module can be imported."""
         from config import (
-            THEME_BG, THEME_PRIMARY, THEME_SECONDARY,
-            FREQ_BANDS, SIGNAL_COLORS, EEG_RAW_DIR
+            THEME_PRIMARY, FREQ_BANDS, SIGNAL_COLORS
         )
         assert THEME_PRIMARY == "#00ff88"
         assert len(SIGNAL_COLORS) >= 10
@@ -195,7 +190,7 @@ class TestImports:
     
     def test_eeg_loader_imports(self):
         """Test that eeg_loader module can be imported."""
-        from eeg_loader import load_eeg_file, get_channel_data, scan_eeg_directory, EEGData
+        from eeg_loader import load_eeg_file, EEGData
         assert load_eeg_file is not None
         assert EEGData is not None
 
@@ -232,8 +227,7 @@ class TestHelperFunctions:
     def test_update_functions_exist(self):
         """Verify update functions are defined."""
         from main import (
-            update_eeg, update_fft, update_hilbert, update_brain, update_all,
-            update_eeg2, update_fft2, update_hilbert2, update_brain2
+            update_eeg, update_all
         )
         # Just verify they exist and are callable
         assert callable(update_eeg)
@@ -241,7 +235,7 @@ class TestHelperFunctions:
     
     def test_navigation_functions_exist(self):
         """Verify navigation functions are defined."""
-        from main import nav_start, nav_back, nav_fwd, nav_end, set_win, toggle_play
+        from main import nav_start, nav_back, nav_fwd, nav_end, set_win
         assert callable(nav_start)
         assert callable(nav_back)
         assert callable(nav_fwd)
@@ -250,7 +244,7 @@ class TestHelperFunctions:
     
     def test_channel_functions_exist(self):
         """Verify channel management functions are defined."""
-        from main import refresh_channels, toggle_ch, select_all_ch, select_10_ch, clear_ch
+        from main import refresh_channels, toggle_ch, clear_ch
         assert callable(refresh_channels)
         assert callable(toggle_ch)
         assert callable(clear_ch)
@@ -288,8 +282,7 @@ class TestModelFunctions:
         from main import (
             detect_dataset_type,
             create_default_config,
-            model_log,
-            update_status_indicator
+            model_log
         )
         assert callable(detect_dataset_type)
         assert callable(create_default_config)

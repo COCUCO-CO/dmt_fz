@@ -6,8 +6,10 @@ to a PyTorch Geometric graph with appropriate node/edge features.
 """
 
 import os
+import sys
 import pickle
 import warnings
+import hashlib
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional, Any
 import logging
@@ -561,18 +563,21 @@ def create_dataset_from_config(config: Dict[str, Any],
     use_stc = config['data']['use_stc']
     
     # Generate cache filename (use_stc determines if we use source space or electrodes)
+    # Include hash of phases_dir to ensure different paths get different caches
     source_type = "stc" if use_stc else "eeg"
-    cache_key = f"dataset_{'_'.join(conditions)}_{'_'.join(bands)}_{source_type}.pkl"
+    path_hash = hashlib.md5(str(phases_dir.resolve()).encode()).hexdigest()[:8]
+    cache_key = f"dataset_{'_'.join(conditions)}_{'_'.join(bands)}_{source_type}_{path_hash}.pkl"
     cache_file = cache_dir / cache_key
     
     # Try to load from cache
     if cache_file.exists() and not force_rebuild:
         logger.info(f"Loading dataset from cache: {cache_file}")
+        logger.info(f"  (source path: {phases_dir})")
         with open(cache_file, 'rb') as f:
             cached = pickle.load(f)
         return cached['train'], cached['val'], cached['test']
     
-    logger.info("Building dataset from scratch with multiprocessing...")
+    logger.info(f"Building dataset from {phases_dir} with multiprocessing...")
     
     # Determine number of workers
     if num_workers is None:
@@ -616,11 +621,16 @@ def create_dataset_from_config(config: Dict[str, Any],
     
     with Pool(processes=num_workers) as pool:
         # Process files in parallel with progress bar
+        # Use file=sys.stdout and disable=False to ensure output
         results = list(tqdm(
             pool.imap(process_single_file, file_args),
             total=len(file_args),
-            desc="Processing files"
+            desc="Processing files",
+            file=sys.stdout,
+            dynamic_ncols=True,
+            mininterval=0.5  # Update every 0.5 seconds
         ))
+        sys.stdout.flush()  # Force flush after tqdm
         
         # Flatten results (lists of dicts)
         for graph_dicts_from_file in results:
@@ -635,7 +645,7 @@ def create_dataset_from_config(config: Dict[str, Any],
     logger.info("Converting to PyTorch Geometric Data objects...")
     all_graphs = []
     
-    for graph_dict in tqdm(all_graph_dicts, desc="Converting to torch"):
+    for graph_dict in tqdm(all_graph_dicts, desc="Converting to torch", file=sys.stdout, dynamic_ncols=True):
         # Now convert numpy arrays to torch tensors
         data = Data(
             x=torch.from_numpy(graph_dict['x']),

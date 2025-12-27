@@ -8,16 +8,14 @@ from plotly.subplots import make_subplots
 
 from config import (
     EEG_RAW_DIR, EEG_CLEAN_DIR,
-    THEME_BG, THEME_CARD, THEME_BORDER, THEME_PRIMARY, THEME_SECONDARY,
+    THEME_CARD, THEME_PRIMARY, THEME_SECONDARY,
     THEME_WARN, THEME_TEXT, THEME_TEXT_DIM, SIGNAL_COLORS, FREQ_BANDS
 )
 from eeg_loader import load_eeg_file, get_channel_data, scan_eeg_directory
 from app.state import S
 from app.visualization.styles.css import STYLE
-from app.visualization.components.running_indicator import render_running_indicator
 from app.visualization.components.global_header import render_global_header
 from app.core.signal import (
-    apply_notch, apply_bandpass, 
     compute_fft, compute_hilbert,
     process_data as _process_data_core
 )
@@ -380,7 +378,7 @@ def calculate_fixed_ranges(eeg_data, is_secondary=False):
                 # Hilbert envelope max (use first channel)
                 amp, _ = compute_hilbert(data[0])
                 hilbert_values.extend([np.max(np.abs(data[0])), np.max(amp)])
-            except Exception as e:
+            except Exception:
                 pass
         
         # Use 95th percentile for robust estimation (handles outliers)
@@ -913,9 +911,9 @@ def refresh_info():
         ui.separator().classes('my-1')
         
         # EEG 2 info
-        ui.label('EEG 2:').style(f'color:#f472b6; font-size: 0.7rem; font-weight: bold;')
+        ui.label('EEG 2:').style('color:#f472b6; font-size: 0.7rem; font-weight: bold;')
         if S.eeg_data2:
-            ui.label(S.eeg_data2.filename).style(f'color:#f472b6; font-family: JetBrains Mono; font-size: 0.75rem;')
+            ui.label(S.eeg_data2.filename).style('color:#f472b6; font-family: JetBrains Mono; font-size: 0.75rem;')
             ui.label(f'{S.eeg_data2.sfreq:.0f}Hz | {S.eeg_data2.n_channels}ch | {S.eeg_data2.duration_sec:.1f}s').style(f'color:{THEME_TEXT_DIM}; font-family: JetBrains Mono; font-size: 0.65rem;')
         else:
             ui.label('-- not loaded --').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
@@ -1294,7 +1292,7 @@ def main_content():
                 
                 # EEG 2 (comparison) - same width as EEG 1
                 with ui.card().classes('dark-card p-3 flex-1 min-w-0').bind_visibility_from(S, 'compare_mode'):
-                    ui.label('▌EEG 2').style(f'color:#f472b6; font-family: JetBrains Mono; font-size: 0.8rem; letter-spacing: 1px;').classes('mb-1')
+                    ui.label('▌EEG 2').style('color:#f472b6; font-family: JetBrains Mono; font-size: 0.8rem; letter-spacing: 1px;').classes('mb-1')
                     S.eeg_plot2 = ui.plotly(make_eeg_fig(use_eeg2=True)).classes('w-full')
             
             # Navigation (shared) - Layout like cleaner
@@ -1340,7 +1338,7 @@ def main_content():
                     S.brain_plot = ui.plotly(make_brain_fig()).classes('w-full')
                 
                 with ui.card().classes('dark-card p-3 flex-1 min-w-0').bind_visibility_from(S, 'compare_mode'):
-                    ui.label('▌TOPO 2').style(f'color:#f472b6; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-1')
+                    ui.label('▌TOPO 2').style('color:#f472b6; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-1')
                     S.brain_plot2 = ui.plotly(make_brain_fig(use_eeg2=True)).classes('w-full')
             
             # FFT ROW - side by side, equal width
@@ -1350,7 +1348,7 @@ def main_content():
                     S.fft_plot = ui.plotly(make_fft_fig()).classes('w-full')
                 
                 with ui.card().classes('dark-card p-3 flex-1 min-w-0').bind_visibility_from(S, 'compare_mode'):
-                    ui.label('▌FFT 2').style(f'color:#f472b6; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-1')
+                    ui.label('▌FFT 2').style('color:#f472b6; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-1')
                     S.fft_plot2 = ui.plotly(make_fft_fig(use_eeg2=True)).classes('w-full')
             
             # FFT DIFFERENCE ROW - only visible in compare mode, full width
@@ -1373,7 +1371,7 @@ def main_content():
                 
                 with ui.card().classes('dark-card p-3 flex-1 min-w-0').bind_visibility_from(S, 'compare_mode'):
                     with ui.row().classes('items-center gap-2 mb-1'):
-                        ui.label('▌HILBERT 2').style(f'color:#f472b6; font-family: JetBrains Mono; font-size: 0.8rem;')
+                        ui.label('▌HILBERT 2').style('color:#f472b6; font-family: JetBrains Mono; font-size: 0.8rem;')
                         S.hilbert_select_container2 = ui.row().classes('items-center gap-1')
                         refresh_hilbert_select2()
                     S.hilbert_plot2 = ui.plotly(make_hilbert_fig(use_eeg2=True)).classes('w-full')
