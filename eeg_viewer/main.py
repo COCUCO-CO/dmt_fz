@@ -12,6 +12,10 @@ from app.visualization.styles.css import STYLE
 # Re-export from pages
 
 # Import pages - each page registers itself with @ui.page
+import app.pages.viewer  # noqa: F401 - registers /
+import app.pages.pipeline.page  # noqa: F401 - registers /pipeline
+import app.pages.model  # noqa: F401 - registers /model
+import app.pages.analysis  # noqa: F401 - registers /analysis
 from cleaning.cleaner_page import cleaner_page
 
 

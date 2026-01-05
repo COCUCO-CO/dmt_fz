@@ -74,3 +74,6 @@ Para la consola:
 1. Ejecuta un paso que tenga salida abundante
 2. Captura el scroll del log en tiempo real
 
+
+
+

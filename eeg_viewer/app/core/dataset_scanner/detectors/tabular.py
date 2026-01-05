@@ -304,3 +304,6 @@ class TabularDetector(BaseDetector):
 
 
 
+
+
+

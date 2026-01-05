@@ -202,3 +202,6 @@ def render_system_monitor_detailed():
 
 
 
+
+
+

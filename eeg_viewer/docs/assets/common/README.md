@@ -77,3 +77,6 @@ Si se desea crear un logo:
 - Colores del tema (verde terminal)
 - Simple y reconocible
 
+
+
+

@@ -84,3 +84,6 @@ Imágenes y GIFs necesarios para documentar la página Model (`/model`).
 2. Click en Refresh
 3. Muestra cómo cambia el diagrama
 
+
+
+

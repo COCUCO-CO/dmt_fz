@@ -80,3 +80,6 @@ Para capturar estas imágenes necesitas:
 2. Selecciona diferentes capas
 3. Muestra cómo cambian las activaciones
 
+
+
+
