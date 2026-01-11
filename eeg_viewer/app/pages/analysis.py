@@ -482,52 +482,90 @@ def load_image_model(checkpoint, model_path: Path):
 
 
 def load_graph_model(checkpoint, model_path: Path):
-    """Load a graph-based VAE model."""
+    """Load a graph-based model (VAE or SimCLR)."""
     import torch
     import pickle
     import sys
     
     config = checkpoint.get('config', {})
     
+    # Detect model type from config
+    model_name = config.get('model', {}).get('name', 'BrainStateVAE')
+    is_simclr = 'SimCLR' in model_name or 'simclr' in model_name.lower()
+    
+    if is_simclr:
+        return load_simclr_model(checkpoint, model_path, config)
+    else:
+        return load_vae_model(checkpoint, model_path, config)
+
+
+def load_simclr_model(checkpoint, model_path: Path, config: dict):
+    """Load a SimCLR encoder model."""
+    import torch
+    import pickle
+    import sys
+    
     # Get model parameters from checkpoint
     model_params = checkpoint.get('model_params', {})
     
-    # If no model_params in checkpoint, try to infer from dataset or config
+    # Try to infer from dataset if not present
     if not model_params:
-        # Try to load a sample from dataset cache to get dimensions
-        dataset_cache = AUTOENCODER_CACHE_DIR / 'dataset_cache'
-        try:
-            # Try both .pt and .pkl files
-            for pattern in ['*.pt', '*.pkl']:
-                for cache_file in dataset_cache.glob(pattern):
-                    try:
-                        if cache_file.suffix == '.pkl':
-                            with open(cache_file, 'rb') as f:
-                                data = pickle.load(f)
-                        else:
-                            data = torch.load(cache_file, weights_only=False)
-                        
-                        # Handle dict with train/val/test splits
-                        if isinstance(data, dict) and 'train' in data:
-                            data = data['train']
-                        
-                        sample = data[0] if isinstance(data, list) and len(data) > 0 else data
-                        if hasattr(sample, 'x'):
-                            model_params = {
-                                'num_node_features': sample.x.shape[1],
-                                'num_edge_features': sample.edge_attr.shape[1] if hasattr(sample, 'edge_attr') and sample.edge_attr is not None else 1,
-                                'num_graph_features': sample.graph_attr.shape[0] if hasattr(sample, 'graph_attr') and sample.graph_attr is not None else 3,
-                                'num_nodes': sample.num_nodes
-                            }
-                            break
-                    except Exception:
-                        continue
-                if model_params:
-                    break
-        except Exception:
-            pass
+        model_params = _infer_model_params_from_cache()
     
-    # Use values from model_params or defaults
+    num_node_features = model_params.get('num_node_features', 25)
+    num_edge_features = model_params.get('num_edge_features', 1)
+    num_nodes = model_params.get('num_nodes', 24)
+    
+    # Import SimCLR model
+    if str(AUTOENCODER_DIR) not in sys.path:
+        sys.path.insert(0, str(AUTOENCODER_DIR))
+    from models import create_simclr_from_config
+    
+    model = create_simclr_from_config(
+        config,
+        num_node_features=num_node_features,
+        num_edge_features=num_edge_features
+    )
+    model.load_state_dict(checkpoint['model_state_dict'])
+    
+    # Check for GPU
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    model = model.to(device)
+    model.eval()
+    
+    AS.model = model
+    AS.model_config = config
+    AS.model_path = str(model_path)
+    AS.device = device
+    AS.model_params = model_params
+    AS.model_params['num_nodes'] = num_nodes
+    AS.model_type = 'simclr'  # New type
+    AS.is_encoder_only = True
+    
+    analysis_log(f"Loaded SimCLR model: {num_nodes} nodes, {num_node_features} features", 'success')
+    
+    return {
+        'epoch': checkpoint.get('epoch', '?'),
+        'val_loss': checkpoint.get('val_loss', '?'),
+        'config': config,
+        'model_params': model_params,
+        'model_type': 'simclr'
+    }
+
+
+def load_vae_model(checkpoint, model_path: Path, config: dict):
+    """Load a VAE model."""
+    import torch
+    import pickle
+    import sys
+    
+    # Get model parameters from checkpoint
+    model_params = checkpoint.get('model_params', {})
+    
+    # Try to infer from dataset if not present
+    if not model_params:
+        model_params = _infer_model_params_from_cache()
+    
     num_node_features = model_params.get('num_node_features', 68)
     num_edge_features = model_params.get('num_edge_features', 1)
     num_graph_features = model_params.get('num_graph_features', 3)
@@ -558,6 +596,7 @@ def load_graph_model(checkpoint, model_path: Path):
     AS.device = device
     AS.model_params = model_params
     AS.model_type = 'graph'
+    AS.is_encoder_only = False
     
     # Register hooks for activation extraction
     register_activation_hooks(model)
@@ -569,6 +608,46 @@ def load_graph_model(checkpoint, model_path: Path):
         'model_params': model_params,
         'model_type': 'graph'
     }
+
+
+def _infer_model_params_from_cache():
+    """Try to infer model parameters from cached dataset."""
+    import torch
+    import pickle
+    
+    model_params = {}
+    dataset_cache = AUTOENCODER_CACHE_DIR / 'dataset_cache'
+    
+    try:
+        for pattern in ['*.pt', '*.pkl']:
+            for cache_file in dataset_cache.glob(pattern):
+                try:
+                    if cache_file.suffix == '.pkl':
+                        with open(cache_file, 'rb') as f:
+                            data = pickle.load(f)
+                    else:
+                        data = torch.load(cache_file, weights_only=False)
+                    
+                    if isinstance(data, dict) and 'train' in data:
+                        data = data['train']
+                    
+                    sample = data[0] if isinstance(data, list) and len(data) > 0 else data
+                    if hasattr(sample, 'x'):
+                        model_params = {
+                            'num_node_features': sample.x.shape[1],
+                            'num_edge_features': sample.edge_attr.shape[1] if hasattr(sample, 'edge_attr') and sample.edge_attr is not None else 1,
+                            'num_graph_features': sample.graph_attr.shape[0] if hasattr(sample, 'graph_attr') and sample.graph_attr is not None else 3,
+                            'num_nodes': sample.num_nodes
+                        }
+                        break
+                except Exception:
+                    continue
+            if model_params:
+                break
+    except Exception:
+        pass
+    
+    return model_params
 
 
 def register_image_activation_hooks(model):
@@ -687,6 +766,8 @@ def process_sample(sample, store_latent=True):
         with torch.no_grad():
             if AS.model_type == 'image':
                 return process_image_sample(sample, store_latent)
+            elif AS.model_type == 'simclr':
+                return process_simclr_sample(sample, store_latent)
             else:
                 return process_graph_sample(sample, store_latent)
     except Exception as e:
@@ -694,6 +775,117 @@ def process_sample(sample, store_latent=True):
         import traceback
         analysis_log(traceback.format_exc(), 'error')
         return None
+
+
+def edge_attr_to_sync_matrix(edge_index, edge_attr, num_nodes):
+    """Convert edge attributes back to synchronization matrix."""
+    sync_matrix = np.zeros((num_nodes, num_nodes))
+    
+    edge_index_np = edge_index.cpu().numpy() if hasattr(edge_index, 'cpu') else edge_index
+    edge_attr_np = edge_attr.cpu().numpy() if hasattr(edge_attr, 'cpu') else edge_attr
+    
+    # Flatten edge_attr if needed
+    if edge_attr_np.ndim > 1:
+        edge_attr_np = edge_attr_np.squeeze()
+    
+    for e_idx in range(edge_index_np.shape[1]):
+        src, tgt = edge_index_np[0, e_idx], edge_index_np[1, e_idx]
+        if src < num_nodes and tgt < num_nodes:
+            sync_matrix[src, tgt] = edge_attr_np[e_idx]
+    
+    return sync_matrix
+
+
+def process_simclr_sample(sample, store_latent=True):
+    """Process a graph sample through SimCLR encoder and extract attention weights."""
+    import torch
+    from torch_geometric.data import Batch
+    
+    # Create a batch from single sample (required by PyG)
+    if not isinstance(sample, Batch):
+        batch = Batch.from_data_list([sample])
+    else:
+        batch = sample
+    
+    batch = batch.to(AS.device)
+    
+    # Forward pass with activation storage to capture GAT attention
+    output = AS.model(batch, augment=False, store_activations=True)
+    
+    AS.current_sample = batch
+    AS.current_recon = None  # SimCLR has no reconstruction
+    AS.current_z = output.get('embeddings', None)
+    
+    # Extract attention weights from encoder
+    encoder_attention = AS.model.encoder.get_attention_weights()
+    AS.attention_weights = {}
+    
+    # Convert to format compatible with visualization
+    for layer_name, att_data in encoder_attention.items():
+        edge_index = att_data['edge_index']
+        alpha = att_data['alpha']
+        
+        # Build attention matrix (average across heads if multi-head)
+        num_nodes = AS.model_params.get('num_nodes', 24)
+        
+        # alpha shape: [num_edges, num_heads] -> average to [num_edges]
+        if alpha.dim() > 1:
+            alpha_avg = alpha.mean(dim=1)
+        else:
+            alpha_avg = alpha
+        
+        attn_matrix = torch.zeros(num_nodes, num_nodes)
+        for e_idx in range(edge_index.shape[1]):
+            src, dst = int(edge_index[0, e_idx]), int(edge_index[1, e_idx])
+            if src < num_nodes and dst < num_nodes and e_idx < len(alpha_avg):
+                attn_matrix[src, dst] = alpha_avg[e_idx]
+        
+        AS.attention_weights[layer_name] = {
+            'edge_index': edge_index,
+            'attention': alpha,
+            'matrix': attn_matrix  # Store dense matrix for visualization
+        }
+    
+    # Calculate attention-based "synchronization" from last layer
+    if AS.attention_weights:
+        last_layer = list(AS.attention_weights.keys())[-1]
+        attn_matrix = AS.attention_weights[last_layer]['matrix']
+        
+        # Make symmetric (average both directions)
+        attn_sym = (attn_matrix + attn_matrix.T) / 2
+        
+        # Calculate mean attention as "attention sync score"
+        # Exclude diagonal (self-attention)
+        mask = ~torch.eye(num_nodes, dtype=bool)
+        attn_mean = attn_sym[mask].mean().item()
+        
+        AS.current_attention_sync = attn_mean
+        AS.current_attention_matrix = attn_sym.numpy()
+    
+    # Extract original sync matrix from sample
+    if hasattr(batch, 'edge_attr') and batch.edge_attr is not None:
+        sync_matrix = edge_attr_to_sync_matrix(
+            batch.edge_index, batch.edge_attr, num_nodes
+        )
+        AS.current_original_sync = sync_matrix
+        
+        # Original Kuramoto from graph attributes
+        if hasattr(batch, 'graph_attr') and batch.graph_attr is not None:
+            # graph_attr usually contains [kuramoto, mean_sync, ...]
+            graph_attr = batch.graph_attr[0] if batch.graph_attr.dim() > 1 else batch.graph_attr
+            AS.current_kuramoto_original = graph_attr[0].item() if len(graph_attr) > 0 else 0.0
+    
+    # Store latent for PCA visualization
+    if store_latent and AS.current_z is not None:
+        z_np = AS.current_z.detach().cpu().numpy().flatten()
+        AS.latent_codes.append(z_np)
+        label = batch.y[0].item() if hasattr(batch, 'y') and batch.y is not None else 0
+        AS.latent_labels.append(label)
+        if len(AS.latent_codes) > 500:
+            AS.latent_codes = AS.latent_codes[-500:]
+            AS.latent_labels = AS.latent_labels[-500:]
+    
+    return output
 
 
 def process_image_sample(sample, store_latent=True):
@@ -1212,14 +1404,297 @@ def analysis_page():
             with ui.card().classes('dark-card p-3 w-full'):
                 ui.label('// DATASET').classes('terminal-header')
                 
+                # Data source toggle
                 with ui.row().classes('items-center gap-2 mt-2'):
-                    ui.label('Split:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
-                    split_select = ui.select(['train', 'val', 'test'], value='test').props('dense dark').classes('flex-1')
+                    ui.label('Source:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                    data_source_toggle = ui.toggle(
+                        ['Phases File', 'Cached Dataset'],
+                        value='Phases File'
+                    ).props('dense').classes('flex-1')
                 
-                dataset_path_input = ui.input(
-                    value=str(AUTOENCODER_CACHE_DIR / 'dataset_cache'),
-                    placeholder='Path to dataset cache'
-                ).props('dense dark').classes('w-full mt-2')
+                # PHASES FILE LOADER (default)
+                phases_loader_container = ui.column().classes('w-full gap-2 mt-2')
+                with phases_loader_container:
+                    phases_path_input = ui.input(
+                        value='/media/storage_hdd/dmt_fz/fwd-inv-stc/DMT/phases-S01-DMT.pkl',
+                        placeholder='Path to phases-*.pkl file'
+                    ).props('dense dark').classes('w-full')
+                    
+                    with ui.row().classes('items-center gap-2'):
+                        ui.label('Band:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                        band_select = ui.select(
+                            ['Alpha', 'Beta', 'Theta', 'Delta', 'Gamma', 'All'],
+                            value='Alpha'
+                        ).props('dense dark').classes('w-20')
+                        
+                        ui.label('Source:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                        source_select = ui.select(
+                            ['eeg', 'stc'],
+                            value='eeg'
+                        ).props('dense dark').classes('w-16')
+                        
+                        ui.label('Cond:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                        condition_select = ui.select(
+                            ['DMT', 'EC', 'EO'],
+                            value='DMT'
+                        ).props('dense dark').classes('w-16')
+                    
+                    phases_info_container = ui.column().classes('w-full gap-1')
+                    
+                    def load_phases_and_generate_graphs():
+                        """Load phases file and generate graphs in real-time."""
+                        import pickle
+                        import torch
+                        from torch_geometric.data import Data
+                        
+                        try:
+                            phases_path = Path(phases_path_input.value.strip())
+                            if not phases_path.exists():
+                                analysis_log(f"File not found: {phases_path}", 'error')
+                                return
+                            
+                            analysis_log(f"Loading phases from {phases_path.name}...", 'info')
+                            
+                            with open(phases_path, 'rb') as f:
+                                phases_data = pickle.load(f)
+                            
+                            # Extract settings
+                            selected_band = band_select.value
+                            source = source_select.value  # 'eeg' or 'stc'
+                            condition = condition_select.value
+                            subject_id = phases_path.stem.split('-')[1] if '-' in phases_path.stem else 'S01'
+                            
+                            # New format: syncros_eeg, phases_eeg, etc. with band subdicts
+                            syncros_key = f'syncros_{source}'
+                            phases_key = f'phases_{source}'
+                            amplitudes_key = f'amplitudes_{source}'
+                            kuramoto_key = f'kuramoto_{source}'
+                            
+                            # Check if data exists
+                            if syncros_key not in phases_data:
+                                analysis_log(f"Key {syncros_key} not found. Available: {list(phases_data.keys())}", 'error')
+                                return
+                            
+                            # Get available bands
+                            available_bands = list(phases_data[syncros_key].keys())
+                            analysis_log(f"Available bands: {available_bands}", 'info')
+                            
+                            # Select bands to process
+                            if selected_band == 'All':
+                                bands_to_process = available_bands
+                            else:
+                                bands_to_process = [selected_band] if selected_band in available_bands else available_bands[:1]
+                            
+                            graphs = []
+                            
+                            for band in bands_to_process:
+                                # Extract data for this band
+                                syncros = phases_data[syncros_key].get(band, [])
+                                phases = phases_data[phases_key].get(band, [])
+                                amplitudes = phases_data[amplitudes_key].get(band, [])
+                                kuramoto = phases_data[kuramoto_key].get(band, [])
+                                
+                                n_epochs = len(syncros) if isinstance(syncros, list) else 0
+                                
+                                if n_epochs == 0:
+                                    analysis_log(f"No epochs found for band {band}", 'warning')
+                                    continue
+                                
+                                analysis_log(f"Processing {n_epochs} epochs for {band}...", 'info')
+                                
+                                for epoch_idx in range(n_epochs):
+                                    try:
+                                        # Get sync matrix for this epoch
+                                        sync_matrix = np.array(syncros[epoch_idx])
+                                        
+                                        # Get phases/amplitudes
+                                        phase_arr = np.array(phases[epoch_idx]) if epoch_idx < len(phases) else np.zeros((sync_matrix.shape[0], 100))
+                                        amp_arr = np.array(amplitudes[epoch_idx]) if epoch_idx < len(amplitudes) else np.ones_like(phase_arr)
+                                        
+                                        # Get kuramoto
+                                        k_val = kuramoto[epoch_idx] if epoch_idx < len(kuramoto) else sync_matrix.mean()
+                                        k_series = np.array(k_val) if hasattr(k_val, '__len__') else np.array([k_val])
+                                        
+                                        N = sync_matrix.shape[0]
+                                        
+                                        # Build graph (fully connected)
+                                        edge_index = []
+                                        edge_attr = []
+                                        for i in range(N):
+                                            for j in range(N):
+                                                if i != j:
+                                                    edge_index.append([i, j])
+                                                    edge_attr.append(sync_matrix[i, j])
+                                        
+                                        edge_index = torch.tensor(edge_index, dtype=torch.long).t().contiguous()
+                                        edge_attr = torch.tensor(edge_attr, dtype=torch.float32).unsqueeze(1)
+                                        
+                                        # Node features: phase stats + amplitude stats + temporal complexity
+                                        # Must match training config: 8 features total
+                                        node_features = []
+                                        
+                                        # Phase stats (2 features)
+                                        if phase_arr.ndim == 2:
+                                            node_features.append(phase_arr.mean(axis=1))
+                                            node_features.append(phase_arr.std(axis=1))
+                                        else:
+                                            node_features.append(np.zeros(N))
+                                            node_features.append(np.ones(N))
+                                        
+                                        # Amplitude stats (2 features)
+                                        if amp_arr.ndim == 2:
+                                            node_features.append(amp_arr.mean(axis=1))
+                                            node_features.append(amp_arr.std(axis=1))
+                                        else:
+                                            node_features.append(np.zeros(N))
+                                            node_features.append(np.ones(N))
+                                        
+                                        # Temporal complexity (4 features: entropy, kurtosis, cv, range)
+                                        if phase_arr.ndim == 2:
+                                            from scipy.stats import kurtosis as calc_kurtosis
+                                            
+                                            entropies = []
+                                            kurtoses = []
+                                            cvs = []
+                                            ranges = []
+                                            
+                                            for node_i in range(N):
+                                                signal = phase_arr[node_i]
+                                                # Entropy (approximate)
+                                                hist, _ = np.histogram(signal, bins=20, density=True)
+                                                hist = hist[hist > 0]
+                                                entropy = -np.sum(hist * np.log(hist + 1e-10))
+                                                entropies.append(entropy)
+                                                # Kurtosis
+                                                kurtoses.append(calc_kurtosis(signal))
+                                                # Coefficient of variation
+                                                cv = np.std(signal) / (np.abs(np.mean(signal)) + 1e-10)
+                                                cvs.append(cv)
+                                                # Range
+                                                ranges.append(np.max(signal) - np.min(signal))
+                                            
+                                            node_features.append(np.array(entropies))
+                                            node_features.append(np.array(kurtoses))
+                                            node_features.append(np.array(cvs))
+                                            node_features.append(np.array(ranges))
+                                        else:
+                                            node_features.extend([np.zeros(N) for _ in range(4)])
+                                        
+                                        x = torch.tensor(np.column_stack(node_features), dtype=torch.float32)
+                                        
+                                        # Graph attributes
+                                        k_mean = float(np.mean(k_series))
+                                        sync_mean = float(np.mean(sync_matrix[~np.eye(N, dtype=bool)]))
+                                        graph_attr = torch.tensor([k_mean, sync_mean, 0.0], dtype=torch.float32)
+                                        
+                                        # Label (0=DMT, 1=EC, 2=EO)
+                                        label_map = {'DMT': 0, 'EC': 1, 'EO': 2}
+                                        y = torch.tensor([label_map.get(condition, 0)], dtype=torch.long)
+                                        
+                                        # Create Data object
+                                        data = Data(
+                                            x=x,
+                                            edge_index=edge_index,
+                                            edge_attr=edge_attr,
+                                            y=y,
+                                            graph_attr=graph_attr,
+                                            num_nodes=N
+                                        )
+                                        data.subject_id = subject_id
+                                        data.condition = condition
+                                        data.band = band
+                                        data.epoch_idx = epoch_idx
+                                        
+                                        graphs.append(data)
+                                        
+                                    except Exception as e:
+                                        analysis_log(f"Error epoch {epoch_idx}: {e}", 'warning')
+                                        continue
+                            
+                            if graphs:
+                                AS.dataset = graphs
+                                AS.dataset_type = 'graph'
+                                AS.total_samples = len(graphs)
+                                AS.current_idx = 0
+                                AS.dataset_path = str(phases_path)
+                                
+                                # Store source info for model compatibility check
+                                AS.model_params = AS.model_params or {}
+                                AS.model_params['num_nodes'] = graphs[0].num_nodes
+                                AS.model_params['num_node_features'] = graphs[0].x.shape[1]
+                                AS.model_params['num_edge_features'] = graphs[0].edge_attr.shape[1]
+                                
+                                # Update progress slider
+                                progress_slider.max = AS.total_samples - 1
+                                progress_slider.value = 0
+                                
+                                # Clear history
+                                AS.kuramoto_history = []
+                                AS.kuramoto_proxy_history = []
+                                AS.latent_codes = []
+                                AS.latent_labels = []
+                                
+                                phases_info_container.clear()
+                                with phases_info_container:
+                                    ui.label(f'✓ Loaded {len(graphs)} graphs').style(f'color:{THEME_PRIMARY}; font-size: 0.7rem;')
+                                    ui.label(f'Subject: {subject_id} | Cond: {condition} | Source: {source}').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
+                                    ui.label(f'Bands: {", ".join(bands_to_process)}').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
+                                    ui.label(f'Nodes: {graphs[0].num_nodes} | Features: {graphs[0].x.shape[1]}').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
+                                
+                                analysis_log(f"✓ Generated {len(graphs)} graphs from {phases_path.name}", 'success')
+                                
+                                # Try to find and set the corresponding EEG file
+                                try:
+                                    # Map phases file to EEG file
+                                    # phases-S01-DMT.pkl → S01-DMT_ICA_pruned.set
+                                    eeg_base_name = f"{subject_id}-{condition}_ICA_pruned.set"
+                                    eeg_path = EEG_CLEAN_DIR / condition / eeg_base_name
+                                    
+                                    # Try alternative naming (S07_DMT instead of S07-DMT)
+                                    if not eeg_path.exists():
+                                        eeg_base_name = f"{subject_id}_{condition}_ICA_pruned.set"
+                                        eeg_path = EEG_CLEAN_DIR / condition / eeg_base_name
+                                    
+                                    if eeg_path.exists():
+                                        # Store for later use by EEG loader
+                                        AS.suggested_eeg_path = str(eeg_path)
+                                        analysis_log(f"📍 EEG file found: {eeg_path.name}", 'info')
+                                    else:
+                                        analysis_log(f"⚠ EEG file not found: {eeg_base_name}", 'warning')
+                                except Exception as e:
+                                    analysis_log(f"Could not find EEG file: {e}", 'warning')
+                            else:
+                                analysis_log("No graphs generated", 'error')
+                                
+                        except Exception as e:
+                            analysis_log(f"Error loading phases: {e}", 'error')
+                            import traceback
+                            analysis_log(traceback.format_exc(), 'error')
+                    
+                    ui.button('Generate Graphs', on_click=load_phases_and_generate_graphs, icon='auto_graph').props('dense').style(f'background:{THEME_SECONDARY}; color:black;')
+                
+                # CACHED DATASET LOADER
+                cached_loader_container = ui.column().classes('w-full gap-2 mt-2')
+                with cached_loader_container:
+                    with ui.row().classes('items-center gap-2'):
+                        ui.label('Split:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                        split_select = ui.select(['train', 'val', 'test'], value='test').props('dense dark').classes('flex-1')
+                    
+                    dataset_path_input = ui.input(
+                        value=str(AUTOENCODER_CACHE_DIR / 'dataset_cache'),
+                        placeholder='Path to dataset cache'
+                    ).props('dense dark').classes('w-full')
+                    
+                    cached_info_container = ui.column().classes('w-full gap-1')
+                
+                # Toggle visibility
+                def toggle_data_source(e):
+                    is_phases = e.value == 'Phases File'
+                    phases_loader_container.set_visibility(is_phases)
+                    cached_loader_container.set_visibility(not is_phases)
+                
+                data_source_toggle.on_value_change(toggle_data_source)
+                cached_loader_container.set_visibility(False)  # Hide cached by default
                 
                 dataset_info_container = ui.column().classes('w-full mt-2 gap-1')
                 
@@ -1341,7 +1816,9 @@ def analysis_page():
                         analysis_log(f"Error loading dataset: {e}", 'error')
                         analysis_log(traceback.format_exc(), 'error')
                 
-                ui.button('Load Dataset', on_click=load_dataset, icon='dataset').props('dense').classes('mt-2')
+                # Add button to cached loader container
+                with cached_loader_container:
+                    ui.button('Load Cached Dataset', on_click=load_dataset, icon='dataset').props('dense').style(f'background:{THEME_PRIMARY}; color:black;')
             
             # PLAYBACK CONTROLS
             with ui.card().classes('dark-card p-3 w-full'):
@@ -1452,14 +1929,20 @@ def analysis_page():
                 
                 # EEG File selector
                 with ui.row().classes('items-center gap-2 w-full'):
+                    # Use suggested EEG path if available
+                    default_eeg_path = AS.suggested_eeg_path if AS.suggested_eeg_path else str(EEG_CLEAN_DIR / 'DMT' / 'S01-DMT_ICA_pruned.set')
                     eeg_path_input = ui.input(
-                        value=str(EEG_CLEAN_DIR / 'DMT' / 'S01-DMT_ICA_pruned.set'),
+                        value=default_eeg_path,
                         placeholder='Path to EEG file'
                     ).props('dense dark').classes('flex-1').style('font-size: 0.7rem;')
                     
                     def load_sync_eeg():
                         """Load EEG file for sync visualization."""
                         try:
+                            # Check if suggested path was updated
+                            if AS.suggested_eeg_path and eeg_path_input.value != AS.suggested_eeg_path:
+                                eeg_path_input.value = AS.suggested_eeg_path
+                            
                             path = Path(eeg_path_input.value.strip())
                             if not path.exists():
                                 ui.notify(f'File not found: {path}', type='negative')
@@ -1486,11 +1969,19 @@ def analysis_page():
                             AS.eeg_plot.update()
                             
                             ui.notify(f'EEG loaded: {path.name}', type='positive')
+                            analysis_log(f"✓ EEG loaded: {path.name}", 'success')
                         except Exception as e:
                             ui.notify(f'Error: {e}', type='negative')
                             analysis_log(f"Error loading EEG: {e}", 'error')
                     
-                    ui.button(icon='folder_open', on_click=load_sync_eeg).props('dense flat size=sm')
+                    def update_eeg_from_suggested():
+                        """Update EEG path input from suggested path."""
+                        if AS.suggested_eeg_path:
+                            eeg_path_input.value = AS.suggested_eeg_path
+                            load_sync_eeg()
+                    
+                    ui.button(icon='folder_open', on_click=load_sync_eeg).props('dense flat size=sm').tooltip('Load EEG file')
+                    ui.button(icon='auto_fix_high', on_click=update_eeg_from_suggested).props('dense flat size=sm').tooltip('Use suggested EEG from phases file')
                 
                 # EEG Plot
                 def make_analysis_eeg_fig():
@@ -1636,17 +2127,18 @@ def analysis_page():
                             hovertemplate='idx:%{x}<br>r=%{y:.3f}<extra></extra>'
                         ))
                     
-                    # Reconstructed Kuramoto proxy (from VAE) - pink/magenta line
+                    # Reconstructed/Attention-based sync (VAE proxy or SimCLR attention)
                     if AS.kuramoto_proxy_history:
                         proxy_indices, proxy_values = zip(*AS.kuramoto_proxy_history)
+                        proxy_name = 'Attn Sync' if AS.model_type == 'simclr' else 'Proxy (VAE)'
                         fig.add_trace(go.Scatter(
                             x=proxy_indices,
                             y=proxy_values,
                             mode='lines+markers',
                             line=dict(color='rgba(244, 114, 182, 0.9)', width=1.5),
                             marker=dict(size=3, color='rgba(244, 114, 182, 0.9)'),
-                            name='Proxy (VAE)',
-                            hovertemplate='idx:%{x}<br>proxy=%{y:.3f}<extra></extra>'
+                            name=proxy_name,
+                            hovertemplate='idx:%{x}<br>value=%{y:.3f}<extra></extra>'
                         ))
                     
                     # Current position marker
@@ -1746,23 +2238,24 @@ def analysis_page():
                     original_sync_plot = ui.plotly(make_original_sync_fig()).classes('w-full').style('height: 200px;')
                     AS.activation_plots['original_sync'] = original_sync_plot
                 
-                # RECONSTRUCTED SYNC NETWORK
+                # ATTENTION/RECONSTRUCTED SYNC NETWORK
                 with ui.card().classes('dark-card p-3 flex-1'):
                     with ui.row().classes('items-center gap-2 mb-1'):
-                        ui.label('▌RECONSTRUCTED SYNC').style('color:#f472b6; font-family: JetBrains Mono; font-size: 0.75rem;')
-                        ui.label('(VAE decoder)').style(f'color:{THEME_TEXT_DIM}; font-size: 0.6rem;')
+                        # Dynamic label based on model type
+                        attn_sync_label = ui.label('▌ATTENTION SYNC').style('color:#f472b6; font-family: JetBrains Mono; font-size: 0.75rem;')
+                        attn_sync_subtitle = ui.label('(encoder attention)').style(f'color:{THEME_TEXT_DIM}; font-size: 0.6rem;')
                     
                     def make_recon_sync_fig():
-                        """Create reconstructed synchronization network visualization.
+                        """Create attention-based or reconstructed sync visualization.
                         
-                        Uses decoder attention weights if available (GAT decoder),
-                        otherwise falls back to edge_attr_recon.
+                        For SimCLR: Uses encoder attention weights from last GAT layer.
+                        For VAE: Uses decoder attention or edge_attr_recon.
                         """
                         # Default empty figure
                         if AS.current_sample is None:
                             fig = go.Figure()
                             fig.add_annotation(
-                                text="No reconstruction available",
+                                text="Load sample to visualize",
                                 x=0.5, y=0.5, showarrow=False,
                                 font=dict(color=THEME_TEXT_DIM, size=10)
                             )
@@ -1778,12 +2271,27 @@ def analysis_page():
                             return fig
                         
                         batch = AS.current_sample
-                        num_nodes = batch.x.shape[0]
+                        num_nodes = AS.model_params.get('num_nodes', batch.x.shape[0])
                         sync_matrix = None
                         title_suffix = ""
                         
+                        # FOR SIMCLR: Use encoder attention from last layer
+                        if AS.model_type == 'simclr' and AS.current_attention_matrix is not None:
+                            sync_matrix = AS.current_attention_matrix
+                            title_suffix = f" (GAT attn, mean={AS.current_attention_sync:.3f})"
+                            # Update labels
+                            try:
+                                attn_sync_label.set_text('▌LEARNED ATTENTION')
+                                attn_sync_subtitle.set_text(f'(encoder GAT)')
+                            except:
+                                pass
+                        
                         # Priority 1: Use decoder attention weights if available (GAT decoder)
-                        decoder_att_keys = [k for k in AS.attention_weights.keys() if k.startswith('decoder_layer_')]
+                        if sync_matrix is None:
+                            decoder_att_keys = [k for k in AS.attention_weights.keys() if k.startswith('decoder_layer_')]
+                        else:
+                            decoder_att_keys = []
+                            
                         if decoder_att_keys:
                             try:
                                 # Use last decoder layer attention as sync proxy
@@ -1897,6 +2405,140 @@ def analysis_page():
                         pass
                 
                 sync_threshold_slider.on('update:model-value', on_threshold_change)
+            
+            # ROW 1.75: MATRIX COMPARISON (Sync vs Attention) - for SimCLR
+            with ui.row().classes('gap-3 w-full') as matrix_comparison_row:
+                # ORIGINAL SYNC MATRIX (heatmap)
+                with ui.card().classes('dark-card p-3 flex-1'):
+                    ui.label('▌SYNC MATRIX (Original)').style(f'color:{THEME_PRIMARY}; font-family: JetBrains Mono; font-size: 0.75rem;').classes('mb-1')
+                    
+                    def make_sync_heatmap_fig():
+                        """Create heatmap of original synchronization matrix."""
+                        fig = go.Figure()
+                        
+                        if AS.current_original_sync is not None:
+                            fig.add_trace(go.Heatmap(
+                                z=AS.current_original_sync,
+                                colorscale='Viridis',
+                                zmin=0, zmax=1,
+                                showscale=True,
+                                colorbar=dict(title='PLV', len=0.8, thickness=10)
+                            ))
+                            # Add Kuramoto value annotation
+                            k_val = AS.current_kuramoto_original
+                            fig.add_annotation(
+                                text=f'r={k_val:.3f}',
+                                x=0.02, y=0.98, xref='paper', yref='paper',
+                                showarrow=False,
+                                font=dict(size=12, color=THEME_PRIMARY),
+                                bgcolor='rgba(0,0,0,0.7)'
+                            )
+                        else:
+                            fig.add_annotation(text="Load sample", x=0.5, y=0.5, showarrow=False,
+                                             font=dict(color=THEME_TEXT_DIM))
+                        
+                        fig.update_layout(
+                            template='plotly_dark',
+                            paper_bgcolor='rgba(8,8,8,1)',
+                            plot_bgcolor='rgba(8,8,8,1)',
+                            height=200,
+                            margin=dict(l=30, r=50, t=10, b=30),
+                            xaxis=dict(title='Node', tickfont=dict(size=8)),
+                            yaxis=dict(title='Node', tickfont=dict(size=8), scaleanchor='x'),
+                            font=dict(family='JetBrains Mono', size=9)
+                        )
+                        return fig
+                    
+                    sync_heatmap_plot = ui.plotly(make_sync_heatmap_fig()).classes('w-full').style('height: 200px;')
+                    AS.activation_plots['sync_heatmap'] = sync_heatmap_plot
+                
+                # ATTENTION MATRIX (from encoder)
+                with ui.card().classes('dark-card p-3 flex-1'):
+                    ui.label('▌ATTENTION MATRIX (Learned)').style('color:#f472b6; font-family: JetBrains Mono; font-size: 0.75rem;').classes('mb-1')
+                    
+                    def make_attention_heatmap_fig():
+                        """Create heatmap of learned attention matrix."""
+                        fig = go.Figure()
+                        
+                        if AS.current_attention_matrix is not None:
+                            fig.add_trace(go.Heatmap(
+                                z=AS.current_attention_matrix,
+                                colorscale='RdPu',
+                                zmin=0, zmax=None,  # Auto scale for attention
+                                showscale=True,
+                                colorbar=dict(title='α', len=0.8, thickness=10)
+                            ))
+                            # Add attention sync annotation
+                            attn_val = AS.current_attention_sync
+                            fig.add_annotation(
+                                text=f'μα={attn_val:.3f}',
+                                x=0.02, y=0.98, xref='paper', yref='paper',
+                                showarrow=False,
+                                font=dict(size=12, color='#f472b6'),
+                                bgcolor='rgba(0,0,0,0.7)'
+                            )
+                        else:
+                            fig.add_annotation(text="Process sample", x=0.5, y=0.5, showarrow=False,
+                                             font=dict(color=THEME_TEXT_DIM))
+                        
+                        fig.update_layout(
+                            template='plotly_dark',
+                            paper_bgcolor='rgba(8,8,8,1)',
+                            plot_bgcolor='rgba(8,8,8,1)',
+                            height=200,
+                            margin=dict(l=30, r=50, t=10, b=30),
+                            xaxis=dict(title='Target', tickfont=dict(size=8)),
+                            yaxis=dict(title='Source', tickfont=dict(size=8), scaleanchor='x'),
+                            font=dict(family='JetBrains Mono', size=9)
+                        )
+                        return fig
+                    
+                    attention_heatmap_plot = ui.plotly(make_attention_heatmap_fig()).classes('w-full').style('height: 200px;')
+                    AS.activation_plots['attention_heatmap'] = attention_heatmap_plot
+                
+                # CORRELATION STATS
+                with ui.card().classes('dark-card p-3').style('min-width: 140px;'):
+                    ui.label('▌CORRELATION').style(f'color:{THEME_WARN}; font-family: JetBrains Mono; font-size: 0.75rem;').classes('mb-2')
+                    
+                    correlation_label = ui.label('--').style(f'color:{THEME_WARN}; font-size: 1.5rem; font-weight: bold;')
+                    ui.label('Pearson r').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
+                    
+                    mse_label = ui.label('--').style(f'color:{THEME_TEXT_DIM}; font-size: 1rem;').classes('mt-2')
+                    ui.label('MSE').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
+                    
+                    def update_correlation_stats():
+                        """Calculate and display correlation between sync and attention matrices."""
+                        if AS.current_original_sync is not None and AS.current_attention_matrix is not None:
+                            try:
+                                from scipy.stats import pearsonr
+                                # Flatten matrices (excluding diagonal)
+                                n = AS.current_original_sync.shape[0]
+                                mask = ~np.eye(n, dtype=bool)
+                                sync_flat = AS.current_original_sync[mask].flatten()
+                                attn_flat = AS.current_attention_matrix[mask].flatten()
+                                
+                                # Pearson correlation
+                                r, p = pearsonr(sync_flat, attn_flat)
+                                correlation_label.set_text(f'{r:.3f}')
+                                
+                                # Color based on correlation strength
+                                if abs(r) > 0.7:
+                                    correlation_label.style(f'color:{THEME_PRIMARY}; font-size: 1.5rem; font-weight: bold;')
+                                elif abs(r) > 0.4:
+                                    correlation_label.style(f'color:{THEME_WARN}; font-size: 1.5rem; font-weight: bold;')
+                                else:
+                                    correlation_label.style(f'color:{THEME_ERROR}; font-size: 1.5rem; font-weight: bold;')
+                                
+                                # MSE
+                                # Normalize attention to [0,1] for fair comparison
+                                attn_norm = (attn_flat - attn_flat.min()) / (attn_flat.max() - attn_flat.min() + 1e-8)
+                                mse = np.mean((sync_flat - attn_norm) ** 2)
+                                mse_label.set_text(f'{mse:.4f}')
+                            except Exception:
+                                correlation_label.set_text('--')
+                                mse_label.set_text('--')
+                    
+                    AS.activation_plots['correlation_update'] = update_correlation_stats
             
             # ROW 2: ENCODER + DECODER ACTIVATIONS
             with ui.row().classes('gap-3 w-full'):
@@ -2451,12 +3093,18 @@ def analysis_page():
                                 # Track Kuramoto original
                                 AS.kuramoto_history.append((AS.current_idx, k_mean))
                             
-                            # Track Kuramoto proxy from reconstruction
+                            # Track Kuramoto proxy from reconstruction (VAE)
                             if AS.current_kuramoto_comparison is not None:
                                 k_proxy = AS.current_kuramoto_comparison['kuramoto_proxy']
                                 k_error = AS.current_kuramoto_comparison['absolute_error']
                                 AS.kuramoto_proxy_history.append((AS.current_idx, k_proxy))
                                 ui.label(f'K. Proxy: {k_proxy:.3f} (Δ={k_error:.3f})').style('color:#f472b6; font-size: 0.7rem;')
+                            
+                            # Track attention sync for SimCLR
+                            if AS.model_type == 'simclr' and hasattr(AS, 'current_attention_sync'):
+                                attn_sync = AS.current_attention_sync
+                                AS.kuramoto_proxy_history.append((AS.current_idx, attn_sync))
+                                ui.label(f'Attn Sync: {attn_sync:.3f}').style('color:#f472b6; font-size: 0.7rem;')
                 
                 # EEG Synchronization - simple: current_idx * epoch_duration = view_start
                 if AS.eeg_sync_enabled and AS.eeg_data is not None:
@@ -2504,6 +3152,24 @@ def analysis_page():
                     recon_sync_plot.update()
                 except Exception as e:
                     analysis_log(f"Recon sync plot error: {e}", 'warning')
+                
+                # Update matrix comparison heatmaps
+                try:
+                    sync_heatmap_plot.figure = make_sync_heatmap_fig()
+                    sync_heatmap_plot.update()
+                except Exception as e:
+                    analysis_log(f"Sync heatmap error: {e}", 'warning')
+                
+                try:
+                    attention_heatmap_plot.figure = make_attention_heatmap_fig()
+                    attention_heatmap_plot.update()
+                except Exception as e:
+                    analysis_log(f"Attention heatmap error: {e}", 'warning')
+                
+                try:
+                    update_correlation_stats()
+                except Exception as e:
+                    analysis_log(f"Correlation stats error: {e}", 'warning')
                 
                 try:
                     # Update encoder selectors and plot

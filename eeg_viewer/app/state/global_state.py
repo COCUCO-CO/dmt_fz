@@ -135,8 +135,10 @@ class ModelState:
             'data_source': 'EEG (channels)',
             'bands': {'Delta': False, 'Theta': False, 'Alpha': True, 'Beta': False, 'Gamma': False},
             'subsample': 0.3,
+            # Model type (SimCLR is now default)
+            'model_type': 'SimCLR (Graph)',
             # Model architecture
-            'latent_dim': 64,
+            'latent_dim': 128,  # Embedding dim for SimCLR
             'hidden_dim': 64,
             'gat_layers': 3,
             'attention_heads': 4,
@@ -152,15 +154,21 @@ class ModelState:
             'optimizer': 'adamw',
             'scheduler': 'cosine',
             'patience': 25,
-            'grad_clip': 0.5,
-            # Loss
+            'grad_clip': 1.0,
+            # SimCLR Loss params
+            'temperature': 0.5,
+            'edge_drop_prob': 0.2,
+            'feature_noise_std': 0.1,
+            # VAE Loss params
             'kl_weight': 0.01,
             'beta_annealing': True,
             'node_weight': 0.3,
             'edge_weight': 1.0,
-            # Workers
-            'num_workers': 4,
-            'dataset_workers': 8,
+            # Workers (low defaults for HDD; increase for SSD)
+            'num_workers': 2,
+            'dataset_workers': 2,
+            # Quick testing
+            'max_files': 0,  # 0 = all files
         }
         
         # Polling counters
@@ -202,6 +210,7 @@ class AnalysisState:
         self.eeg_channels = []  # Selected channels for visualization
         self.eeg_plot = None  # UI reference for EEG plot
         self.eeg_info_container = None  # UI reference for EEG info
+        self.suggested_eeg_path = None  # Auto-suggested EEG path from phases file
         
         # Activations (stored during forward pass)
         self.activations = {}  # layer_name -> tensor
@@ -215,6 +224,13 @@ class AnalysisState:
         self.current_z = None
         self.current_label = None  # For image classification
         self.current_kuramoto_comparison = None  # Kuramoto original vs proxy
+        
+        # SimCLR specific
+        self.is_encoder_only = False  # True for SimCLR
+        self.current_attention_sync = 0.0  # Mean attention as sync proxy
+        self.current_attention_matrix = None  # NxN attention matrix from last GAT layer
+        self.current_original_sync = None  # NxN original sync matrix
+        self.current_kuramoto_original = 0.0  # Original Kuramoto order parameter
         
         # Fixed axis ranges (computed from dataset)
         self.axis_ranges = {

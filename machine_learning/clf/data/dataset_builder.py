@@ -542,7 +542,8 @@ def build_graph_dict(
 
 def create_dataset_from_config(config: Dict[str, Any], 
                                 force_rebuild: bool = False,
-                                num_workers: Optional[int] = None) -> Tuple[List[Data], List[Data], List[Data]]:
+                                num_workers: Optional[int] = None,
+                                max_files: Optional[int] = None) -> Tuple[List[Data], List[Data], List[Data]]:
     """
     Create train/val/test datasets from configuration.
     
@@ -550,6 +551,7 @@ def create_dataset_from_config(config: Dict[str, Any],
         config: Configuration dictionary
         force_rebuild: If True, rebuild dataset even if cache exists
         num_workers: Number of parallel workers (None = auto-detect)
+        max_files: Maximum number of files to load (None = all, random sample if set)
         
     Returns:
         Tuple of (train_graphs, val_graphs, test_graphs)
@@ -612,6 +614,13 @@ def create_dataset_from_config(config: Dict[str, Any],
             file_args.append((phase_file, condition, cond_idx, bands, suffix, config))
     
     logger.info(f"Found {len(file_args)} files to process across {len(conditions)} conditions")
+    
+    # Limit number of files if specified (random sample)
+    if max_files is not None and max_files > 0 and len(file_args) > max_files:
+        import random
+        random.seed(42)  # Reproducible sampling
+        file_args = random.sample(file_args, max_files)
+        logger.info(f"Randomly sampled {max_files} files for quick testing")
     
     # ========================================================================
     # PARALLEL PROCESSING

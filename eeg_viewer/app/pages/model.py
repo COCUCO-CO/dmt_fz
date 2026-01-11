@@ -305,8 +305,15 @@ async def _run_training_background(cmd: list, env: dict, cwd: str):
         MS.current_process = None
 
 
-def create_default_config(dataset_path: str, dataset_info: dict) -> dict:
-    """Create default VAE configuration based on detected dataset."""
+def create_default_config(dataset_path: str, dataset_info: dict, model_type: str = 'simclr') -> dict:
+    """Create default configuration based on model type and detected dataset.
+    
+    Args:
+        dataset_path: Path to the dataset
+        dataset_info: Detected dataset information
+        model_type: 'simclr' or 'vae'
+    """
+    # Common configuration
     config = {
         'paths': {
             'phases_dir': dataset_path,
@@ -316,7 +323,6 @@ def create_default_config(dataset_path: str, dataset_info: dict) -> dict:
             'tensorboard': str(AUTOENCODER_CACHE_DIR / 'runs'),
         },
         'data': {
-            # Use detected conditions from dataset scan (no hardcoded fallback)
             'conditions': dataset_info.get('conditions') or dataset_info.get('classes') or [],
             'bands': dataset_info.get('bands') or ['Delta', 'Theta', 'Alpha', 'Beta', 'Gamma'],
             'use_stc': dataset_info.get('has_stc', False),
@@ -348,53 +354,6 @@ def create_default_config(dataset_path: str, dataset_info: dict) -> dict:
                 'group_by_subject': True,
             }
         },
-        'model': {
-            'name': 'BrainStateVAE',
-            'encoder': {
-                'conv_type': 'gatv2',
-                'hidden_dim': 64,
-                'num_gat_layers': 3,
-                'num_attention_heads': 4,
-                'cheby_k': 3,
-                'dropout': 0.2,
-                'attention_dropout': 0.1,
-                'use_edge_attr': True,
-                'concat_heads': True,
-                'negative_slope': 0.2,
-                'use_skip_connections': True,
-            },
-            'latent': {
-                'dim': 64,
-            },
-            'decoder': {
-                'gat_layers': 0,  # 0 = MLP decoder, >0 = GAT decoder
-                'hidden_dims': [256, 128],
-                'reconstruct_edges': True,
-                'activation': 'leaky_relu',
-                'dropout': 0.1,
-            },
-            'pooling': {
-                'method': 'mean',
-            }
-        },
-        'loss': {
-            'reconstruction': {
-                'node_weight': 0.3,
-                'edge_weight': 1.0,
-                'type': 'mse',
-            },
-            'kl': {
-                'weight': 0.01,
-                'annealing': {
-                    'enabled': True,
-                    'start': 0.0,
-                    'end': 0.05,
-                    'epochs': 50,
-                    'type': 'linear',
-                }
-            },
-            'free_bits': 0.1,
-        },
         'training': {
             'num_epochs': 100,
             'batch_size': 256,
@@ -403,18 +362,19 @@ def create_default_config(dataset_path: str, dataset_info: dict) -> dict:
             'optimizer': 'adamw',
             'scheduler': {
                 'type': 'cosine',
+                'warmup_epochs': 10,
                 'patience': 10,
                 'factor': 0.5,
                 'min_lr': 1e-6,
             },
             'early_stopping': {
-                'patience': 20,
+                'patience': 25,
                 'min_delta': 0.0001,
                 'monitor': 'val_loss',
             },
             'gradient_clipping': {
                 'enabled': True,
-                'max_norm': 0.5,
+                'max_norm': 1.0,
             }
         },
         'logging': {
@@ -439,11 +399,96 @@ def create_default_config(dataset_path: str, dataset_info: dict) -> dict:
         },
         'seed': 42,
         'deterministic': True,
-        'device': 'cuda',  # Will fallback to CPU if not available
-        'num_workers': 4,  # Use workers with GPU
-        'dataset_workers': 4,
-        'pin_memory': True,  # Enabled for GPU
+        'device': 'cuda',
+        'num_workers': 2,
+        'dataset_workers': 2,
+        'pin_memory': True,
     }
+    
+    if model_type == 'simclr':
+        # SimCLR-specific configuration
+        config['model'] = {
+            'name': 'BrainStateSimCLR',
+            'encoder': {
+                'conv_type': 'gatv2',
+                'hidden_dim': 64,
+                'num_gat_layers': 3,
+                'num_attention_heads': 4,
+                'dropout': 0.2,
+                'attention_dropout': 0.1,
+                'use_edge_attr': True,
+                'use_skip_connections': True,
+            },
+            'embedding': {
+                'dim': 128,  # Final embedding dimension
+            },
+            'projection': {
+                'dim': 64,   # Contrastive projection dimension
+                'hidden_dim': 128,
+            },
+            'pooling': {
+                'method': 'mean',
+            }
+        }
+        config['loss'] = {
+            'temperature': 0.5,  # NT-Xent temperature
+        }
+        config['augmentation'] = {
+            'node_drop_prob': 0.1,
+            'edge_drop_prob': 0.2,
+            'feature_mask_prob': 0.15,
+            'feature_noise_std': 0.1,
+        }
+    else:
+        # VAE-specific configuration
+        config['model'] = {
+            'name': 'BrainStateVAE',
+            'encoder': {
+                'conv_type': 'gatv2',
+                'hidden_dim': 64,
+                'num_gat_layers': 3,
+                'num_attention_heads': 4,
+                'cheby_k': 3,
+                'dropout': 0.2,
+                'attention_dropout': 0.1,
+                'use_edge_attr': True,
+                'concat_heads': True,
+                'negative_slope': 0.2,
+                'use_skip_connections': True,
+            },
+            'latent': {
+                'dim': 64,
+            },
+            'decoder': {
+                'gat_layers': 0,
+                'hidden_dims': [256, 128],
+                'reconstruct_edges': True,
+                'activation': 'leaky_relu',
+                'dropout': 0.1,
+            },
+            'pooling': {
+                'method': 'mean',
+            }
+        }
+        config['loss'] = {
+            'reconstruction': {
+                'node_weight': 0.3,
+                'edge_weight': 1.0,
+                'type': 'mse',
+            },
+            'kl': {
+                'weight': 0.01,
+                'annealing': {
+                    'enabled': True,
+                    'start': 0.0,
+                    'end': 0.05,
+                    'epochs': 50,
+                    'type': 'linear',
+                }
+            },
+            'free_bits': 0.1,
+        }
+    
     return config
 
 
@@ -600,9 +645,11 @@ def model_page():
                             data_source_select.options = ['STC (parcels)']
                             data_source_select.value = 'STC (parcels)'
                         
-                        # Create default config
-                        MS.config = create_default_config(str(path), info)
+                        # Create default config based on selected model type
+                        current_model_type = 'simclr' if 'SimCLR' in model_type_select.value else 'vae'
+                        MS.config = create_default_config(str(path), info, model_type=current_model_type)
                         model_log(f"Dataset scanned: {info['type'].upper()} ({info['file_count']} files)", 'success')
+                        model_log(f"Model type: {model_type_select.value}", 'info')
                         if info.get('data_sources'):
                             model_log(f"  Format: {info['data_sources'][0]}", 'info')
                         
@@ -765,13 +812,14 @@ def model_page():
                     return lambda e: MS.ui_params.update({key: e.value})
                 
                 with ui.column().classes('gap-1 mt-2'):
-                    # Model type selector
+                    # Model type selector - SimCLR is now default
                     with ui.row().classes('items-center gap-2'):
                         ui.label('Type:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem; min-width: 70px;')
                         model_type_select = ui.select(
-                            ['VAE (Graph)', 'VAE (Image)', 'AE (Graph)'],
-                            value='VAE (Graph)'
+                            ['SimCLR (Graph)', 'VAE (Graph)', 'VAE (Image)', 'AE (Graph)'],
+                            value=MS.ui_params.get('model_type', 'SimCLR (Graph)')
                         ).props('dense dark').classes('flex-1')
+                        model_type_select.on_value_change(save_param('model_type'))
                     
                     ui.separator().classes('my-1')
                     
@@ -802,21 +850,22 @@ def model_page():
                         attn_dropout = ui.number(value=MS.ui_params.get('attn_dropout', 0.1), min=0.0, max=0.3, step=0.05).props('dense').classes('w-16')
                         attn_dropout.on_value_change(save_param('attn_dropout'))
                     
-                    ui.separator().classes('my-1')
-                    
-                    # Decoder params
-                    ui.label('Decoder').style(f'color:{THEME_SECONDARY}; font-size: 0.65rem;')
-                    
-                    with ui.row().classes('items-center gap-2'):
-                        ui.label('Dec GAT:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem; min-width: 70px;')
-                        decoder_gat_layers = ui.number(value=MS.ui_params.get('decoder_gat_layers', 0), min=0, max=4).props('dense').classes('w-16')
-                        decoder_gat_layers.on_value_change(save_param('decoder_gat_layers'))
-                        ui.label('(0=MLP)').style(f'color:{THEME_TEXT_DIM}; font-size: 0.55rem;')
-                    
-                    with ui.row().classes('items-center gap-2'):
-                        ui.label('Dec dims:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem; min-width: 70px;')
-                        decoder_hidden_dims = ui.input(value=MS.ui_params.get('decoder_hidden_dims', '256,128')).props('dense').classes('w-24')
-                        decoder_hidden_dims.on_value_change(save_param('decoder_hidden_dims'))
+                    # Decoder params - ONLY for VAE models
+                    decoder_section = ui.column().classes('w-full gap-1')
+                    with decoder_section:
+                        ui.separator().classes('my-1')
+                        ui.label('Decoder').style(f'color:{THEME_SECONDARY}; font-size: 0.65rem;')
+                        
+                        with ui.row().classes('items-center gap-2'):
+                            ui.label('Dec GAT:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem; min-width: 70px;')
+                            decoder_gat_layers = ui.number(value=MS.ui_params.get('decoder_gat_layers', 0), min=0, max=4).props('dense').classes('w-16')
+                            decoder_gat_layers.on_value_change(save_param('decoder_gat_layers'))
+                            ui.label('(0=MLP)').style(f'color:{THEME_TEXT_DIM}; font-size: 0.55rem;')
+                        
+                        with ui.row().classes('items-center gap-2'):
+                            ui.label('Dec dims:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem; min-width: 70px;')
+                            decoder_hidden_dims = ui.input(value=MS.ui_params.get('decoder_hidden_dims', '256,128')).props('dense').classes('w-24')
+                            decoder_hidden_dims.on_value_change(save_param('decoder_hidden_dims'))
                     
                     ui.separator().classes('my-1')
                     
@@ -874,24 +923,57 @@ def model_page():
                     
                     ui.separator().classes('my-1')
                     
-                    # Loss params
-                    ui.label('Loss').style(f'color:{THEME_SECONDARY}; font-size: 0.65rem;')
+                    # Loss params - different for SimCLR vs VAE
+                    loss_label = ui.label('Loss').style(f'color:{THEME_SECONDARY}; font-size: 0.65rem;')
                     
-                    with ui.row().classes('items-center gap-2'):
-                        ui.label('KL weight:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem; min-width: 70px;')
-                        kl_weight = ui.number(value=MS.ui_params.get('kl_weight', 0.01), min=0.0, max=1.0, step=0.01).props('dense').classes('w-16')
-                        kl_weight.on_value_change(save_param('kl_weight'))
-                        ui.label('β anneal:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
-                        beta_annealing = ui.switch(value=MS.ui_params.get('beta_annealing', True)).props('dense')
-                        beta_annealing.on_value_change(save_param('beta_annealing'))
+                    # SimCLR loss params container
+                    simclr_loss_container = ui.column().classes('gap-1')
+                    with simclr_loss_container:
+                        with ui.row().classes('items-center gap-2'):
+                            ui.label('Temp τ:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem; min-width: 70px;')
+                            temperature = ui.number(value=MS.ui_params.get('temperature', 0.5), min=0.05, max=1.0, step=0.05).props('dense').classes('w-16')
+                            temperature.on_value_change(save_param('temperature'))
+                            ui.label('(NT-Xent)').style(f'color:{THEME_TEXT_DIM}; font-size: 0.55rem;')
+                        
+                        ui.separator().classes('my-1')
+                        ui.label('Augmentation').style(f'color:{THEME_SECONDARY}; font-size: 0.65rem;')
+                        
+                        with ui.row().classes('items-center gap-2'):
+                            ui.label('Edge drop:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem; min-width: 70px;')
+                            edge_drop = ui.number(value=MS.ui_params.get('edge_drop_prob', 0.2), min=0.0, max=0.5, step=0.05).props('dense').classes('w-16')
+                            edge_drop.on_value_change(save_param('edge_drop_prob'))
+                            ui.label('Feat noise:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
+                            feat_noise = ui.number(value=MS.ui_params.get('feature_noise_std', 0.1), min=0.0, max=0.3, step=0.02).props('dense').classes('w-16')
+                            feat_noise.on_value_change(save_param('feature_noise_std'))
                     
-                    with ui.row().classes('items-center gap-2'):
-                        ui.label('Node wt:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem; min-width: 70px;')
-                        node_weight = ui.number(value=MS.ui_params.get('node_weight', 0.3), min=0.0, max=1.0, step=0.1).props('dense').classes('w-16')
-                        node_weight.on_value_change(save_param('node_weight'))
-                        ui.label('Edge wt:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
-                        edge_weight = ui.number(value=MS.ui_params.get('edge_weight', 1.0), min=0.0, max=2.0, step=0.1).props('dense').classes('w-16')
-                        edge_weight.on_value_change(save_param('edge_weight'))
+                    # VAE loss params container
+                    vae_loss_container = ui.column().classes('gap-1')
+                    with vae_loss_container:
+                        with ui.row().classes('items-center gap-2'):
+                            ui.label('KL weight:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem; min-width: 70px;')
+                            kl_weight = ui.number(value=MS.ui_params.get('kl_weight', 0.01), min=0.0, max=1.0, step=0.01).props('dense').classes('w-16')
+                            kl_weight.on_value_change(save_param('kl_weight'))
+                            ui.label('β anneal:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
+                            beta_annealing = ui.switch(value=MS.ui_params.get('beta_annealing', True)).props('dense')
+                            beta_annealing.on_value_change(save_param('beta_annealing'))
+                        
+                        with ui.row().classes('items-center gap-2'):
+                            ui.label('Node wt:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem; min-width: 70px;')
+                            node_weight = ui.number(value=MS.ui_params.get('node_weight', 0.3), min=0.0, max=1.0, step=0.1).props('dense').classes('w-16')
+                            node_weight.on_value_change(save_param('node_weight'))
+                            ui.label('Edge wt:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
+                            edge_weight = ui.number(value=MS.ui_params.get('edge_weight', 1.0), min=0.0, max=2.0, step=0.1).props('dense').classes('w-16')
+                            edge_weight.on_value_change(save_param('edge_weight'))
+                    
+                    # Show/hide sections based on model type
+                    def update_model_sections_visibility():
+                        is_simclr = 'SimCLR' in model_type_select.value
+                        simclr_loss_container.set_visibility(is_simclr)
+                        vae_loss_container.set_visibility(not is_simclr)
+                        decoder_section.set_visibility(not is_simclr)
+                    
+                    model_type_select.on_value_change(lambda e: update_model_sections_visibility())
+                    update_model_sections_visibility()  # Initial state
                     
                     ui.separator().classes('my-1')
                     
@@ -900,13 +982,19 @@ def model_page():
                     
                     with ui.row().classes('items-center gap-2'):
                         ui.label('Workers:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem; min-width: 70px;')
-                        num_workers = ui.number(value=MS.ui_params.get('num_workers', 4), min=0, max=32, step=1).props('dense').classes('w-16')
+                        num_workers = ui.number(value=MS.ui_params.get('num_workers', 2), min=0, max=32, step=1).props('dense').classes('w-16')
                         num_workers.on_value_change(save_param('num_workers'))
                         ui.label('Dataset:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
-                        dataset_workers = ui.number(value=MS.ui_params.get('dataset_workers', 8), min=1, max=32, step=1).props('dense').classes('w-16')
+                        dataset_workers = ui.number(value=MS.ui_params.get('dataset_workers', 2), min=1, max=32, step=1).props('dense').classes('w-16')
                         dataset_workers.on_value_change(save_param('dataset_workers'))
                     
-                    ui.label('Workers=0 uses main thread. Dataset workers for building graphs.').style(f'color:{THEME_TEXT_DIM}; font-size: 0.55rem;')
+                    ui.label('Workers=0 uses main thread. Low values (1-2) for HDD, higher (4-8) for SSD.').style(f'color:{THEME_TEXT_DIM}; font-size: 0.55rem;')
+                    
+                    with ui.row().classes('items-center gap-2'):
+                        ui.label('Max files:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem; min-width: 70px;')
+                        max_files_input = ui.number(value=MS.ui_params.get('max_files', 0), min=0, max=1000, step=1).props('dense').classes('w-16')
+                        max_files_input.on_value_change(save_param('max_files'))
+                        ui.label('(0 = all files)').style(f'color:{THEME_TEXT_DIM}; font-size: 0.55rem;')
             
             # TRAINING CONTROLS
             with ui.card().classes('dark-card p-4 w-full'):
@@ -945,27 +1033,51 @@ def model_page():
                             return
                         
                         if MS.dataset_info.get('type') == 'order':
-                            ui.notify('Order files not suitable for VAE. Use phases-*.pkl', type='error')
+                            ui.notify('Order files not suitable for training. Use phases-*.pkl', type='error')
                             return
                         
-                        # Update config with UI values - Architecture
-                        MS.config['model']['latent']['dim'] = int(latent_dim.value)
+                        # Check if using SimCLR or VAE
+                        is_simclr = 'SimCLR' in model_type_select.value
+                        
+                        # Recreate config if model type changed
+                        current_model_type = 'simclr' if is_simclr else 'vae'
+                        if (is_simclr and 'embedding' not in MS.config.get('model', {})) or \
+                           (not is_simclr and 'latent' not in MS.config.get('model', {})):
+                            MS.config = create_default_config(MS.dataset_path, MS.dataset_info, model_type=current_model_type)
+                        
+                        # Update config with UI values - Common architecture params
                         MS.config['model']['encoder']['hidden_dim'] = int(hidden_dim.value)
                         MS.config['model']['encoder']['num_gat_layers'] = int(gat_layers.value)
                         MS.config['model']['encoder']['num_attention_heads'] = int(attention_heads.value)
                         MS.config['model']['encoder']['dropout'] = float(dropout.value)
                         MS.config['model']['encoder']['attention_dropout'] = float(attn_dropout.value)
                         
-                        # Decoder config
-                        MS.config['model']['decoder']['gat_layers'] = int(decoder_gat_layers.value)
-                        try:
-                            dims_str = decoder_hidden_dims.value.strip()
-                            if dims_str:
-                                MS.config['model']['decoder']['hidden_dims'] = [int(x.strip()) for x in dims_str.split(',') if x.strip()]
-                        except ValueError:
-                            MS.config['model']['decoder']['hidden_dims'] = [256, 128]  # Default
+                        if is_simclr:
+                            # SimCLR-specific config
+                            MS.config['model']['embedding']['dim'] = int(latent_dim.value)
+                            MS.config['loss']['temperature'] = float(temperature.value)
+                            MS.config['augmentation']['edge_drop_prob'] = float(edge_drop.value)
+                            MS.config['augmentation']['feature_noise_std'] = float(feat_noise.value)
+                        else:
+                            # VAE-specific config
+                            MS.config['model']['latent']['dim'] = int(latent_dim.value)
+                            
+                            # Decoder config
+                            MS.config['model']['decoder']['gat_layers'] = int(decoder_gat_layers.value)
+                            try:
+                                dims_str = decoder_hidden_dims.value.strip()
+                                if dims_str:
+                                    MS.config['model']['decoder']['hidden_dims'] = [int(x.strip()) for x in dims_str.split(',') if x.strip()]
+                            except ValueError:
+                                MS.config['model']['decoder']['hidden_dims'] = [256, 128]  # Default
+                            
+                            # VAE loss params
+                            MS.config['loss']['kl']['weight'] = float(kl_weight.value)
+                            MS.config['loss']['kl']['annealing']['enabled'] = beta_annealing.value
+                            MS.config['loss']['reconstruction']['node_weight'] = float(node_weight.value)
+                            MS.config['loss']['reconstruction']['edge_weight'] = float(edge_weight.value)
                         
-                        # Training params
+                        # Training params (common)
                         MS.config['training']['num_epochs'] = int(num_epochs.value)
                         MS.config['training']['batch_size'] = int(batch_size.value)
                         MS.config['training']['learning_rate'] = float(learning_rate.value)
@@ -975,12 +1087,6 @@ def model_page():
                         MS.config['training']['early_stopping']['patience'] = int(patience.value)
                         MS.config['training']['gradient_clipping']['max_norm'] = float(grad_clip.value)
                         MS.config['training']['gradient_clipping']['enabled'] = grad_clip.value > 0
-                        
-                        # Loss params
-                        MS.config['loss']['kl']['weight'] = float(kl_weight.value)
-                        MS.config['loss']['kl']['annealing']['enabled'] = beta_annealing.value
-                        MS.config['loss']['reconstruction']['node_weight'] = float(node_weight.value)
-                        MS.config['loss']['reconstruction']['edge_weight'] = float(edge_weight.value)
                         
                         # Set data source (EEG vs STC)
                         use_stc = 'STC' in data_source_select.value
@@ -1035,8 +1141,12 @@ def model_page():
                         with open(config_path, 'w') as f:
                             yaml.dump(MS.config, f, default_flow_style=False)
                         
+                        # Determine which training script to use
+                        is_simclr = 'SimCLR' in model_type_select.value
+                        train_script = 'train_simclr.py' if is_simclr else 'train.py'
+                        
                         MS.training = True
-                        MS.running_task_name = 'train.py'  # For global indicator
+                        MS.running_task_name = train_script  # For global indicator
                         MS.history = {'train_loss': [], 'val_loss': [], 'recon_loss': [], 'kl_loss': [], 'epoch': []}
                         MS.log_history = []  # Clear log history
                         MS._last_log_count = 0  # Reset log polling counter
@@ -1046,27 +1156,32 @@ def model_page():
                         update_status_indicator('training')
                         
                         try:
-                            training_status.text = 'Training...'
+                            training_status.text = f'Training {train_script}...'
                             training_status.style(f'color:{THEME_PRIMARY}; font-size: 0.75rem;')
                         except Exception:
                             pass
-                        model_log(f"Starting training with config: {config_path}", 'info')
+                        model_log(f"Starting {model_type_select.value} training with config: {config_path}", 'info')
                         
                         # Get worker settings
-                        n_workers = int(num_workers.value) if num_workers.value else 4
-                        n_dataset_workers = int(dataset_workers.value) if dataset_workers.value else 8
-                        model_log(f"Workers: DataLoader={n_workers}, Dataset={n_dataset_workers}", 'info')
+                        n_workers = int(num_workers.value) if num_workers.value else 2
+                        n_dataset_workers = int(dataset_workers.value) if dataset_workers.value else 2
+                        n_max_files = int(max_files_input.value) if max_files_input.value else 0
+                        model_log(f"Workers: DataLoader={n_workers}, Dataset={n_dataset_workers}, MaxFiles={n_max_files or 'all'}", 'info')
                         
                         # Prepare command and environment
                         cmd = [
                             sys.executable,
                             '-u',  # Unbuffered output - critical for real-time logs
-                            str(AUTOENCODER_DIR / 'train.py'),
+                            str(AUTOENCODER_DIR / train_script),
                             '--config', str(config_path),
                             '--subsample', str(subsample_slider.value),
                             '--workers', str(n_workers),
                             '--dataset-workers', str(n_dataset_workers),
                         ]
+                        
+                        # Add max-files only if specified (non-zero)
+                        if n_max_files > 0:
+                            cmd.extend(['--max-files', str(n_max_files)])
                         
                         env = os.environ.copy()
                         env['PYTHONPATH'] = str(AUTOENCODER_DIR.parent)
@@ -1124,7 +1239,7 @@ def model_page():
                 with ui.tabs().classes('w-full').style(f'background: {THEME_BG};') as model_tabs:
                     tab_arch = ui.tab('ARCH', icon='account_tree').style(f'color:{THEME_WARN};')
                     tab_metrics = ui.tab('METRICS', icon='show_chart').style('color:#f472b6;')
-                    tab_recon = ui.tab('RECON', icon='compare').style(f'color:{THEME_SECONDARY};')
+                    tab_latent = ui.tab('LATENT', icon='scatter_plot').style(f'color:{THEME_SECONDARY};')
                     tab_console = ui.tab('CONSOLE', icon='terminal').style(f'color:{THEME_PRIMARY};')
                 
                 with ui.tab_panels(model_tabs, value=tab_arch).classes('w-full').style('flex: 1; min-height: 0; overflow: hidden;'):
@@ -1190,21 +1305,37 @@ def model_page():
                                     
                                     ui.label('→').style(f'color:{THEME_TEXT_DIM}; font-size: 1.2rem;')
                                     
-                                    # Latent
-                                    with ui.card().classes('p-2').style(f'background: {THEME_CARD}; border: 1px solid #f472b6; min-width: 70px;'):
-                                        ui.label('LATENT').style('color:#f472b6; font-size: 0.6rem; font-weight: bold;')
-                                        ui.label(f'{lat_dim} dim').style(f'color:{THEME_TEXT_DIM}; font-size: 0.55rem;')
-                                        ui.label('μ + σ').style(f'color:{THEME_TEXT_DIM}; font-size: 0.55rem;')
+                                    # Check if SimCLR or VAE
+                                    is_simclr_mode = 'SimCLR' in model_type_select.value
                                     
-                                    ui.label('→').style(f'color:{THEME_TEXT_DIM}; font-size: 1.2rem;')
-                                    
-                                    # Decoder
-                                    with ui.card().classes('p-2').style(f'background: {THEME_CARD}; border: 1px solid {THEME_WARN}; min-width: 90px;'):
-                                        ui.label('DECODER').style(f'color:{THEME_WARN}; font-size: 0.6rem; font-weight: bold;')
-                                        if dec_gat > 0:
-                                            ui.label(f'GAT × {dec_gat}').style(f'color:{THEME_TEXT_DIM}; font-size: 0.55rem;')
-                                        else:
-                                            ui.label('MLP').style(f'color:{THEME_TEXT_DIM}; font-size: 0.55rem;')
+                                    if is_simclr_mode:
+                                        # SimCLR: Embedding + Projection
+                                        with ui.card().classes('p-2').style(f'background: {THEME_CARD}; border: 1px solid #f472b6; min-width: 70px;'):
+                                            ui.label('EMBED').style('color:#f472b6; font-size: 0.6rem; font-weight: bold;')
+                                            ui.label(f'{lat_dim} dim').style(f'color:{THEME_TEXT_DIM}; font-size: 0.55rem;')
+                                            ui.label('contrastive').style(f'color:{THEME_TEXT_DIM}; font-size: 0.55rem;')
+                                        
+                                        ui.label('→').style(f'color:{THEME_TEXT_DIM}; font-size: 1.2rem;')
+                                        
+                                        with ui.card().classes('p-2').style(f'background: {THEME_CARD}; border: 1px solid {THEME_WARN}; min-width: 90px;'):
+                                            ui.label('PROJ').style(f'color:{THEME_WARN}; font-size: 0.6rem; font-weight: bold;')
+                                            ui.label('MLP → 64d').style(f'color:{THEME_TEXT_DIM}; font-size: 0.55rem;')
+                                            ui.label('(training only)').style(f'color:{THEME_TEXT_DIM}; font-size: 0.55rem;')
+                                    else:
+                                        # VAE: Latent + Decoder
+                                        with ui.card().classes('p-2').style(f'background: {THEME_CARD}; border: 1px solid #f472b6; min-width: 70px;'):
+                                            ui.label('LATENT').style('color:#f472b6; font-size: 0.6rem; font-weight: bold;')
+                                            ui.label(f'{lat_dim} dim').style(f'color:{THEME_TEXT_DIM}; font-size: 0.55rem;')
+                                            ui.label('μ + σ').style(f'color:{THEME_TEXT_DIM}; font-size: 0.55rem;')
+                                        
+                                        ui.label('→').style(f'color:{THEME_TEXT_DIM}; font-size: 1.2rem;')
+                                        
+                                        with ui.card().classes('p-2').style(f'background: {THEME_CARD}; border: 1px solid {THEME_WARN}; min-width: 90px;'):
+                                            ui.label('DECODER').style(f'color:{THEME_WARN}; font-size: 0.6rem; font-weight: bold;')
+                                            if dec_gat > 0:
+                                                ui.label(f'GAT × {dec_gat}').style(f'color:{THEME_TEXT_DIM}; font-size: 0.55rem;')
+                                            else:
+                                                ui.label('MLP').style(f'color:{THEME_TEXT_DIM}; font-size: 0.55rem;')
                                         ui.label(f'{" → ".join(map(str, dec_dims))}').style(f'color:{THEME_TEXT_DIM}; font-size: 0.55rem;')
                                     
                                     ui.label('→').style(f'color:{THEME_TEXT_DIM}; font-size: 1.2rem;')
@@ -1247,7 +1378,7 @@ def model_page():
                             MS._last_epoch_count = 0
                         
                         def make_loss_figure():
-                            """Create separate plots for different metrics."""
+                            """Create loss plots - adapts to SimCLR (1 plot) or VAE (3 plots)."""
                             from plotly.subplots import make_subplots
                             
                             epochs = MS.history.get('epoch', [])
@@ -1256,12 +1387,21 @@ def model_page():
                             recon_loss = MS.history.get('recon_loss', [])
                             kl_loss = MS.history.get('kl_loss', [])
                             
-                            # Create 1x3 subplot grid
-                            fig = make_subplots(
-                                rows=1, cols=3,
-                                subplot_titles=('Total Loss', 'Recon Loss', 'KL Loss'),
-                                horizontal_spacing=0.08
-                            )
+                            # Detect if VAE mode (has recon/kl) or SimCLR mode (only total loss)
+                            has_vae_losses = bool(recon_loss) or bool(kl_loss)
+                            
+                            if has_vae_losses:
+                                # VAE: 3 subplot grid
+                                fig = make_subplots(
+                                    rows=1, cols=3,
+                                    subplot_titles=('Total Loss', 'Recon Loss', 'KL Loss'),
+                                    horizontal_spacing=0.08
+                                )
+                                n_cols = 3
+                            else:
+                                # SimCLR: Single large plot
+                                fig = make_subplots(rows=1, cols=1, subplot_titles=('Contrastive Loss (NT-Xent)',))
+                                n_cols = 1
                             
                             if epochs:
                                 # Plot 1: Train + Val Loss
@@ -1278,21 +1418,24 @@ def model_page():
                                         line=dict(color='#f472b6', width=2)
                                     ), row=1, col=1)
                                 
-                                # Plot 2: Recon Loss
-                                fig.add_trace(go.Scatter(
-                                    x=epochs, y=recon_loss,
-                                    mode='lines', name='Recon',
-                                    line=dict(color=THEME_SECONDARY, width=2),
-                                    showlegend=False
-                                ), row=1, col=2)
-                                
-                                # Plot 3: KL Loss
-                                fig.add_trace(go.Scatter(
-                                    x=epochs, y=kl_loss,
-                                    mode='lines', name='KL',
-                                    line=dict(color=THEME_WARN, width=2),
-                                    showlegend=False
-                                ), row=1, col=3)
+                                if has_vae_losses:
+                                    # Plot 2: Recon Loss
+                                    if recon_loss:
+                                        fig.add_trace(go.Scatter(
+                                            x=epochs, y=recon_loss,
+                                            mode='lines', name='Recon',
+                                            line=dict(color=THEME_SECONDARY, width=2),
+                                            showlegend=False
+                                        ), row=1, col=2)
+                                    
+                                    # Plot 3: KL Loss
+                                    if kl_loss:
+                                        fig.add_trace(go.Scatter(
+                                            x=epochs, y=kl_loss,
+                                            mode='lines', name='KL',
+                                            line=dict(color=THEME_WARN, width=2),
+                                            showlegend=False
+                                        ), row=1, col=3)
                             
                             fig.update_layout(
                                 template='plotly_dark',
@@ -1370,111 +1513,154 @@ def model_page():
                         
                         ui.timer(1.0, poll_metrics)  # Poll every second
                     
-                    # RECONSTRUCTION TAB - Show original vs reconstructed with epoch slider
-                    with ui.tab_panel(tab_recon).classes('p-2').style('height: 100%; display: flex; flex-direction: column;'):
-                        ui.label('▌RECONSTRUCTION QUALITY').style(f'color:{THEME_SECONDARY}; font-family: JetBrains Mono; font-size: 0.8rem;').classes('mb-2')
+                    # LATENT SPACE TAB - Visualize brain states in embedding space
+                    with ui.tab_panel(tab_latent).classes('p-2').style('height: 100%; display: flex; flex-direction: column; overflow: hidden;'):
+                        # Header with controls in same row
+                        with ui.row().classes('w-full items-center justify-between mb-2'):
+                            ui.label('▌LATENT SPACE').style(f'color:{THEME_SECONDARY}; font-family: JetBrains Mono; font-size: 0.8rem;')
+                            with ui.row().classes('items-center gap-2'):
+                                ui.label('Method:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                                latent_method = ui.select(['PCA', 't-SNE'], value='PCA').props('dense dark').classes('w-20')
+                                refresh_latent_btn = ui.button('Load Embeddings', icon='refresh').props('flat dense size=sm')
                         
-                        recon_container = ui.column().classes('w-full flex-1')
+                        # Main container takes remaining space
+                        latent_container = ui.column().classes('w-full flex-1').style('overflow: hidden;')
                         
-                        # Epoch selector
-                        with ui.row().classes('items-center gap-3 mb-3'):
-                            ui.label('Epoch:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.75rem;')
-                            epoch_slider = ui.slider(min=1, max=100, step=10, value=10).props('label label-always :label-value="value"').classes('flex-1')
-                            refresh_btn = ui.button('Refresh', icon='refresh').props('flat dense size=sm')
-                        
-                        def load_reconstruction(epoch_val):
-                            """Load and display reconstruction for given epoch."""
-                            recon_dir = AUTOENCODER_CACHE_DIR / 'output' / 'reconstructions'
-                            recon_file = recon_dir / f'recon_epoch_{int(epoch_val):03d}.npz'
+                        def load_latent_visualization():
+                            """Load and display latent space from trained model."""
+                            latent_container.clear()
                             
-                            recon_container.clear()
-                            with recon_container:
-                                if not recon_file.exists():
-                                    ui.label(f'No reconstruction for epoch {int(epoch_val)}').style(f'color:{THEME_TEXT_DIM};')
-                                    ui.label('Reconstructions are saved every 10 epochs during training').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                            # Look for saved embeddings
+                            embeddings_dir = AUTOENCODER_CACHE_DIR / 'output' / 'embeddings'
+                            latent_file = embeddings_dir / 'test_embeddings.pkl'
+                            
+                            # Also check latent_space.png
+                            latent_img = AUTOENCODER_CACHE_DIR / 'output' / 'latent_space.png'
+                            
+                            with latent_container:
+                                # First try to show saved image (scaled to fit)
+                                if latent_img.exists():
+                                    ui.label('From last training:').style(f'color:{THEME_TEXT_DIM}; font-size: 0.65rem;')
+                                    # Use container with controlled height
+                                    with ui.element('div').classes('w-full').style('flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center;'):
+                                        ui.image(str(latent_img)).style('max-width: 100%; max-height: 100%; object-fit: contain;')
+                                    return
+                                
+                                # Try to load embeddings and create plot
+                                if not latent_file.exists():
+                                    ui.label('No embeddings found.').style(f'color:{THEME_TEXT_DIM};')
+                                    ui.label('Train a model first - embeddings are saved after training.').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
                                     
-                                    # List available epochs
-                                    if recon_dir.exists():
-                                        available = sorted([f.stem.split('_')[-1] for f in recon_dir.glob('*.npz')])
+                                    # Check for available files
+                                    if embeddings_dir.exists():
+                                        available = list(embeddings_dir.glob('*.pkl'))
                                         if available:
-                                            ui.label(f'Available: {", ".join(available)}').style(f'color:{THEME_PRIMARY}; font-size: 0.7rem;')
+                                            ui.label(f'Available: {", ".join(f.name for f in available)}').style(f'color:{THEME_PRIMARY}; font-size: 0.7rem;')
                                     return
                                 
                                 try:
-                                    data = np.load(recon_file)
-                                    original = data['original']
-                                    reconstructed = data['reconstructed']
+                                    import pickle
+                                    from sklearn.manifold import TSNE
+                                    from sklearn.decomposition import PCA
                                     
-                                    # Create side-by-side heatmaps
-                                    from plotly.subplots import make_subplots
+                                    with open(latent_file, 'rb') as f:
+                                        data = pickle.load(f)
                                     
-                                    # Use first 100 samples, reshape to 10x10 grid
-                                    n_features = min(original.shape[1], 10) if len(original.shape) > 1 else 10
-                                    n_samples = min(100, original.shape[0])
+                                    # Extract embeddings and labels
+                                    embeddings = data.get('embeddings', data.get('latent', None))
+                                    labels = data.get('labels', data.get('conditions', None))
+                                    class_names = data.get('class_names', data.get('conditions_list', ['DMT', 'EC', 'EO']))
                                     
-                                    # Take mean across features for visualization
-                                    if len(original.shape) > 1:
-                                        orig_grid = original[:n_samples, :n_features]
-                                        recon_grid = reconstructed[:n_samples, :n_features]
+                                    if embeddings is None:
+                                        ui.label('Could not find embeddings in file').style(f'color:{THEME_ERROR};')
+                                        return
+                                    
+                                    embeddings = np.array(embeddings)
+                                    labels = np.array(labels) if labels is not None else np.zeros(len(embeddings))
+                                    
+                                    # Limit samples for performance
+                                    max_samples = 2000
+                                    if len(embeddings) > max_samples:
+                                        indices = np.random.choice(len(embeddings), max_samples, replace=False)
+                                        embeddings = embeddings[indices]
+                                        labels = labels[indices]
+                                    
+                                    # Reduce dimensions
+                                    ui.label(f'Computing {latent_method.value}...').style(f'color:{THEME_TEXT_DIM}; font-size: 0.7rem;')
+                                    
+                                    if latent_method.value == 't-SNE':
+                                        perplexity = min(30, len(embeddings) - 1)
+                                        reducer = TSNE(n_components=2, perplexity=perplexity, random_state=42)
                                     else:
-                                        orig_grid = original[:n_samples].reshape(-1, 1)
-                                        recon_grid = reconstructed[:n_samples].reshape(-1, 1)
+                                        reducer = PCA(n_components=2)
                                     
-                                    diff_grid = np.abs(orig_grid - recon_grid)
+                                    coords = reducer.fit_transform(embeddings)
                                     
-                                    fig = make_subplots(
-                                        rows=1, cols=3,
-                                        subplot_titles=(f'Original (Epoch {int(epoch_val)})', 'Reconstructed', 'Difference'),
-                                        horizontal_spacing=0.05
-                                    )
+                                    # Create scatter plot with Plotly
+                                    fig = go.Figure()
                                     
-                                    # Original heatmap
-                                    fig.add_trace(go.Heatmap(
-                                        z=orig_grid, colorscale='Viridis', showscale=False,
-                                        name='Original'
-                                    ), row=1, col=1)
+                                    # Colors for conditions
+                                    colors = ['#00ff88', '#f472b6', '#fbbf24', '#60a5fa', '#c084fc']
                                     
-                                    # Reconstructed heatmap  
-                                    fig.add_trace(go.Heatmap(
-                                        z=recon_grid, colorscale='Viridis', showscale=False,
-                                        name='Reconstructed'
-                                    ), row=1, col=2)
-                                    
-                                    # Difference heatmap
-                                    fig.add_trace(go.Heatmap(
-                                        z=diff_grid, colorscale='Reds', showscale=True,
-                                        colorbar=dict(title='|Δ|', x=1.02, len=0.9),
-                                        name='Difference'
-                                    ), row=1, col=3)
+                                    unique_labels = np.unique(labels)
+                                    for i, label in enumerate(unique_labels):
+                                        mask = labels == label
+                                        class_name = class_names[int(label)] if int(label) < len(class_names) else f'Class {label}'
+                                        
+                                        fig.add_trace(go.Scatter(
+                                            x=coords[mask, 0],
+                                            y=coords[mask, 1],
+                                            mode='markers',
+                                            name=class_name,
+                                            marker=dict(
+                                                color=colors[i % len(colors)],
+                                                size=6,
+                                                opacity=0.7
+                                            )
+                                        ))
                                     
                                     fig.update_layout(
                                         template='plotly_dark',
                                         paper_bgcolor='rgba(8,8,8,1)',
                                         plot_bgcolor='rgba(8,8,8,1)',
-                                        height=500,
-                                        margin=dict(l=40, r=60, t=50, b=40),
-                                        font=dict(family='JetBrains Mono', size=10, color=THEME_TEXT)
+                                        margin=dict(l=40, r=20, t=30, b=30),
+                                        font=dict(family='JetBrains Mono', size=10, color=THEME_TEXT),
+                                        legend=dict(
+                                            orientation='h',
+                                            yanchor='bottom',
+                                            y=1.02,
+                                            xanchor='left',
+                                            x=0
+                                        ),
+                                        xaxis=dict(title='Dim 1', gridcolor='rgba(0,255,136,0.1)'),
+                                        yaxis=dict(title='Dim 2', gridcolor='rgba(0,255,136,0.1)')
                                     )
                                     
-                                    ui.plotly(fig).classes('w-full').style('height: 500px;')
+                                    # Plot takes available space
+                                    ui.plotly(fig).classes('w-full').style('flex: 1; min-height: 300px;')
                                     
-                                    # Stats
-                                    mse = np.mean(diff_grid ** 2)
-                                    mae = np.mean(diff_grid)
-                                    with ui.row().classes('gap-4 mt-2'):
-                                        ui.label(f'MSE: {mse:.6f}').style(f'color:{THEME_PRIMARY}; font-size: 0.8rem;')
-                                        ui.label(f'MAE: {mae:.6f}').style(f'color:{THEME_SECONDARY}; font-size: 0.8rem;')
-                                        ui.label(f'Samples: {n_samples} × {n_features} features').style(f'color:{THEME_TEXT_DIM}; font-size: 0.75rem;')
+                                    # Compact stats row
+                                    with ui.row().classes('gap-3 mt-1 flex-wrap'):
+                                        ui.label(f'n={len(embeddings)}').style(f'color:{THEME_PRIMARY}; font-size: 0.7rem;')
+                                        ui.label(f'd={embeddings.shape[1]}').style(f'color:{THEME_SECONDARY}; font-size: 0.7rem;')
+                                        for i, name in enumerate(class_names):
+                                            count = (labels == i).sum()
+                                            if count > 0:
+                                                ui.label(f'{name}:{count}').style(f'color:{colors[i % len(colors)]}; font-size: 0.7rem;')
                                     
                                 except Exception as e:
-                                    ui.label(f'Error loading: {e}').style(f'color:{THEME_ERROR};')
+                                    ui.label(f'Error: {e}').style(f'color:{THEME_ERROR};')
+                                    import traceback
+                                    ui.label(traceback.format_exc()[:200]).style(f'color:{THEME_TEXT_DIM}; font-size: 0.6rem;')
                         
                         # Bind events
-                        epoch_slider.on('update:model-value', lambda e: load_reconstruction(e.args))
-                        refresh_btn.on('click', lambda: load_reconstruction(epoch_slider.value))
+                        refresh_latent_btn.on('click', lambda: load_latent_visualization())
                         
-                        # Initial load
-                        load_reconstruction(10)
+                        # Initial message - compact
+                        with latent_container:
+                            with ui.column().classes('items-center justify-center').style('flex: 1;'):
+                                ui.icon('scatter_plot').style('color:#f472b6; font-size: 3rem; opacity: 0.5;')
+                                ui.label('Train a model then click "Load Embeddings"').style(f'color:{THEME_TEXT_DIM}; font-size: 0.75rem;')
                     
                     # CONSOLE TAB
                     with ui.tab_panel(tab_console).classes('p-2').style('height: 100%; display: flex; flex-direction: column; overflow: hidden;'):

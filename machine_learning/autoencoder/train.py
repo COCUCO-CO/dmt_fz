@@ -339,7 +339,8 @@ def evaluate(model: nn.Module,
 
 def main(config_path: str, force_rebuild: bool = False,
          subsample_fraction: float = 1.0, normalize: bool = True,
-         num_workers_override: int = None, dataset_workers_override: int = None):
+         num_workers_override: int = None, dataset_workers_override: int = None,
+         max_files: int = None):
     """Main training function.
     
     Args:
@@ -349,6 +350,7 @@ def main(config_path: str, force_rebuild: bool = False,
         normalize: Whether to normalize features
         num_workers_override: Override num_workers for DataLoader
         dataset_workers_override: Override workers for dataset building
+        max_files: Maximum number of files to load (random sample, for quick testing)
     """
     
     # Load configuration
@@ -395,7 +397,8 @@ def main(config_path: str, force_rebuild: bool = False,
     train_graphs, val_graphs, test_graphs = create_dataset_from_config(
         config, 
         force_rebuild=force_rebuild,
-        num_workers=dataset_workers
+        num_workers=dataset_workers,
+        max_files=max_files
     )
     
     logger.info(f"Original - Train: {len(train_graphs)}, Val: {len(val_graphs)}, Test: {len(test_graphs)}")
@@ -807,6 +810,8 @@ if __name__ == '__main__':
                        help='Number of workers for data loading. Overrides config value.')
     parser.add_argument('--dataset-workers', type=int, default=None,
                        help='Number of workers for dataset building. Overrides config value.')
+    parser.add_argument('--max-files', type=int, default=None,
+                       help='Max files to load (random sample, for quick testing)')
     
     args = parser.parse_args()
     
@@ -814,5 +819,6 @@ if __name__ == '__main__':
          subsample_fraction=args.subsample,
          normalize=not args.no_normalize,
          num_workers_override=args.workers,
-         dataset_workers_override=args.dataset_workers)
+         dataset_workers_override=args.dataset_workers,
+         max_files=args.max_files)
 

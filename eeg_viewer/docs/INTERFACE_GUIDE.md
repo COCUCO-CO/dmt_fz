@@ -42,31 +42,20 @@ Una aplicación web modular para visualización de datos EEG, preprocesamiento, 
       - [Archivos de Salida](#archivos-de-salida)
     - [Demo Completa](#demo-completa)
   - [Cleaner - Pipeline de Preprocesamiento](#cleaner---pipeline-de-preprocesamiento)
+    - [Vista General](#vista-general-1)
     - [Flujo del Pipeline](#flujo-del-pipeline)
-    - [Características Generales](#características-generales)
-    - [1. Load - Carga de Archivos](#1-load---carga-de-archivos)
-      - [Formatos Soportados](#formatos-soportados-2)
-      - [Información Mostrada](#información-mostrada)
-    - [2. Filter - Filtrado](#2-filter---filtrado)
-      - [Presets Disponibles](#presets-disponibles)
-    - [3. Bad Channels - Canales Problemáticos](#3-bad-channels---canales-problemáticos)
-      - [Detección Automática](#detección-automática)
-      - [Acciones](#acciones)
-    - [4. Rereference - Re-referenciado](#4-rereference---re-referenciado)
-      - [Tipos de Referencia](#tipos-de-referencia)
-    - [5. ICA - Análisis de Componentes](#5-ica---análisis-de-componentes)
-      - [Proceso](#proceso)
-      - [Visualizaciones](#visualizaciones)
-    - [6. Epochs - Segmentación](#6-epochs---segmentación)
-      - [Parámetros](#parámetros-1)
-    - [7. Reject - Rechazo de Épocas](#7-reject---rechazo-de-épocas)
-      - [Criterios de Rechazo](#criterios-de-rechazo)
-    - [8. Visualize - Visualización Final](#8-visualize---visualización-final)
-      - [Vistas Disponibles](#vistas-disponibles)
-    - [9. Export - Exportación](#9-export---exportación)
-      - [Formatos de Exportación](#formatos-de-exportación)
-      - [Archivos Adicionales](#archivos-adicionales)
-  - [Pipeline - Procesamiento Batch](#pipeline---procesamiento-batch)
+    - [Características](#características-1)
+    - [1. Load](#1-load)
+    - [2. Filter](#2-filter)
+    - [3. Bad Channels](#3-bad-channels)
+    - [4. Rereference](#4-rereference)
+    - [5. ICA](#5-ica)
+    - [6. Epochs](#6-epochs)
+    - [7. Reject](#7-reject)
+    - [8. Export](#8-export)
+    - [Resultados](#resultados)
+  - [Source Localization - Localización de Fuentes](#source-localization---localización-de-fuentes)
+    - [Descripción General](#descripción-general)
     - [Layout](#layout)
     - [Configuración I/O](#configuración-io)
     - [Parámetros Globales](#parámetros-globales)
@@ -81,16 +70,15 @@ Una aplicación web modular para visualización de datos EEG, preprocesamiento, 
     - [Fase 3: Análisis Estadístico](#fase-3-análisis-estadístico)
       - [Step 7: Pearson (`pearson.py`)](#step-7-pearson-pearsonpy)
       - [Step 8: Clustering (`clustering.py`)](#step-8-clustering-clusteringpy)
-    - [Panel de Visualización](#panel-de-visualización)
-      - [Pestañas de Visualización](#pestañas-de-visualización)
     - [Consola de Salida](#consola-de-salida)
-      - [Características](#características-1)
+      - [Características](#características-2)
     - [Generador de Animaciones](#generador-de-animaciones)
-      - [Parámetros](#parámetros-2)
+      - [Parámetros](#parámetros-1)
+      - [Controles](#controles)
   - [Model - Entrenamiento de Redes Neuronales](#model---entrenamiento-de-redes-neuronales)
     - [Dataset Scanner](#dataset-scanner)
       - [Tipos Detectados](#tipos-detectados)
-      - [Información Mostrada](#información-mostrada-1)
+      - [Información Mostrada](#información-mostrada)
     - [Configuración del Modelo](#configuración-del-modelo)
       - [Arquitectura](#arquitectura)
       - [Entrenamiento](#entrenamiento)
@@ -103,9 +91,9 @@ Una aplicación web modular para visualización de datos EEG, preprocesamiento, 
       - [Métricas](#métricas)
   - [Analysis - Exploración de Modelos](#analysis---exploración-de-modelos)
     - [Carga de Modelos](#carga-de-modelos)
-      - [Información Mostrada](#información-mostrada-2)
+      - [Información Mostrada](#información-mostrada-1)
     - [Espacio Latente PCA](#espacio-latente-pca)
-      - [Características](#características-2)
+      - [Características](#características-3)
     - [Activaciones por Capa](#activaciones-por-capa)
       - [Capas Disponibles](#capas-disponibles)
     - [Pesos de Atención](#pesos-de-atención)
@@ -134,7 +122,7 @@ EEG Viewer es una aplicación multi-página que proporciona un flujo de trabajo 
 |--------|-----|-----------|
 | **Viewer** | `/` | Visualización interactiva con comparación dual |
 | **Cleaner** | `/cleaner` | Pipeline de preprocesamiento paso a paso |
-| **Pipeline** | `/pipeline` | Procesamiento batch y localización de fuentes |
+| **Source Loc** | `/pipeline` | Localización de fuentes y análisis de conectividad |
 | **Model** | `/model` | Entrenamiento de redes neuronales (VAE/GNN) |
 | **Analysis** | `/analysis` | Inspección de modelos y exploración del espacio latente |
 
@@ -580,13 +568,30 @@ Vista del EEG después del procesamiento completo.
 
 ---
 
-## Pipeline - Procesamiento Batch
+## Source Localization - Localización de Fuentes
 
 <p align="center">
-  <img src="assets/pipeline/overview.png" alt="Pipeline Overview" width="100%">
+  <img src="assets/pipeline/overview.png" alt="Source Localization Overview" width="100%">
 </p>
 
-Ejecución automatizada de scripts de procesamiento para localización de fuentes y análisis de conectividad.
+Vista general de la página Source Localization mostrando el **grafo cerebral 3D** con las 7 redes funcionales (Schaefer Atlas), el panel de pasos del pipeline a la izquierda, y la consola de ejecución en tiempo real.
+
+Ejecución automatizada de scripts de procesamiento para **localización de fuentes corticales** y **análisis de conectividad funcional** basado en sincronización de fase.
+
+### Descripción General
+
+Este módulo implementa un pipeline completo de análisis EEG que incluye:
+
+1. **Localización de fuentes** usando el modelo forward con template fsaverage
+2. **Extracción de fases instantáneas** por banda de frecuencia (Delta, Theta, Alpha, Beta, Gamma)
+3. **Análisis de sincronización** usando el parámetro de orden de Kuramoto
+4. **Análisis de redes cerebrales** (DMN, FPN, DAN, SMN, VN, Limbic, Salience)
+5. **Correlaciones con experiencia subjetiva** (cuestionarios)
+6. **Clustering de estados cerebrales**
+
+El pipeline procesa archivos `.set` (EEGLAB) previamente limpiados y genera métricas de conectividad funcional para comparar condiciones experimentales (DMT vs. Eyes Closed vs. Eyes Open).
+
+---
 
 ### Layout
 
@@ -618,179 +623,392 @@ Ejecución automatizada de scripts de procesamiento para localización de fuente
 
 ### Configuración I/O
 
-<p align="center">
-  <img src="assets/pipeline/io_config.png" alt="IO Configuration" width="60%">
-</p>
-
-Define los directorios de entrada y salida.
+Define los directorios de entrada y salida. La configuración se encuentra en el panel superior izquierdo (visible en la imagen de overview).
 
 | Campo | Descripción |
 |-------|-------------|
-| **Input Dir** | Directorio con archivos EEG limpios |
-| **Output Dir** | Directorio para resultados del pipeline |
-| **Run Dir** | Subdirectorio con timestamp para esta ejecución |
+| **Input Dir** | Directorio con archivos EEG limpios (`.set`) organizados en subcarpetas `DMT/`, `EC/`, `EO/` |
+| **Output Dir** | Directorio base para resultados del pipeline (default: `pipeline_outputs/`) |
+| **Run Dir** | Subdirectorio con timestamp para esta ejecución (`run_YYYYMMDD_HHMMSS`) |
+
+**Estructura de entrada esperada:**
+```
+EEG_CLEAN/
+├── DMT/
+│   ├── S01_DMT_ICA_pruned.set
+│   ├── S02_DMT_ICA_pruned.set
+│   └── ...
+├── EC/
+│   ├── S01_EC_ICA_pruned.set
+│   └── ...
+└── EO/
+    ├── S01_EO_ICA_pruned.set
+    └── ...
+```
 
 ---
 
 ### Parámetros Globales
 
-<p align="center">
-  <img src="assets/pipeline/global_params.png" alt="Global Parameters" width="60%">
-</p>
+Configuración que aplica a todos los pasos del pipeline. Los parámetros se encuentran en el panel izquierdo bajo `// GLOBAL_PARAMS`.
 
-Configuración que aplica a todos los pasos.
+| Parámetro | Descripción | Valor Típico |
+|-----------|-------------|--------------|
+| **Conditions** | Condiciones experimentales a procesar | DMT, EC, EO |
+| **Max Subjects** | Límite de sujetos por condición (0 = todos) | 0-35 |
+| **Max Epochs** | Límite de épocas por sujeto (0 = todas) | 0-100 |
+| **Workers** | Número de procesos paralelos | 1-20 |
+| **Jobs** | Hilos por proceso (para operaciones MNE) | 1-8 |
 
-| Parámetro | Descripción |
-|-----------|-------------|
-| **Conditions** | Condiciones a procesar (DMT, EC, EO) |
-| **Max Subjects** | Límite de sujetos (0 = todos) |
-| **Max Epochs** | Límite de épocas por sujeto |
-| **Workers** | Procesos paralelos |
-| **Jobs** | Hilos por proceso |
+**Nota:** El balance entre `workers` y `jobs` depende de tu hardware. Para 8 núcleos, `workers=4, jobs=2` es un buen punto de partida.
 
 ---
 
 ### Fase 1: Modelo Forward
 
-Cálculo del modelo forward para localización de fuentes.
+Esta fase transforma los datos EEG de espacio de sensores a espacio de fuentes corticales usando el problema inverso.
 
 #### Step 1: Forward Model (`fwd.py`)
 
 <p align="center">
-  <img src="assets/pipeline/step_1_fwd.png" alt="Step 1: Forward Model" width="80%">
+  <img src="assets/pipeline/step_1_source_localization.png" alt="Step 1: Localización de Fuentes" width="100%">
 </p>
 
-Calcula el modelo forward usando el template fsaverage.
+La visualización incluye:
+- **Hilbert 2D:** Envolvente de amplitud, fase instantánea, evolución de fase y distribución
+- **Hilbert 3D Phase Space:** Atractor tridimensional de la señal analítica (trayectorias, proyecciones)
+
+<p align="center">
+  <img src="assets/pipeline/step_1_source_localization_results.png" alt="Step 1: Resultados" width="100%">
+</p>
+
+El console log muestra el progreso del procesamiento: cálculo de Hilbert, sincronía, persistencia de archivos `phases-*.pkl` para cada sujeto y condición.
+
+**Propósito:** Calcular la localización de fuentes corticales y extraer métricas de sincronización.
+
+**Proceso detallado:**
+1. **Carga de épocas:** Lee archivos `.set` (EEGLAB epochs)
+2. **Setup del modelo forward:**
+   - Usa template **fsaverage** (MNE-Python)
+   - Modelo BEM de 3 capas (5120 vértices)
+   - Atlas de **Schaefer (100 parcelas, 7 redes)**
+3. **Cálculo del operador inverso:**
+   - Método: **dSPM** (dynamic Statistical Parametric Mapping)
+   - SNR = 3.0, λ² = 1/9
+4. **Extracción por época y banda:**
+   - Filtrado pasabanda (Delta: 1-4 Hz, Theta: 4-8 Hz, Alpha: 8-13 Hz, Beta: 13-30 Hz, Gamma: 30-45 Hz)
+   - Transformada de Hilbert → amplitud instantánea y fase
+   - Cálculo de matrices de sincronización (PLV-like)
+   - Parámetro de orden de Kuramoto: \( r(t) = \left| \frac{1}{N} \sum_{j=1}^{N} e^{i\theta_j(t)} \right| \)
+
+**Salidas:**
+- `phases-S01-DMT.pkl`: Diccionario con fases, amplitudes, sincronía por banda (EEG y STC)
+- `extra.pkl`: Metadata (nombres de labels, coordenadas 3D, colores por red)
+
+| Métrica | Descripción |
+|---------|-------------|
+| `phases_eeg` | Fases instantáneas de canales EEG |
+| `phases_stc` | Fases instantáneas de fuentes corticales (100 parcelas) |
+| `amplitudes_eeg/stc` | Envolventes de amplitud |
+| `syncros_eeg/stc` | Matrices de sincronización (N×N) |
+| `kuramoto_eeg/stc` | Parámetro de orden temporal |
+
+---
 
 #### Step 2: Consolidate (`save_load_pickle.py`)
 
 <p align="center">
-  <img src="assets/pipeline/step_2_consolidate.png" alt="Step 2: Consolidate" width="80%">
+  <img src="assets/pipeline/step_1_source_localization_results_files.png" alt="Step 2: Archivos Generados" width="80%">
 </p>
 
-Consolida los datos para procesamiento posterior.
+El panel FILES muestra los archivos `phases-*.pkl` generados organizados por condición (DMT, EC, EO).
+
+**Propósito:** Consolidar los archivos individuales por sujeto en un único archivo por condición.
+
+**Proceso:**
+1. Escanea `phases-*.pkl` en cada carpeta de condición
+2. Agrega datos de todos los sujetos en estructuras unificadas
+3. Preserva el orden de sujetos para análisis posteriores
+
+**Entrada:** 
+```
+DMT/
+├── phases-S01-DMT.pkl
+├── phases-S02-DMT.pkl
+└── ...
+```
+
+**Salida:**
+```
+DMT/
+└── subject_phases_DMT.pkl  # Contiene todos los sujetos
+```
+
+**Estructura del archivo consolidado:**
+```python
+{
+    'phases_eeg': [subject1_phases, subject2_phases, ...],
+    'phases_stc': [subject1_stc, subject2_stc, ...],
+    'subjects': ['S01-DMT', 'S02-DMT', ...]
+}
+```
 
 ---
 
 ### Fase 2: Análisis de Red
 
-Extracción de fases y cálculo de sincronización.
+Esta fase analiza la sincronización dentro y entre redes cerebrales funcionales.
 
 #### Step 3: Network Filter (`multi2pool2.py`)
 
 <p align="center">
-  <img src="assets/pipeline/step_3_network.png" alt="Step 3: Network" width="80%">
+  <img src="assets/pipeline/step_2_filtrar_redes.png" alt="Step 3: Filtrar por Redes" width="100%">
 </p>
 
-Extracción paralela de fases por banda de frecuencia.
+**Propósito:** Filtrar las fases de fuentes por redes cerebrales definidas en el atlas de Schaefer.
+
+La visualización muestra las **7 redes funcionales (Schaefer)** con la cantidad de parcelas por red y un gráfico circular de distribución porcentual. El console log muestra el procesamiento por condición y banda (DMT Delta, DMT Theta, etc.).
+
+**Redes analizadas (7 Networks):**
+
+| Red | Abreviación | Parcelas | Función |
+|-----|-------------|----------|---------|
+| Visual Network | Vis | 14 | Procesamiento visual |
+| Somatomotor Network | SomMot | 14 | Control motor y procesamiento sensorial |
+| Dorsal Attention Network | DorsAttn | 15 | Atención visual espacial |
+| Salience/Ventral Attention | SalVentAttn | 14 | Detección de estímulos relevantes |
+| Limbic Network | Limbic | 14 | Emociones, memoria |
+| Control Network | Cont | 15 | Control ejecutivo, atención dirigida |
+| Default Mode Network | Default | 14 | Pensamiento interno, memoria autobiográfica |
+
+**Hemisferios analizados:**
+- `RH` - Hemisferio derecho
+- `LH` - Hemisferio izquierdo
+- `both` - Bilateral
+
+**Salida:** `order_all-S01-DMT.pkl` con estructura:
+```python
+{
+    'COND': {
+        'Band': {
+            'hemi': {
+                'NET': [DataFrame_epoch1, DataFrame_epoch2, ...]
+            }
+        }
+    }
+}
+```
+
+---
 
 #### Step 4: Synchronization (`calculate_syncro.py`)
 
 <p align="center">
-  <img src="assets/pipeline/step_4_syncro.png" alt="Step 4: Syncro" width="80%">
+  <img src="assets/pipeline/step_3_syncro.png" alt="Step 4: Sincronización" width="100%">
 </p>
 
-Calcula métricas de sincronización usando el parámetro de orden de Kuramoto.
+**Propósito:** Calcular matrices de sincronización (PLV) y parámetro de Kuramoto con resolución temporal variable.
+
+La visualización muestra **matrices PLV Alpha por condición** (DMT, EC, EO) para el sujeto y época seleccionados:
+- **Matrices de calor:** Sincronización entre pares de regiones (100×100 ROIs)
+- **Stats:** Media, desviación estándar y máximo de PLV
+- **Histogramas:** Distribución de valores PLV por condición
+
+**Proceso:**
+1. **Splits temporales:** Divide cada época en 2-11 ventanas temporales
+2. **Cálculo por ventana:**
+   - Matriz de sincronización basada en diferencia de fase
+   - Parámetro de orden de Kuramoto
+3. **Multi-escala:** Permite analizar sincronía a diferentes resoluciones temporales
+
+**Fórmula de sincronización:**
+\[
+S_{ij} = 1 - \frac{1}{\pi T} \sum_{t=1}^{T} |\Delta\theta_{ij}(t)|
+\]
+
+**Salida:** `syncro-S01-DMT.pkl` con estructura:
+```python
+{
+    'syncros_eeg': {band: [list_per_split]},
+    'syncros_stc': {band: [list_per_split]},
+    'kuramoto_eeg': {band: [list_per_split]},
+    'kuramoto_stc': {band: [list_per_split]}
+}
+```
+
+---
 
 #### Step 5: Order Parameter (`generate_order.py`)
 
 <p align="center">
-  <img src="assets/pipeline/step_5_order.png" alt="Step 5: Order" width="80%">
+  <img src="assets/pipeline/step_4_kuramoto.png" alt="Step 5: Coherencia Global" width="100%">
 </p>
 
-Genera el parámetro de orden temporal.
+**Propósito:** Calcular el parámetro de orden de Kuramoto para cada red cerebral por separado.
+
+La visualización incluye:
+- **Osciladores Kuramoto (Alpha):** Diagrama polar mostrando las fases instantáneas de cada parcela y el vector resultante
+- **R = 0.570:** Parámetro de orden medio (coherencia global)
+- **R(t):** Serie temporal del parámetro de orden con línea de media punteada (Mean: 0.570)
+- **R promedio por Banda:** Gráfico de barras coloreadas comparando Delta (0.50), Theta (0.54), Alpha (0.52), Beta (0.51), Gamma (0.50)
+
+**Proceso:**
+1. Lee `order_all-*.pkl` (DataFrames de fases filtradas por red)
+2. Aplica la fórmula del parámetro de orden a cada DataFrame
+3. Genera series temporales de orden (valores 0-1)
+
+**Interpretación del parámetro de orden:**
+- **R → 1:** Alta sincronización (todas las fases alineadas)
+- **R → 0:** Baja sincronización (fases distribuidas uniformemente)
+
+**Salida:** `order-S01-DMT.pkl` con Series pandas de valores de orden por época.
+
+---
 
 #### Step 6: Aggregate (`build_order_data.py`)
 
-<p align="center">
-  <img src="assets/pipeline/step_6_aggregate.png" alt="Step 6: Aggregate" width="80%">
-</p>
+**Propósito:** Construir estructuras de datos agregadas para visualización y análisis estadístico.
 
-Agrega métricas de orden a través de sujetos y condiciones.
+Este paso no tiene visualización propia; la salida se muestra en la consola con el progreso del procesamiento por condición (visible en el console log de la imagen de Step 5).
+
+**Archivos generados:**
+
+| Archivo | Contenido |
+|---------|-----------|
+| `r_kuramoto_nets_epochs_mean.pkl` | Media del parámetro de orden por época/banda/red/condición |
+| `r_kuramoto_nets_all_mean.pkl` | Parámetro de orden para combinaciones de pares de redes |
+
+**Uso:**
+- `--build-epochs-mean`: Genera medias por época
+- `--build-all-mean`: Genera métricas de pares de redes
+- `--build-all`: Genera ambos
+
+Estos archivos son la entrada principal para los análisis estadísticos de la Fase 3.
 
 ---
 
 ### Fase 3: Análisis Estadístico
 
-Correlaciones y clustering.
+Esta fase realiza análisis estadísticos y machine learning sobre las métricas de sincronización.
 
 #### Step 7: Pearson (`pearson.py`)
 
-<p align="center">
-  <img src="assets/pipeline/step_7_pearson.png" alt="Step 7: Pearson" width="80%">
-</p>
+**Propósito:** Correlacionar métricas de sincronización cerebral con reportes subjetivos de experiencia.
 
-Calcula correlaciones de Pearson entre condiciones.
+**Métricas analizadas:**
+1. **Coherencia:** Media del parámetro de orden (sincronización promedio)
+2. **Metastabilidad:** Varianza del parámetro de orden (flexibilidad dinámica)
+
+**Proceso:**
+1. Carga `r_kuramoto_nets_epochs_mean.pkl`
+2. Carga cuestionarios de experiencia (`spectral_sources/target.csv`)
+3. Calcula correlaciones de Pearson (r, p-value)
+4. Aplica corrección FDR (False Discovery Rate) por banda
+5. Genera heatmaps y scatter plots de correlaciones significativas
+
+**Salidas:**
+- `heatmap_Coherence_DMT_*.png`: Heatmaps de correlación por banda
+- `heatmap_Metastability_*.png`: Heatmaps de metastabilidad
+- `scatter_*.png`: Scatter plots de correlaciones significativas
+- `histogram_coherence_*.png`: Comparaciones de distribuciones entre condiciones
+
+**Interpretación:**
+- **Coherencia alta + correlación positiva:** Mayor sincronía asociada a experiencia más intensa
+- **Metastabilidad alta:** Mayor variabilidad dinámica (estados más "flexibles")
+
+---
 
 #### Step 8: Clustering (`clustering.py`)
 
-<p align="center">
-  <img src="assets/pipeline/step_8_clustering.png" alt="Step 8: Clustering" width="80%">
-</p>
+**Propósito:** Identificar estados cerebrales discretos mediante clustering de matrices de sincronización.
 
-Análisis de clustering K-means de estados cerebrales.
+**Proceso:**
+1. **Carga de datos:** Lee `syncro-*.pkl` y extrae eigenvalores de matrices de sincronización
+2. **Reducción de dimensionalidad:** PCA sobre eigenvalores (102 → N componentes)
+3. **Clustering:** Prueba múltiples configuraciones
+4. **Evaluación:** Silhouette Score para determinar número óptimo de clusters
+5. **Análisis de composición:** ¿Qué condiciones componen cada cluster?
 
----
+**Algoritmos soportados:**
+- **K-Means:** Clusters esféricos, rápido
+- **GMM (Gaussian Mixture):** Clusters elípticos
+- **Hierarchical:** Clustering jerárquico
 
-### Panel de Visualización
+**Configuraciones probadas:**
+- Escaladores: Standard, Robust, MinMax
+- Reducción: PCA, Kernel PCA
+- Métricas: Euclidean, Cosine
 
-<p align="center">
-  <img src="assets/pipeline/visualization_panel.gif" alt="Visualization Panel" width="100%">
-</p>
+**Salidas:**
+```
+clustering_results/
+├── Alpha/
+│   ├── rank1_standard_pca_kmeans_euclidean_all/
+│   │   ├── silhouette_heatmap_Alpha.png
+│   │   ├── pca_scatter_Alpha.png
+│   │   ├── cluster_centers_Alpha.png
+│   │   ├── cluster_composition_Alpha.png
+│   │   └── clustering_result.pkl
+│   └── results_summary.csv
+└── global_best_results.csv
+```
 
-Visualizaciones contextuales que cambian según el paso seleccionado.
+**Interpretación de clusters:**
+- **Cluster DMT-dominante:** Estado alterado de conciencia
+- **Cluster EC/EO-dominante:** Estados baseline (ojos cerrados/abiertos)
+- **Clusters mixtos:** Estados transicionales o compartidos
 
-#### Pestañas de Visualización
 
-Cada paso tiene su propia pestaña con visualizaciones específicas:
-
-| Paso | Visualización |
-|------|---------------|
-| 1 | Topografía forward |
-| 2 | Estadísticas de consolidación |
-| 3 | Fases por banda |
-| 4 | Mapas de sincronización |
-| 5 | Series de orden temporal |
-| 6 | Distribuciones agregadas |
-| 7 | Matrices de correlación |
-| 8 | Resultados de clustering |
-
----
 
 ### Consola de Salida
 
 <p align="center">
-  <img src="assets/pipeline/console.png" alt="Console Output" width="100%">
+  <img src="assets/pipeline/step_1_source_localization_results.png" alt="Console Output" width="100%">
 </p>
 
-Log en tiempo real de la ejecución.
+Log en tiempo real de la ejecución. El ejemplo muestra la salida completa de "Localización de Fuentes" y "Consolidar Datos", incluyendo el procesamiento por sujeto y la persistencia de archivos.
 
 #### Características
 
-- Colores por tipo de mensaje (info, success, warning, error)
-- Auto-scroll al final
-- Botón Clear para limpiar
-- Historial persistente
+- **OUTPUT_LOG:** Área de texto con scroll automático
+- **Colores:** Info (cyan), Success (verde), Warning (amarillo), Error (rojo)
+- **Controles:** Botón STOP para detener, CLEAR para limpiar
+- **Estado:** Indicador "Idle" cuando no hay procesos activos
 
 ---
 
 ### Generador de Animaciones
 
 <p align="center">
-  <img src="assets/pipeline/animation_generator.gif" alt="Animation Generator" width="80%">
+  <img src="assets/pipeline/step_3_syncro_animation.png" alt="Generador de Animaciones" width="100%">
 </p>
 
-Crea animaciones de la actividad cerebral.
+Panel expandible en la parte inferior para crear animaciones de la actividad cerebral y videos de Kuramoto. El panel se expande al hacer click en **🎬 ANIMACIONES**.
+
+La imagen muestra el generador con un video `S01_DMT_Alpha_animation.mp4` cargado, mostrando matrices de sincronización y la evolución temporal de la actividad cerebral.
 
 #### Parámetros
 
 | Campo | Descripción |
 |-------|-------------|
-| **Subject** | Sujeto a animar |
-| **Condition** | Condición (DMT, EC, EO) |
-| **Band** | Banda de frecuencia |
+| **Directorio** | Ruta al directorio de salida del pipeline |
+| **Carpeta** | Condición (DMT, EC, EO) |
+| **Subject** | Sujeto a animar (ej: S01-DMT) |
+| **Banda** | Banda de frecuencia (Alpha, Beta, etc.) |
+| **Mode** | Modo de visualización (advancing, kuramoto) |
+| **Calidad** | Resolución del video (low, medium, high) |
+| **Start/End** | Rango de épocas a renderizar |
 | **FPS** | Cuadros por segundo |
-| **Duration** | Duración en segundos |
+
+#### Controles
+
+| Botón | Acción |
+|-------|--------|
+| **Cargar** | Escanea el directorio y carga opciones disponibles |
+| **Generar Frames** | Genera frames PNG individuales |
+| **Crear Video** | Combina frames en video MP4 |
+| **Clear Log** | Limpia el log de progreso |
+| **Ver Full Size** | Abre el video generado a pantalla completa |
 
 ---
 
@@ -1043,7 +1261,7 @@ Acceso rápido a todas las páginas.
 |-------|--------|-----|
 | **VIEWER** | Visualización | `/` |
 | **CLEANER** | Preprocesamiento | `/cleaner` |
-| **PIPELINE** | Batch processing | `/pipeline` |
+| **SOURCE LOC** | Localización de fuentes | `/pipeline` |
 | **MODEL** | Entrenamiento | `/model` |
 | **ANALYSIS** | Análisis | `/analysis` |
 

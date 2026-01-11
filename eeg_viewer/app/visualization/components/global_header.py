@@ -18,7 +18,7 @@ from app.visualization.components.system_monitor import render_system_monitor_co
 PAGE_CONFIG = {
     'viewer': {'label': 'EEG_VIEWER', 'url': '/', 'color': THEME_PRIMARY},
     'cleaner': {'label': 'EEG_CLEANER', 'url': '/cleaner', 'color': THEME_PRIMARY},
-    'pipeline': {'label': 'EEG_PIPELINE', 'url': '/pipeline', 'color': THEME_PRIMARY},
+    'pipeline': {'label': 'SOURCE_LOC', 'url': '/pipeline', 'color': THEME_PRIMARY},
     'model': {'label': 'EEG_MODEL', 'url': '/model', 'color': '#f472b6'},
     'analysis': {'label': 'EEG_ANALYSIS', 'url': '/analysis', 'color': THEME_WARN},
 }
@@ -58,7 +58,7 @@ def render_global_header(current_page: str) -> None:
         with ui.row().classes('ml-auto gap-2'):
             _nav_button('VIEWER', '/', current_page == 'viewer')
             _nav_button('CLEANER', '/cleaner', current_page == 'cleaner')
-            _nav_button('PIPELINE', '/pipeline', current_page == 'pipeline')
+            _nav_button('SOURCE LOC', '/pipeline', current_page == 'pipeline')
             _nav_button('MODEL', '/model', current_page == 'model')
             _nav_button('ANALYSIS', '/analysis', current_page == 'analysis')
 
